@@ -52,5 +52,8 @@ uuid = { version = "1.7", features = ["v4", "serde"] }
 # Async traits
 async-trait = "0.1"
 
+[build-dependencies]
+chrono = "0.4"
+
 [dev-dependencies]
 mockito = "1.2"
