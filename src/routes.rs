@@ -93,6 +93,26 @@ pub async fn github_webhook(
 
     info!("Received GitHub webhook event: {}", event_type);
 
+    // Drop exact redeliveries (GitHub reuses X-GitHub-Delivery on redelivery)
+    let delivery_key = req
+        .headers()
+        .get("X-GitHub-Delivery")
+        .and_then(|h| h.to_str().ok())
+        .map(|d| format!("delivery:{}", d));
+    if let Some(key) = &delivery_key {
+        match crate::github::dedupe::claim(&state.db_pool, key).await {
+            Ok(true) => {}
+            Ok(false) => {
+                info!("Duplicate GitHub delivery {}; ignoring", key);
+                return HttpResponse::Ok().json(serde_json::json!({"status": "duplicate", "event": event_type}));
+            }
+            Err(e) => {
+                error!("dedupe claim failed: {}", e);
+                return HttpResponse::InternalServerError().json(serde_json::json!({"status": "error"}));
+            }
+        }
+    }
+
     let handler = GitHubWebhookHandler::new(
         state.db_pool.clone(),
         state.config.coderabbit.api_key.clone(),
@@ -106,6 +126,9 @@ pub async fn github_webhook(
         })),
         Err(e) => {
             error!("Failed to handle webhook: {}", e);
+            if let Some(key) = &delivery_key {
+                let _ = crate::github::dedupe::release(&state.db_pool, key).await;
+            }
             HttpResponse::InternalServerError().json(serde_json::json!({
                 "status": "error",
                 "message": e.to_string()

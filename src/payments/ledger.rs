@@ -68,7 +68,8 @@ pub async fn record_merge(pool: &SqlitePool, cfg: &PaymentConfig, ev: &MergeEven
     };
 
     let contributor_id: Option<String> =
-        sqlx::query_scalar("SELECT id FROM contributors WHERE github_username = ?")
+        // contributors.id may be a BLOB (sqlx Uuid encoding) or TEXT; normalise to UUID text
+        sqlx::query_scalar("SELECT CASE WHEN typeof(id) = 'blob' THEN lower(substr(hex(id),1,8)||'-'||substr(hex(id),9,4)||'-'||substr(hex(id),13,4)||'-'||substr(hex(id),17,4)||'-'||substr(hex(id),21)) ELSE id END FROM contributors WHERE github_username = ?")
             .bind(&ev.github_username)
             .fetch_optional(pool)
             .await?;

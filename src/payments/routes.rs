@@ -103,7 +103,7 @@ pub async fn payouts_refresh(q: web::Query<RefreshQuery>, state: web::Data<AppSt
         warn!("Rejected payout refresh with bad signature");
         return expired();
     }
-    let known: Option<String> = sqlx::query_scalar("SELECT id FROM contributors WHERE stripe_account_id = ?")
+    let known: Option<i64> = sqlx::query_scalar("SELECT 1 FROM contributors WHERE stripe_account_id = ?")
         .bind(account)
         .fetch_optional(&state.db_pool)
         .await
