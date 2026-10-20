@@ -1,0 +1,60 @@
+# Rust
+target/
+
+**/*.rs.bk
+*.pdb
+
+# Environment
+.env
+.env.local
+.env.*.local
+
+# Database
+*.db
+*.db-shm
+*.db-wal
+dsync.db*
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Logs
+logs/
+*.log
+
+# Test coverage
+tarpaulin-report.html
+cobertura.xml
+
+# Backup files
+*.bak
+*.backup
+
+# OS files
+Thumbs.db
+.DS_Store
+
+# Documentation build
+/doc/
+/docs/build/
+
+# Temporary files
+*.tmp
+*.temp
+.cache/
+
+# DSync audit additions
+.env*
+!.env.example
+*.db
+target/
+_build/
+deps/
+node_modules/
+erl_crash.dump
+

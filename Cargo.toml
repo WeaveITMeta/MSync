@@ -1,0 +1,56 @@
+[package]
+name = "dsync"
+version = "0.1.0"
+edition = "2021"
+authors = ["DSync Contributors"]
+license = "Apache-2.0"
+description = "A Discord bot template for merit-based open source community management"
+repository = "https://github.com/yourusername/dsync"
+keywords = ["discord", "bot", "github", "merit", "community"]
+categories = ["web-programming", "command-line-utilities"]
+
+[dependencies]
+# Web framework
+actix-web = "4.5"
+actix-rt = "2.9"
+
+# Discord
+serenity = { version = "0.12", features = ["client", "gateway", "model", "framework", "standard_framework"] }
+tokio = { version = "1.36", features = ["full"] }
+
+# Database
+sqlx = { version = "0.7", features = ["runtime-tokio-rustls", "sqlite", "migrate"] }
+
+# GitHub API
+octocrab = "0.34"
+
+# Serialization
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+
+# Configuration
+config = "0.14"
+dotenv = "0.15"
+
+# Logging
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+# Error handling
+anyhow = "1.0"
+thiserror = "1.0"
+
+# HTTP client
+reqwest = { version = "0.11", features = ["json"] }
+
+# Time handling
+chrono = { version = "0.4", features = ["serde"] }
+
+# UUID generation
+uuid = { version = "1.7", features = ["v4", "serde"] }
+
+# Async traits
+async-trait = "0.1"
+
+[dev-dependencies]
+mockito = "1.2"
