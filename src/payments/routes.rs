@@ -1,4 +1,5 @@
 use super::ledger::{self, LedgerError};
+use super::onboarding::{self, OnboardError};
 use super::signature::{token_matches, verify_stripe_signature, STRIPE_TOLERANCE_SECS};
 use crate::AppState;
 use actix_web::{get, post, web, HttpRequest, HttpResponse};
@@ -41,55 +42,82 @@ pub struct OnboardRequest {
     pub github_username: String,
 }
 
+fn onboard_error(e: OnboardError) -> HttpResponse {
+    match e {
+        OnboardError::UnknownContributor => HttpResponse::NotFound().json(json!({"status": "error", "message": e.to_string()})),
+        OnboardError::NotLinked => HttpResponse::UnprocessableEntity().json(json!({"status": "error", "message": e.to_string()})),
+        OnboardError::Stripe(_) => {
+            error!("{}", e);
+            HttpResponse::BadGateway().json(json!({"status": "error", "message": e.to_string()}))
+        }
+        OnboardError::Db(err) => ledger_error(err.into()),
+    }
+}
+
 /// Create (or reuse) a Stripe Express account for a linked contributor and return an onboarding link.
-/// Admin-token protected: intended to be called by the website/bot backend on the contributor's behalf.
+/// Admin-token protected (server-to-server). Contributors use the /payout-setup Discord command.
 #[post("/api/payouts/onboard")]
 pub async fn onboard(req: HttpRequest, body: web::Json<OnboardRequest>, state: web::Data<AppState>) -> HttpResponse {
     if let Err(r) = require_admin(&req, &state) {
         return r;
     }
-    let row: Option<(Option<i64>, Option<String>)> = match sqlx::query_as(
-        "SELECT discord_user_id, stripe_account_id FROM contributors WHERE github_username = ?",
+    match onboarding::onboarding_link_for_github(&state.db_pool, state.stripe.as_ref(), &state.payments, &body.github_username).await {
+        Ok(link) => HttpResponse::Ok().json(json!({"status": "success", "account_id": link.account_id, "onboarding_url": link.url})),
+        Err(e) => onboard_error(e),
+    }
+}
+
+fn html_page(title: &str, message: &str) -> HttpResponse {
+    HttpResponse::Ok().content_type("text/html; charset=utf-8").body(format!(
+        "<!doctype html><html><head><meta charset=\"utf-8\"><title>{t}</title>\
+         <style>body{{font-family:system-ui,sans-serif;max-width:36rem;margin:4rem auto;padding:0 1rem;line-height:1.5}}</style>\
+         </head><body><h1>{t}</h1><p>{m}</p></body></html>",
+        t = title,
+        m = message
+    ))
+}
+
+/// Stripe sends the contributor here after onboarding. Status arrives separately via account.updated.
+#[get("/payouts/return")]
+pub async fn payouts_return() -> HttpResponse {
+    html_page(
+        "Payout setup submitted",
+        "Thanks! Stripe is reviewing your details. Once your account is verified you will be eligible for approved contribution payouts. You can close this tab. If Stripe asked for more information, run /payout-setup in Discord again.",
     )
-    .bind(&body.github_username)
-    .fetch_optional(&state.db_pool)
-    .await
-    {
-        Ok(r) => r,
-        Err(e) => return ledger_error(e.into()),
-    };
-    let existing = match row {
-        None => return HttpResponse::NotFound().json(json!({"status": "error", "message": "unknown contributor"})),
-        Some((None, _)) => {
-            return HttpResponse::UnprocessableEntity().json(json!({"status": "error", "message": "contributor has not linked Discord (/link)"}))
-        }
-        Some((Some(_), acct)) => acct.filter(|a| !a.is_empty()),
-    };
+}
 
-    let account_id = match existing {
-        Some(a) => a,
-        None => match state.stripe.create_express_account(&body.github_username).await {
-            Ok(a) => {
-                if let Err(e) = ledger::set_stripe_account(&state.db_pool, &body.github_username, &a).await {
-                    return ledger_error(e.into());
-                }
-                a
-            }
-            Err(e) => {
-                error!("Stripe account creation failed: {}", e);
-                return HttpResponse::BadGateway().json(json!({"status": "error", "message": e.to_string()}));
-            }
-        },
-    };
+#[derive(Debug, Deserialize)]
+pub struct RefreshQuery {
+    pub account: Option<String>,
+    pub sig: Option<String>,
+}
 
-    let base = &state.payments.public_url;
-    match state
-        .stripe
-        .create_account_link(&account_id, &format!("{}/payouts/refresh", base), &format!("{}/payouts/return", base))
+/// Stripe sends the contributor here when an onboarding link expired. Regenerates a link and redirects.
+#[get("/payouts/refresh")]
+pub async fn payouts_refresh(q: web::Query<RefreshQuery>, state: web::Data<AppState>) -> HttpResponse {
+    let expired = || html_page("Link expired", "This setup link is no longer valid. Run /payout-setup in Discord to get a new one.");
+    let (Some(account), Some(sig)) = (q.account.as_deref(), q.sig.as_deref()) else {
+        return expired();
+    };
+    if !onboarding::verify_refresh_sig(&state.payments, account, sig) {
+        warn!("Rejected payout refresh with bad signature");
+        return expired();
+    }
+    let known: Option<String> = sqlx::query_scalar("SELECT id FROM contributors WHERE stripe_account_id = ?")
+        .bind(account)
+        .fetch_optional(&state.db_pool)
         .await
-    {
-        Ok(url) => HttpResponse::Ok().json(json!({"status": "success", "account_id": account_id, "onboarding_url": url})),
-        Err(e) => HttpResponse::BadGateway().json(json!({"status": "error", "message": e.to_string()})),
+        .ok()
+        .flatten();
+    if known.is_none() {
+        return expired();
+    }
+    match onboarding::link_for_account(state.stripe.as_ref(), &state.payments, account).await {
+        Ok(url) => HttpResponse::Found().append_header(("Location", url)).finish(),
+        Err(e) => {
+            error!("refresh link failed: {}", e);
+            html_page("Something went wrong", "Could not create a new setup link. Please try /payout-setup in Discord.")
+        }
     }
 }
 

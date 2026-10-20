@@ -32,6 +32,8 @@ pub async fn register_slash_commands(ctx: &Context, guild_id: GuildId) -> Result
                     .description("View the top contributors leaderboard"),
                 CreateCommand::new("sync")
                     .description("Sync Discord roles with merit points (Admin only)"),
+                CreateCommand::new("payout-setup")
+                    .description("Get your private Stripe link to receive contribution payouts"),
                 CreateCommand::new("payouts")
                     .description("List contribution payouts pending approval (Maintainers only)"),
             ],

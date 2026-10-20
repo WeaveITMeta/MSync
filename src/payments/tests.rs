@@ -11,12 +11,14 @@ use std::sync::Mutex;
 #[derive(Default)]
 struct MockStripe {
     transfers: Mutex<Vec<TransferRequest>>,
+    accounts_created: Mutex<u32>,
     fail: bool,
 }
 
 #[async_trait]
 impl StripeApi for MockStripe {
     async fn create_express_account(&self, _u: &str) -> Result<String> {
+        *self.accounts_created.lock().unwrap() += 1;
         Ok("acct_mock".into())
     }
     async fn create_account_link(&self, a: &str, _r: &str, _ret: &str) -> Result<String> {
@@ -219,4 +221,48 @@ fn admin_token_comparison() {
     assert!(!token_matches("s3cret-token", "s3cret-tokem"));
     assert!(!token_matches("s3cret-token", ""));
     assert!(!token_matches("", ""));
+}
+#[tokio::test]
+async fn onboarding_creates_account_once_and_requires_linked_discord() {
+    use super::onboarding::{self, OnboardError};
+    let pool = pool().await;
+    let stripe = MockStripe::default();
+    let mut c = cfg();
+    c.admin_token = Some("admin-secret".into());
+    c.public_url = "https://dsync.example".into();
+
+    assert!(matches!(
+        onboarding::onboarding_link_for_github(&pool, &stripe, &c, "ghost").await,
+        Err(OnboardError::UnknownContributor)
+    ));
+    sqlx::query("INSERT INTO contributors (id, github_username, created_at, updated_at) VALUES ('x', 'unlinked', datetime('now'), datetime('now'))")
+        .execute(&pool).await.unwrap();
+    assert!(matches!(
+        onboarding::onboarding_link_for_github(&pool, &stripe, &c, "unlinked").await,
+        Err(OnboardError::NotLinked)
+    ));
+
+    add_contributor(&pool, "alice", None, false).await;
+    let first = onboarding::onboarding_link_for_github(&pool, &stripe, &c, "alice").await.unwrap();
+    let second = onboarding::onboarding_link_for_github(&pool, &stripe, &c, "alice").await.unwrap();
+    assert_eq!(first.account_id, "acct_mock");
+    assert_eq!(second.account_id, "acct_mock");
+    assert_eq!(*stripe.accounts_created.lock().unwrap(), 1, "account reused, not recreated");
+    assert_eq!(onboarding::contributor_for_discord(&pool, 42).await.unwrap(), Some(("alice".into(), false)));
+}
+
+#[test]
+fn refresh_links_are_signed() {
+    use super::onboarding::{refresh_url, verify_refresh_sig, refresh_sig};
+    let mut c = cfg();
+    c.public_url = "https://dsync.example".into();
+    assert_eq!(refresh_url(&c, "acct_1"), "https://dsync.example/payouts/refresh"); // no key -> unsigned
+    assert!(!verify_refresh_sig(&c, "acct_1", "anything"));
+
+    c.admin_token = Some("admin-secret".into());
+    let sig = refresh_sig(&c, "acct_1").unwrap();
+    assert!(refresh_url(&c, "acct_1").contains(&format!("account=acct_1&sig={sig}")));
+    assert!(verify_refresh_sig(&c, "acct_1", &sig));
+    assert!(!verify_refresh_sig(&c, "acct_2", &sig));
+    assert!(!verify_refresh_sig(&c, "acct_1", "deadbeef"));
 }

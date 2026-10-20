@@ -52,6 +52,19 @@ async fn main() -> Result<()> {
     let discord_db_pool = db_pool.clone();
     let discord_merit_tracker = merit_tracker.clone();
 
+    // Payment model (ledger + Stripe Connect). Transfers only happen on admin approve.
+    let payment_config = Arc::new(PaymentConfig::from_env());
+    let allow_live = env::var("DSYNC_STRIPE_ALLOW_LIVE").map(|v| v == "true").unwrap_or(false);
+    let stripe_client = StripeClient::new(payment_config.stripe_secret_key.clone(), allow_live);
+    if !stripe_client.is_configured() {
+        info!("Stripe not configured; payout approvals will fail until STRIPE_SECRET_KEY is set");
+    }
+    info!("Tracked payout branches: {:?}", payment_config.branches);
+
+    let stripe_api: Arc<dyn payments::StripeApi> = Arc::new(stripe_client);
+    let discord_payments = payment_config.clone();
+    let discord_stripe = stripe_api.clone();
+
     // Initialize Discord HTTP client for webhook use
     let discord_http = Arc::new(serenity::http::Http::new(&discord_token));
 
@@ -62,7 +75,7 @@ async fn main() -> Result<()> {
             | GatewayIntents::GUILD_MESSAGES
             | GatewayIntents::MESSAGE_CONTENT;
 
-        let bot = DiscordBot::new(discord_db_pool, discord_merit_tracker);
+        let bot = DiscordBot::new(discord_db_pool, discord_merit_tracker, discord_payments, discord_stripe);
         
         let mut client = Client::builder(&discord_token, intents)
             .application_id(discord_app_id.into())
@@ -76,15 +89,6 @@ async fn main() -> Result<()> {
         }
     });
 
-    // Payment model (ledger + Stripe Connect). Transfers only happen on admin approve.
-    let payment_config = Arc::new(PaymentConfig::from_env());
-    let allow_live = env::var("DSYNC_STRIPE_ALLOW_LIVE").map(|v| v == "true").unwrap_or(false);
-    let stripe_client = StripeClient::new(payment_config.stripe_secret_key.clone(), allow_live);
-    if !stripe_client.is_configured() {
-        info!("Stripe not configured; payout approvals will fail until STRIPE_SECRET_KEY is set");
-    }
-    info!("Tracked payout branches: {:?}", payment_config.branches);
-
     // Create app state
     let app_state = web::Data::new(AppState {
         config: config.clone(),
@@ -92,7 +96,7 @@ async fn main() -> Result<()> {
         merit_tracker: merit_tracker.clone(),
         discord_http,
         payments: payment_config,
-        stripe: Arc::new(stripe_client),
+        stripe: stripe_api,
     });
 
     // Start Actix web server
@@ -109,6 +113,8 @@ async fn main() -> Result<()> {
             .service(routes::get_leaderboard)
             .service(payments::routes::onboard)
             .service(payments::routes::stripe_webhook)
+            .service(payments::routes::payouts_return)
+            .service(payments::routes::payouts_refresh)
             .service(payments::routes::list_ledger)
             .service(payments::routes::approve_entry)
             .service(payments::routes::reject_entry)

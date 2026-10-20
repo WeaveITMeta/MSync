@@ -6,6 +6,7 @@
 
 pub mod config;
 pub mod ledger;
+pub mod onboarding;
 pub mod routes;
 pub mod signature;
 pub mod stripe;

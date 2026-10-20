@@ -236,3 +236,29 @@ pub async fn list_pending_payouts(db_pool: &SqlitePool, command: &CommandInterac
         Err(e) => format!("Failed to load payouts: {}", e),
     }
 }
+
+/// /payout-setup: give a linked contributor their own Stripe Express onboarding link (ephemeral).
+pub async fn payout_setup(
+    db_pool: &SqlitePool,
+    stripe: &dyn crate::payments::StripeApi,
+    cfg: &crate::payments::PaymentConfig,
+    command: &CommandInteraction,
+) -> String {
+    use crate::payments::onboarding;
+    let discord_user_id = command.user.id.get() as i64;
+    match onboarding::contributor_for_discord(db_pool, discord_user_id).await {
+        Ok(None) => "Link your GitHub account first with `/link github:<username>`, then run `/payout-setup` again.".to_string(),
+        Ok(Some((_, true))) => "Your payout account is already set up and verified. Nothing else to do.".to_string(),
+        Ok(Some((github, false))) => match onboarding::onboarding_link_for_github(db_pool, stripe, cfg, &github).await {
+            Ok(link) => format!(
+                "Set up payouts for `{}` here (private link, expires in a few minutes):\n{}",
+                github, link.url
+            ),
+            Err(e) => {
+                tracing::error!("payout-setup failed for {}: {}", github, e);
+                "Couldn't create your payout setup link right now. Please try again later or ask a maintainer.".to_string()
+            }
+        },
+        Err(e) => format!("Failed to look up your account: {}", e),
+    }
+}

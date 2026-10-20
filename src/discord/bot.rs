@@ -11,13 +11,22 @@ use tracing::{error, info, warn};
 pub struct DiscordBot {
     db_pool: SqlitePool,
     merit_tracker: Arc<RwLock<MeritTracker>>,
+    payments: Arc<crate::payments::PaymentConfig>,
+    stripe: Arc<dyn crate::payments::StripeApi>,
 }
 
 impl DiscordBot {
-    pub fn new(db_pool: SqlitePool, merit_tracker: Arc<RwLock<MeritTracker>>) -> Self {
+    pub fn new(
+        db_pool: SqlitePool,
+        merit_tracker: Arc<RwLock<MeritTracker>>,
+        payments: Arc<crate::payments::PaymentConfig>,
+        stripe: Arc<dyn crate::payments::StripeApi>,
+    ) -> Self {
         Self {
             db_pool,
             merit_tracker,
+            payments,
+            stripe,
         }
     }
 
@@ -106,6 +115,9 @@ impl EventHandler for DiscordBot {
                     }
                     "sync" => crate::discord::commands::sync_roles(&self.db_pool, &ctx, &command).await,
                     "payouts" => crate::discord::commands::list_pending_payouts(&self.db_pool, &command).await,
+                    "payout-setup" => {
+                        crate::discord::commands::payout_setup(&self.db_pool, self.stripe.as_ref(), &self.payments, &command).await
+                    }
                     _ => "Unknown command".to_string(),
                 };
 
@@ -113,7 +125,7 @@ impl EventHandler for DiscordBot {
                     .create_response(&ctx.http, CreateInteractionResponse::Message(
                         CreateInteractionResponseMessage::new()
                             .content(content)
-                            .ephemeral(command.data.name == "payouts")
+                            .ephemeral(matches!(command.data.name.as_str(), "payouts" | "payout-setup"))
                     ))
                     .await
                 {
