@@ -27,22 +27,63 @@ pub async fn health_check() -> impl Responder {
     })
 }
 
+/// Verify a GitHub `X-Hub-Signature-256` header ("sha256=<hex>") against the raw body
+/// using HMAC-SHA256 with the shared webhook secret. Comparison is constant-time.
+pub fn verify_github_signature(secret: &[u8], body: &[u8], header: Option<&str>) -> bool {
+    use hmac::{Hmac, Mac};
+    use sha2::Sha256;
+    use subtle::ConstantTimeEq;
+
+    if secret.is_empty() {
+        return false;
+    }
+    let Some(hex_sig) = header.and_then(|h| h.strip_prefix("sha256=")) else {
+        return false;
+    };
+    let Ok(provided) = hex::decode(hex_sig.trim()) else {
+        return false;
+    };
+    let Ok(mut mac) = Hmac::<Sha256>::new_from_slice(secret) else {
+        return false;
+    };
+    mac.update(body);
+    let expected = mac.finalize().into_bytes();
+    expected.as_slice().ct_eq(provided.as_slice()).into()
+}
+
 #[post("/github/webhook")]
 pub async fn github_webhook(
     req: HttpRequest,
-    payload: web::Json<GitHubWebhookPayload>,
+    body: web::Bytes,
     state: web::Data<AppState>,
 ) -> impl Responder {
-    // Verify webhook signature
+    // Verify webhook signature over the raw request body before parsing anything
     let signature = req
         .headers()
         .get("X-Hub-Signature-256")
         .and_then(|h| h.to_str().ok());
 
-    if let Some(_sig) = signature {
-        // TODO: Implement signature verification
-        // For now, we'll trust the webhook
+    if !verify_github_signature(
+        state.config.github.webhook_secret.as_bytes(),
+        &body,
+        signature,
+    ) {
+        error!("Rejected GitHub webhook: missing or invalid X-Hub-Signature-256");
+        return HttpResponse::Unauthorized().json(serde_json::json!({
+            "status": "error",
+            "message": "invalid signature"
+        }));
     }
+
+    let payload: GitHubWebhookPayload = match serde_json::from_slice(&body) {
+        Ok(p) => p,
+        Err(e) => {
+            return HttpResponse::BadRequest().json(serde_json::json!({
+                "status": "error",
+                "message": format!("invalid payload: {}", e)
+            }));
+        }
+    };
 
     let event_type = req
         .headers()
@@ -57,7 +98,7 @@ pub async fn github_webhook(
         state.config.coderabbit.api_key.clone(),
     );
 
-    match handler.handle_webhook(event_type, payload.into_inner()).await {
+    match handler.handle_webhook(event_type, payload).await {
         Ok(_) => HttpResponse::Ok().json(serde_json::json!({
             "status": "success",
             "event": event_type
@@ -180,5 +221,28 @@ pub async fn get_leaderboard(state: web::Data<AppState>) -> impl Responder {
                 "error": "Failed to fetch leaderboard"
             }))
         }
+    }
+}
+
+#[cfg(test)]
+mod signature_tests {
+    use super::verify_github_signature;
+
+    // Example from GitHub docs: secret "It's a Secret to Everybody", payload "Hello, World!"
+    const SECRET: &[u8] = b"It's a Secret to Everybody";
+    const BODY: &[u8] = b"Hello, World!";
+    const SIG: &str = "sha256=757107ea0eb2509fc211221cce984b8a37570b6d7586c22c46f4379c8b043e17";
+
+    #[test]
+    fn accepts_valid_signature() {
+        assert!(verify_github_signature(SECRET, BODY, Some(SIG)));
+    }
+
+    #[test]
+    fn rejects_invalid_or_missing_signature() {
+        assert!(!verify_github_signature(SECRET, b"tampered", Some(SIG)));
+        assert!(!verify_github_signature(SECRET, BODY, None));
+        assert!(!verify_github_signature(SECRET, BODY, Some("sha1=abc")));
+        assert!(!verify_github_signature(b"", BODY, Some(SIG)));
     }
 }
