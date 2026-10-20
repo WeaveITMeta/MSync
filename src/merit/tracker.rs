@@ -48,19 +48,41 @@ impl MeritTracker {
             };
 
             let role_id = Uuid::new_v4();
+            let discord_role_id = match crate::config::discord_role_id_for(role_name) {
+                Some(id) => id,
+                None => {
+                    tracing::warn!(
+                        "{} not set; role '{}' will not be synced to Discord",
+                        crate::config::discord_role_env_var(role_name),
+                        role_name
+                    );
+                    0
+                }
+            };
             sqlx::query!(
                 "INSERT OR IGNORE INTO merit_roles (id, role_name, discord_role_id, 
                  required_merit_points, permissions_level, description, created_at) 
                  VALUES (?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)",
                 role_id,
                 role_name,
-                0i64, // Placeholder - needs to be updated with actual Discord role ID
+                discord_role_id,
                 required_points,
                 permissions_level,
                 description
             )
             .execute(&self.db_pool)
             .await?;
+
+            // Keep existing rows in sync with configured Discord role IDs
+            if discord_role_id != 0 {
+                sqlx::query!(
+                    "UPDATE merit_roles SET discord_role_id = ? WHERE role_name = ?",
+                    discord_role_id,
+                    role_name
+                )
+                .execute(&self.db_pool)
+                .await?;
+            }
         }
 
         info!("Initialized default merit roles");

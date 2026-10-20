@@ -73,3 +73,18 @@ impl Config {
         })
     }
 }
+
+/// Env var name holding the Discord role ID for a merit role,
+/// e.g. "Active Contributor" -> "DISCORD_ROLE_ID_ACTIVE_CONTRIBUTOR".
+pub fn discord_role_env_var(role_name: &str) -> String {
+    format!("DISCORD_ROLE_ID_{}", role_name.trim().to_uppercase().replace(' ', "_"))
+}
+
+/// Discord role ID for a merit role from the environment, or None if unset/invalid.
+pub fn discord_role_id_for(role_name: &str) -> Option<i64> {
+    env::var(discord_role_env_var(role_name))
+        .ok()
+        .and_then(|v| v.trim().parse::<u64>().ok())
+        .filter(|id| *id != 0)
+        .map(|id| id as i64)
+}
