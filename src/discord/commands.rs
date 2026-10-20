@@ -200,3 +200,39 @@ pub async fn sync_roles(
         Err(e) => format!("❌ Failed to sync roles: {}", e),
     }
 }
+
+/// Roles allowed to view payouts from Discord. Approval itself is API-only (admin token).
+pub const PAYOUT_VIEWER_ROLES: &[&str] = &["Maintainer", "Core Contributor"];
+
+pub async fn list_pending_payouts(db_pool: &SqlitePool, command: &CommandInteraction) -> String {
+    let discord_user_id = command.user.id.get() as i64;
+    let role: Option<String> = sqlx::query_scalar("SELECT current_role FROM contributors WHERE discord_user_id = ?")
+        .bind(discord_user_id)
+        .fetch_optional(db_pool)
+        .await
+        .ok()
+        .flatten();
+    if !role.as_deref().map_or(false, |r| PAYOUT_VIEWER_ROLES.contains(&r)) {
+        return "Only Maintainers and Core Contributors can view pending payouts.".to_string();
+    }
+
+    match crate::payments::ledger::list(db_pool, Some(crate::payments::ledger::PENDING)).await {
+        Ok(entries) if entries.is_empty() => "No payouts pending approval.".to_string(),
+        Ok(entries) => {
+            let total: i64 = entries.iter().map(|e| e.amount_cents).sum();
+            let mut out = format!("**{} payout(s) pending approval** (total {:.2})\n", entries.len(), total as f64 / 100.0);
+            for e in entries.iter().take(15) {
+                out.push_str(&format!(
+                    "- PR #{} `{}` -> `{}`: {:.2} {} (id `{}`)\n",
+                    e.pr_number, e.github_username, e.branch, e.amount_cents as f64 / 100.0, e.currency.to_uppercase(), e.id
+                ));
+            }
+            if entries.len() > 15 {
+                out.push_str(&format!("...and {} more\n", entries.len() - 15));
+            }
+            out.push_str("Approve or reject via the admin API.");
+            out
+        }
+        Err(e) => format!("Failed to load payouts: {}", e),
+    }
+}

@@ -81,8 +81,18 @@ impl DiscordBot {
 
 #[async_trait]
 impl EventHandler for DiscordBot {
-    async fn ready(&self, _ctx: Context, ready: Ready) {
+    async fn ready(&self, ctx: Context, ready: Ready) {
         info!("DSync bot connected as {}", ready.user.name);
+        match std::env::var("DISCORD_GUILD_ID").ok().and_then(|v| v.trim().parse::<u64>().ok()) {
+            Some(gid) => {
+                if let Err(e) = crate::discord::framework::register_slash_commands(&ctx, GuildId::new(gid)).await {
+                    error!("Failed to register slash commands: {}", e);
+                } else {
+                    info!("Registered slash commands for guild {}", gid);
+                }
+            }
+            None => warn!("DISCORD_GUILD_ID not set; slash commands not registered"),
+        }
     }
 
     async fn interaction_create(&self, ctx: Context, interaction: Interaction) {
@@ -95,12 +105,15 @@ impl EventHandler for DiscordBot {
                         crate::discord::commands::show_leaderboard(&self.db_pool, &command).await
                     }
                     "sync" => crate::discord::commands::sync_roles(&self.db_pool, &ctx, &command).await,
+                    "payouts" => crate::discord::commands::list_pending_payouts(&self.db_pool, &command).await,
                     _ => "Unknown command".to_string(),
                 };
 
                 if let Err(why) = command
                     .create_response(&ctx.http, CreateInteractionResponse::Message(
-                        CreateInteractionResponseMessage::new().content(content)
+                        CreateInteractionResponseMessage::new()
+                            .content(content)
+                            .ephemeral(command.data.name == "payouts")
                     ))
                     .await
                 {

@@ -12,6 +12,7 @@ use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 use dsync::config::Config;
 use dsync::discord::{self, bot::DiscordBot};
 use dsync::merit::tracker::MeritTracker;
+use dsync::payments::{self, PaymentConfig, StripeClient};
 use dsync::routes;
 use dsync::AppState;
 
@@ -75,12 +76,23 @@ async fn main() -> Result<()> {
         }
     });
 
+    // Payment model (ledger + Stripe Connect). Transfers only happen on admin approve.
+    let payment_config = Arc::new(PaymentConfig::from_env());
+    let allow_live = env::var("DSYNC_STRIPE_ALLOW_LIVE").map(|v| v == "true").unwrap_or(false);
+    let stripe_client = StripeClient::new(payment_config.stripe_secret_key.clone(), allow_live);
+    if !stripe_client.is_configured() {
+        info!("Stripe not configured; payout approvals will fail until STRIPE_SECRET_KEY is set");
+    }
+    info!("Tracked payout branches: {:?}", payment_config.branches);
+
     // Create app state
     let app_state = web::Data::new(AppState {
         config: config.clone(),
         db_pool: db_pool.clone(),
         merit_tracker: merit_tracker.clone(),
         discord_http,
+        payments: payment_config,
+        stripe: Arc::new(stripe_client),
     });
 
     // Start Actix web server
@@ -95,6 +107,11 @@ async fn main() -> Result<()> {
             .service(routes::github_webhook)
             .service(routes::get_contributor_stats)
             .service(routes::get_leaderboard)
+            .service(payments::routes::onboard)
+            .service(payments::routes::stripe_webhook)
+            .service(payments::routes::list_ledger)
+            .service(payments::routes::approve_entry)
+            .service(payments::routes::reject_entry)
     })
     .bind((config.server.host.as_str(), config.server.port))?
     .run()

@@ -1,3 +1,5 @@
+use crate::payments::{ledger, PaymentConfig};
+use std::sync::Arc;
 use crate::models::{ActivityType, Contribution, ContributionStatus, Contributor, MeritActivity};
 use crate::services::coderabbit::CodeRabbitService;
 use anyhow::Result;
@@ -13,6 +15,19 @@ pub struct GitHubWebhookPayload {
     pub action: Option<String>,
     pub pull_request: Option<PullRequestPayload>,
     pub review: Option<ReviewPayload>,
+    #[serde(default)]
+    pub repository: Option<RepositoryPayload>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RepositoryPayload {
+    pub full_name: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BranchRef {
+    #[serde(rename = "ref")]
+    pub ref_name: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -23,6 +38,13 @@ pub struct PullRequestPayload {
     pub state: String,
     pub merged: bool,
     pub user: GitHubUser,
+    /// GitHub's global PR id (stable across repos)
+    #[serde(default)]
+    pub id: i64,
+    #[serde(default)]
+    pub merge_commit_sha: Option<String>,
+    #[serde(default)]
+    pub base: Option<BranchRef>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -40,6 +62,7 @@ pub struct GitHubUser {
 pub struct GitHubWebhookHandler {
     db_pool: SqlitePool,
     coderabbit_service: CodeRabbitService,
+    payments: Option<Arc<PaymentConfig>>,
 }
 
 impl GitHubWebhookHandler {
@@ -47,7 +70,13 @@ impl GitHubWebhookHandler {
         Self {
             db_pool,
             coderabbit_service: CodeRabbitService::new(coderabbit_api_key),
+            payments: None,
         }
+    }
+
+    pub fn with_payments(mut self, cfg: Arc<PaymentConfig>) -> Self {
+        self.payments = Some(cfg);
+        self
     }
 
     pub async fn handle_webhook(&self, event_type: &str, payload: GitHubWebhookPayload) -> Result<()> {
@@ -63,6 +92,7 @@ impl GitHubWebhookHandler {
     }
 
     async fn handle_pull_request(&self, payload: GitHubWebhookPayload) -> Result<()> {
+        let repo = payload.repository.as_ref().map(|r| r.full_name.clone());
         if let Some(pr) = payload.pull_request {
             let action = payload.action.as_deref().unwrap_or("");
             
@@ -70,7 +100,7 @@ impl GitHubWebhookHandler {
                 "opened" => self.handle_pr_opened(pr).await?,
                 "closed" => {
                     if pr.merged {
-                        self.handle_pr_merged(pr).await?;
+                        self.handle_pr_merged(pr, repo).await?;
                     }
                 }
                 _ => {}
@@ -129,7 +159,7 @@ impl GitHubWebhookHandler {
         Ok(())
     }
 
-    async fn handle_pr_merged(&self, pr: PullRequestPayload) -> Result<()> {
+    async fn handle_pr_merged(&self, pr: PullRequestPayload, repo: Option<String>) -> Result<()> {
         info!("Handling merged PR #{} by {}", pr.number, pr.user.login);
 
         // Get contributor
@@ -173,6 +203,26 @@ impl GitHubWebhookHandler {
 
         self.record_activity(activity).await?;
         self.update_contributor_points(contributor.id, merit_points).await?;
+
+        // Payment ledger (pending_approval only; no money moves here)
+        if let Some(cfg) = &self.payments {
+            match (pr.merge_commit_sha.clone(), pr.base.as_ref().map(|b| b.ref_name.clone())) {
+                (Some(merge_sha), Some(branch)) if pr.id != 0 => {
+                    let ev = ledger::MergeEvent {
+                        pr_id: pr.id,
+                        pr_number: pr.number as i64,
+                        merge_sha,
+                        repo,
+                        title: pr.title.clone(),
+                        github_username: pr.user.login.clone(),
+                        branch,
+                        merit_points: merit_points as i64,
+                    };
+                    ledger::record_merge(&self.db_pool, cfg, &ev).await?;
+                }
+                _ => warn!("PR #{} merged without id/merge_commit_sha/base; no ledger entry", pr.number),
+            }
+        }
 
         Ok(())
     }

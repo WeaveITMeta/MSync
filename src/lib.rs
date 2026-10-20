@@ -3,10 +3,12 @@ pub mod discord;
 pub mod github;
 pub mod merit;
 pub mod models;
+pub mod payments;
 pub mod routes;
 pub mod services;
 
 use config::Config;
+use payments::{PaymentConfig, StripeApi};
 use merit::tracker::MeritTracker;
 use sqlx::sqlite::SqlitePool;
 use std::sync::Arc;
@@ -17,6 +19,8 @@ pub struct AppState {
     pub db_pool: SqlitePool,
     pub merit_tracker: Arc<RwLock<MeritTracker>>,
     pub discord_http: Arc<serenity::http::Http>,
+    pub payments: Arc<PaymentConfig>,
+    pub stripe: Arc<dyn StripeApi>,
 }
 
 #[cfg(test)]

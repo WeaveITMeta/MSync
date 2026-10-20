@@ -96,7 +96,8 @@ pub async fn github_webhook(
     let handler = GitHubWebhookHandler::new(
         state.db_pool.clone(),
         state.config.coderabbit.api_key.clone(),
-    );
+    )
+    .with_payments(state.payments.clone());
 
     match handler.handle_webhook(event_type, payload).await {
         Ok(_) => HttpResponse::Ok().json(serde_json::json!({
