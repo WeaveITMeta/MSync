@@ -104,7 +104,7 @@ pub async fn get_contributor_stats(
             )
             .fetch_one(&state.db_pool)
             .await
-            .map(|r| r.count.unwrap_or(0))
+            .map(|r| r.count)
             .unwrap_or(0);
 
             let avg_score = sqlx::query!(

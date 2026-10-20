@@ -9,25 +9,12 @@ use tokio::sync::RwLock;
 use tracing::{error, info};
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
-mod config;
-mod discord;
-mod github;
-mod merit;
-mod models;
-mod routes;
-mod services;
+use dsync::config::Config;
+use dsync::discord::{self, bot::DiscordBot};
+use dsync::merit::tracker::MeritTracker;
+use dsync::routes;
+use dsync::AppState;
 
-use config::Config;
-use discord::bot::DiscordBot;
-use github::webhook::GitHubWebhookHandler;
-use merit::tracker::MeritTracker;
-
-pub struct AppState {
-    pub config: Config,
-    pub db_pool: SqlitePool,
-    pub merit_tracker: Arc<RwLock<MeritTracker>>,
-    pub discord_http: Arc<serenity::http::Http>,
-}
 
 #[actix_web::main]
 async fn main() -> Result<()> {

@@ -47,12 +47,12 @@ impl MeritTracker {
                 _ => "Community member",
             };
 
-            // Note: Discord role IDs would need to be set after creating roles in Discord
+            let role_id = Uuid::new_v4();
             sqlx::query!(
                 "INSERT OR IGNORE INTO merit_roles (id, role_name, discord_role_id, 
                  required_merit_points, permissions_level, description, created_at) 
                  VALUES (?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)",
-                Uuid::new_v4(),
+                role_id,
                 role_name,
                 0i64, // Placeholder - needs to be updated with actual Discord role ID
                 required_points,

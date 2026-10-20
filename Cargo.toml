@@ -19,7 +19,7 @@ serenity = { version = "0.12", features = ["client", "gateway", "model", "framew
 tokio = { version = "1.36", features = ["full"] }
 
 # Database
-sqlx = { version = "0.7", features = ["runtime-tokio-rustls", "sqlite", "migrate"] }
+sqlx = { version = "0.7", features = ["runtime-tokio-rustls", "sqlite", "migrate", "uuid", "chrono"] }
 
 # GitHub API
 octocrab = "0.34"

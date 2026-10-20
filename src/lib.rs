@@ -6,6 +6,19 @@ pub mod models;
 pub mod routes;
 pub mod services;
 
+use config::Config;
+use merit::tracker::MeritTracker;
+use sqlx::sqlite::SqlitePool;
+use std::sync::Arc;
+use tokio::sync::RwLock;
+
+pub struct AppState {
+    pub config: Config,
+    pub db_pool: SqlitePool,
+    pub merit_tracker: Arc<RwLock<MeritTracker>>,
+    pub discord_http: Arc<serenity::http::Http>,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -42,43 +55,39 @@ mod tests {
 
     #[test]
     fn test_merit_calculation_for_activities() {
-        let calculator = MeritCalculator;
         
-        assert_eq!(calculator.calculate_activity_merit(&ActivityType::PullRequestOpened, None), 5);
-        assert_eq!(calculator.calculate_activity_merit(&ActivityType::CodeReview, None), 10);
-        assert_eq!(calculator.calculate_activity_merit(&ActivityType::BugFix, None), 30);
-        assert_eq!(calculator.calculate_activity_merit(&ActivityType::SecurityFix, None), 50);
+        assert_eq!(MeritCalculator::calculate_activity_merit(&ActivityType::PullRequestOpened, None), 5);
+        assert_eq!(MeritCalculator::calculate_activity_merit(&ActivityType::CodeReview, None), 10);
+        assert_eq!(MeritCalculator::calculate_activity_merit(&ActivityType::BugFix, None), 30);
+        assert_eq!(MeritCalculator::calculate_activity_merit(&ActivityType::SecurityFix, None), 50);
     }
 
     #[test]
     fn test_merit_calculation_from_coderabbit_score() {
-        let calculator = MeritCalculator;
         
-        assert_eq!(calculator.calculate_pr_merit_from_score(95.0), 60);
-        assert_eq!(calculator.calculate_pr_merit_from_score(90.0), 50);
-        assert_eq!(calculator.calculate_pr_merit_from_score(80.0), 35);
-        assert_eq!(calculator.calculate_pr_merit_from_score(70.0), 25);
-        assert_eq!(calculator.calculate_pr_merit_from_score(50.0), 10);
+        assert_eq!(MeritCalculator::calculate_pr_merit_from_score(95.0), 60);
+        assert_eq!(MeritCalculator::calculate_pr_merit_from_score(90.0), 50);
+        assert_eq!(MeritCalculator::calculate_pr_merit_from_score(80.0), 35);
+        assert_eq!(MeritCalculator::calculate_pr_merit_from_score(70.0), 25);
+        assert_eq!(MeritCalculator::calculate_pr_merit_from_score(50.0), 10);
     }
 
     #[test]
     fn test_streak_bonus_calculation() {
-        let calculator = MeritCalculator;
         
-        assert_eq!(calculator.calculate_streak_bonus(1), 0);
-        assert_eq!(calculator.calculate_streak_bonus(3), 5);
-        assert_eq!(calculator.calculate_streak_bonus(7), 10);
-        assert_eq!(calculator.calculate_streak_bonus(14), 25);
-        assert_eq!(calculator.calculate_streak_bonus(30), 50);
+        assert_eq!(MeritCalculator::calculate_streak_bonus(1), 0);
+        assert_eq!(MeritCalculator::calculate_streak_bonus(3), 5);
+        assert_eq!(MeritCalculator::calculate_streak_bonus(7), 10);
+        assert_eq!(MeritCalculator::calculate_streak_bonus(14), 25);
+        assert_eq!(MeritCalculator::calculate_streak_bonus(30), 50);
     }
 
     #[test]
     fn test_complexity_bonus() {
-        let calculator = MeritCalculator;
         
-        assert_eq!(calculator.calculate_complexity_bonus(50, 2), 4);
-        assert_eq!(calculator.calculate_complexity_bonus(100, 5), 20);
-        assert_eq!(calculator.calculate_complexity_bonus(500, 10), 20); // Capped at 20
+        assert_eq!(MeritCalculator::calculate_complexity_bonus(50, 2), 4);
+        assert_eq!(MeritCalculator::calculate_complexity_bonus(100, 5), 20);
+        assert_eq!(MeritCalculator::calculate_complexity_bonus(500, 10), 20); // Capped at 20
     }
 
     #[test]

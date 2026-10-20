@@ -139,9 +139,10 @@ impl DiscordSyncService {
                 .await?;
 
             // Update database with Discord role ID
+            let new_role_id = new_role.id.get() as i64;
             sqlx::query!(
                 "UPDATE merit_roles SET discord_role_id = ? WHERE role_name = ?",
-                new_role.id.get() as i64,
+                new_role_id,
                 role.role_name
             )
             .execute(&self.db_pool)

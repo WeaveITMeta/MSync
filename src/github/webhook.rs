@@ -94,6 +94,7 @@ impl GitHubWebhookHandler {
             pr.body.clone(),
         );
 
+        let status_i = contribution.status as i32;
         sqlx::query!(
             "INSERT INTO contributions (id, contributor_id, github_pr_number, title, description, 
              merit_points, status, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
@@ -103,7 +104,7 @@ impl GitHubWebhookHandler {
             contribution.title,
             contribution.description,
             contribution.merit_points,
-            contribution.status as i32,
+            status_i,
             contribution.created_at
         )
         .execute(&self.db_pool)
@@ -135,10 +136,12 @@ impl GitHubWebhookHandler {
         let contributor = self.get_or_create_contributor(&pr.user.login).await?;
 
         // Update contribution status
+        let merged_status = ContributionStatus::Merged as i32;
+        let merged_at = Utc::now();
         sqlx::query!(
             "UPDATE contributions SET status = ?, merged_at = ? WHERE github_pr_number = ?",
-            ContributionStatus::Merged as i32,
-            Utc::now(),
+            merged_status,
+            merged_at,
             pr.number
         )
         .execute(&self.db_pool)
@@ -228,12 +231,13 @@ impl GitHubWebhookHandler {
     }
 
     async fn record_activity(&self, activity: MeritActivity) -> Result<()> {
+        let activity_type_i = activity.activity_type as i32;
         sqlx::query!(
             "INSERT INTO merit_activities (id, contributor_id, activity_type, merit_change, 
              description, metadata, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
             activity.id,
             activity.contributor_id,
-            activity.activity_type as i32,
+            activity_type_i,
             activity.merit_change,
             activity.description,
             activity.metadata,

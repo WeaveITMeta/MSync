@@ -44,7 +44,7 @@ impl GitHubApiClient {
     pub async fn add_pr_label(&self, pr_number: u64, label: &str) -> Result<()> {
         self.octocrab
             .issues(&self.repo_owner, &self.repo_name)
-            .add_labels(pr_number, &[label])
+            .add_labels(pr_number, &[label.to_string()])
             .await?;
 
         info!("Added label '{}' to PR #{}", label, pr_number);
