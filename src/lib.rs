@@ -85,7 +85,8 @@ mod tests {
     #[test]
     fn test_complexity_bonus() {
         
-        assert_eq!(MeritCalculator::calculate_complexity_bonus(50, 2), 4);
+        // 50 lines * 0.1 + 2 files * 2.0 = 9
+        assert_eq!(MeritCalculator::calculate_complexity_bonus(50, 2), 9);
         assert_eq!(MeritCalculator::calculate_complexity_bonus(100, 5), 20);
         assert_eq!(MeritCalculator::calculate_complexity_bonus(500, 10), 20); // Capped at 20
     }
