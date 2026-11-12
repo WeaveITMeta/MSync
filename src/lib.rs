@@ -1,5 +1,6 @@
 pub mod config;
 pub mod discord;
+pub mod forge;
 pub mod github;
 pub mod merit;
 pub mod models;
@@ -26,8 +27,10 @@ pub struct AppState {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::models::{Contributor, Contribution, ActivityType, MeritActivity};
+    use crate::models::{Contributor, Contribution};
     use crate::merit::calculator::MeritCalculator;
+    use crate::merit::rubric;
+    use crate::merit::scoring::MeritRules;
     use uuid::Uuid;
 
     #[test]
@@ -57,23 +60,26 @@ mod tests {
         assert!(contribution.coderabbit_score.is_none());
     }
 
+    // Replaces the old activity-table test: event points now come from MeritRules
+    // (contract 3.4) through the one points function.
     #[test]
-    fn test_merit_calculation_for_activities() {
-        
-        assert_eq!(MeritCalculator::calculate_activity_merit(&ActivityType::PullRequestOpened, None), 5);
-        assert_eq!(MeritCalculator::calculate_activity_merit(&ActivityType::CodeReview, None), 10);
-        assert_eq!(MeritCalculator::calculate_activity_merit(&ActivityType::BugFix, None), 30);
-        assert_eq!(MeritCalculator::calculate_activity_merit(&ActivityType::SecurityFix, None), 50);
+    fn test_merit_points_for_events() {
+        let rules = MeritRules::default();
+        assert_eq!(rules.pr_opened.points(None), 5);
+        assert_eq!(rules.review_approved.points(None), 10);
+        assert_eq!(rules.pr_merged.points(None), 10); // no score: base points
     }
 
+    // Replaces the old CodeRabbit step-table test (95->60, 90->50, ...): the score
+    // now maps linearly, points = base + round((max - base) * score / 100).
     #[test]
-    fn test_merit_calculation_from_coderabbit_score() {
-        
-        assert_eq!(MeritCalculator::calculate_pr_merit_from_score(95.0), 60);
-        assert_eq!(MeritCalculator::calculate_pr_merit_from_score(90.0), 50);
-        assert_eq!(MeritCalculator::calculate_pr_merit_from_score(80.0), 35);
-        assert_eq!(MeritCalculator::calculate_pr_merit_from_score(70.0), 25);
-        assert_eq!(MeritCalculator::calculate_pr_merit_from_score(50.0), 10);
+    fn test_merit_points_from_rubric_score() {
+        assert_eq!(rubric::points(10, 60, Some(100.0)), 60);
+        assert_eq!(rubric::points(10, 60, Some(90.0)), 55);
+        assert_eq!(rubric::points(10, 60, Some(80.0)), 50);
+        assert_eq!(rubric::points(10, 60, Some(70.0)), 45);
+        assert_eq!(rubric::points(10, 60, Some(50.0)), 35);
+        assert_eq!(rubric::points(10, 60, None), 10);
     }
 
     #[test]

@@ -1,99 +1,40 @@
-use anyhow::{anyhow, Result};
-use reqwest::Client;
-use serde::{Deserialize, Serialize};
-use tracing::{error, info};
+//! CodeRabbit as an optional scorer source (contract section 6).
+//!
+//! There is no CodeRabbit network call and no score here. The engine never invents
+//! a score: a CodeRabbit result reaches merit only as a `Submission` with
+//! `Assessment::Total` (0..=100 plus one evidence string), stored through
+//! `merit::scoring::submit_score` like any other scorer.
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct CodeRabbitReviewRequest {
-    pub pr_number: i32,
-    pub repository: String,
+use crate::forge::{ForgeProvider, Subject};
+use crate::merit::rubric::{RUBRIC_ID, RUBRIC_SHA256};
+use crate::merit::scoring::{Assessment, Scorer, ScorerSource, Submission};
+
+/// Scorer id used for CodeRabbit submissions.
+pub const CODERABBIT_SCORER_ID: &str = "coderabbit";
+
+/// The CodeRabbit scorer. Its bot logins are listed so it can never score work it
+/// authored (for example a PR opened by the bot itself).
+pub fn coderabbit_scorer() -> Scorer {
+    Scorer {
+        id: CODERABBIT_SCORER_ID.to_string(),
+        source: ScorerSource::CodeRabbit,
+        forge_logins: vec![
+            (ForgeProvider::GitHub, "coderabbitai".to_string()),
+            (ForgeProvider::GitHub, "coderabbitai[bot]".to_string()),
+            (ForgeProvider::GitLab, "coderabbitai".to_string()),
+        ],
+    }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct CodeRabbitReviewResponse {
-    pub status: String,
-    pub review_id: String,
-    pub score: Option<f32>,
-    pub summary: Option<String>,
-    pub suggestions: Vec<CodeRabbitSuggestion>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct CodeRabbitSuggestion {
-    pub file: String,
-    pub line: i32,
-    pub severity: String,
-    pub message: String,
-}
-
-pub struct CodeRabbitService {
-    client: Client,
-    api_key: String,
-    base_url: String,
-}
-
-impl CodeRabbitService {
-    pub fn new(api_key: String) -> Self {
-        Self {
-            client: Client::new(),
-            api_key,
-            base_url: "https://api.coderabbit.ai/v1".to_string(),
-        }
-    }
-
-    pub async fn request_review(&self, pr_number: i32) -> Result<CodeRabbitReviewResponse> {
-        // Note: This is a placeholder implementation
-        // Actual CodeRabbit API integration would go here
-        
-        info!("Requesting CodeRabbit review for PR #{}", pr_number);
-        
-        // Simulate API call
-        let response = CodeRabbitReviewResponse {
-            status: "completed".to_string(),
-            review_id: format!("review-{}", pr_number),
-            score: Some(85.0),
-            summary: Some("Code quality is good with minor suggestions".to_string()),
-            suggestions: vec![],
-        };
-
-        Ok(response)
-    }
-
-    pub async fn get_review_score(&self, pr_number: i32) -> Result<f32> {
-        // In production, this would fetch the actual review score
-        // For now, return a simulated score based on PR number
-        let score = 70.0 + (pr_number % 30) as f32;
-        Ok(score.min(100.0))
-    }
-
-    pub async fn get_review_details(&self, review_id: &str) -> Result<CodeRabbitReviewResponse> {
-        info!("Fetching CodeRabbit review details for {}", review_id);
-        
-        // Placeholder implementation
-        Ok(CodeRabbitReviewResponse {
-            status: "completed".to_string(),
-            review_id: review_id.to_string(),
-            score: Some(85.0),
-            summary: Some("Review completed successfully".to_string()),
-            suggestions: vec![],
-        })
-    }
-
-    pub fn calculate_merit_from_review(&self, review: &CodeRabbitReviewResponse) -> i32 {
-        let base_merit = 10;
-        
-        if let Some(score) = review.score {
-            let score_bonus = match score {
-                s if s >= 90.0 => 40,
-                s if s >= 80.0 => 25,
-                s if s >= 70.0 => 15,
-                s if s >= 60.0 => 5,
-                _ => 0,
-            };
-            
-            base_merit + score_bonus
-        } else {
-            base_merit
-        }
+/// Build a CodeRabbit submission from a real review result. Validation happens in
+/// `submit_score`.
+pub fn coderabbit_submission(subject: Subject, total_score: f32, evidence: String, ci_passed: bool, reverted: bool) -> Submission {
+    Submission {
+        subject,
+        rubric_id: RUBRIC_ID.to_string(),
+        rubric_hash: RUBRIC_SHA256.to_string(),
+        ci_passed,
+        reverted,
+        assessment: Assessment::Total { score: total_score, evidence },
     }
 }

@@ -109,6 +109,7 @@ async fn main() -> Result<()> {
             .wrap(middleware::NormalizePath::trim())
             .service(routes::health_check)
             .service(routes::github_webhook)
+            .service(routes::gitlab_webhook)
             .service(routes::get_contributor_stats)
             .service(routes::get_leaderboard)
             .service(payments::routes::onboard)

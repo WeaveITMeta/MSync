@@ -2,11 +2,18 @@ use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 use std::env;
 
+use crate::forge::RepoRegistry;
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Config {
     pub discord: DiscordConfig,
     pub github: GitHubConfig,
     pub coderabbit: CodeRabbitConfig,
+    #[serde(default)]
+    pub gitlab: GitLabConfig,
+    /// Repositories whose events earn (`DSYNC_FORGE_REPOS`). Unset: GitHub as before, GitLab refused.
+    #[serde(default)]
+    pub forge_repos: RepoRegistry,
     pub database_url: String,
     pub server: ServerConfig,
 }
@@ -25,9 +32,21 @@ pub struct GitHubConfig {
     pub repo_name: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+/// CodeRabbit is optional (an unset or empty `CODERABBIT_API_KEY` is None).
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct CodeRabbitConfig {
-    pub api_key: String,
+    pub api_key: Option<String>,
+}
+
+/// GitLab webhooks. With no secret (unset or empty `GITLAB_WEBHOOK_SECRET`) every
+/// GitLab webhook is rejected.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct GitLabConfig {
+    pub webhook_secret: Option<String>,
+}
+
+fn non_empty_env(key: &str) -> Option<String> {
+    env::var(key).ok().map(|v| v.trim().to_string()).filter(|v| !v.is_empty())
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -58,9 +77,12 @@ impl Config {
                     .context("GITHUB_REPO_NAME not found in environment")?,
             },
             coderabbit: CodeRabbitConfig {
-                api_key: env::var("CODERABBIT_API_KEY")
-                    .context("CODERABBIT_API_KEY not found in environment")?,
+                api_key: non_empty_env("CODERABBIT_API_KEY"),
             },
+            gitlab: GitLabConfig {
+                webhook_secret: non_empty_env("GITLAB_WEBHOOK_SECRET"),
+            },
+            forge_repos: RepoRegistry::from_env().map_err(anyhow::Error::msg)?,
             database_url: env::var("DATABASE_URL")
                 .unwrap_or_else(|_| "sqlite://dsync.db".to_string()),
             server: ServerConfig {

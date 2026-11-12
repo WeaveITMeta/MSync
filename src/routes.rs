@@ -1,10 +1,27 @@
+use crate::forge::{self, ForgeProcessor, ProcessOutcome, RepoDecision, RepoRegistry};
 use crate::github::webhook::{GitHubWebhookHandler, GitHubWebhookPayload};
-use crate::models::{ContributorStats, LeaderboardEntry};
+use crate::merit::leaderboard::{self, LeaderboardQuery};
+use crate::merit::scoring::MeritRules;
+use crate::payments::PaymentConfig;
 use crate::AppState;
+use actix_web::http::header::HeaderMap;
+use actix_web::http::StatusCode;
 use actix_web::{get, post, web, HttpRequest, HttpResponse, Responder};
-use anyhow::Result;
 use serde::{Deserialize, Serialize};
-use tracing::{error, info};
+use sqlx::SqlitePool;
+use std::sync::Arc;
+use tracing::{error, info, warn};
+
+/// Merit rules in force. Round 1: contract 3.4 defaults. The CRA (`merit.toml`)
+/// supplies them in a later round; this is the one place to wire that in.
+pub fn merit_rules(_state: &AppState) -> Arc<MeritRules> {
+    Arc::new(MeritRules::default())
+}
+
+/// Repository registry in force (`DSYNC_FORGE_REPOS` today, the CRA later).
+pub fn forge_registry(state: &AppState) -> Arc<RepoRegistry> {
+    Arc::new(state.config.forge_repos.clone())
+}
 
 #[derive(Debug, Serialize)]
 pub struct HealthResponse {
@@ -113,11 +130,10 @@ pub async fn github_webhook(
         }
     }
 
-    let handler = GitHubWebhookHandler::new(
-        state.db_pool.clone(),
-        state.config.coderabbit.api_key.clone(),
-    )
-    .with_payments(state.payments.clone());
+    let handler = GitHubWebhookHandler::new(state.db_pool.clone())
+        .with_payments(state.payments.clone())
+        .with_registry(forge_registry(&state))
+        .with_rules(merit_rules(&state));
 
     match handler.handle_webhook(event_type, payload).await {
         Ok(_) => HttpResponse::Ok().json(serde_json::json!({
@@ -212,33 +228,14 @@ pub async fn get_contributor_stats(
 
 #[get("/api/leaderboard")]
 pub async fn get_leaderboard(state: web::Data<AppState>) -> impl Responder {
-    let contributors = sqlx::query!(
-        "SELECT * FROM contributors ORDER BY total_merit_points DESC LIMIT 25"
-    )
-    .fetch_all(&state.db_pool)
-    .await;
-
-    match contributors {
-        Ok(contributors) => {
-            let leaderboard: Vec<_> = contributors
-                .into_iter()
-                .enumerate()
-                .map(|(idx, c)| {
-                    serde_json::json!({
-                        "rank": idx + 1,
-                        "github_username": c.github_username,
-                        "total_merit_points": c.total_merit_points,
-                        "current_role": c.current_role,
-                        "contributions_count": c.contributions_count,
-                    })
-                })
-                .collect();
-
-            HttpResponse::Ok().json(serde_json::json!({
-                "leaderboard": leaderboard,
-                "generated_at": chrono::Utc::now(),
-            }))
-        }
+    let registry = forge_registry(&state);
+    // Public: private repositories are combined, never named.
+    let q = LeaderboardQuery { repo: None, limit: 25, include_private_names: false };
+    match leaderboard::leaderboard(&state.db_pool, &registry, q).await {
+        Ok(rows) => HttpResponse::Ok().json(serde_json::json!({
+            "leaderboard": public_leaderboard_json(&rows),
+            "generated_at": chrono::Utc::now(),
+        })),
         Err(e) => {
             error!("Failed to fetch leaderboard: {}", e);
             HttpResponse::InternalServerError().json(serde_json::json!({
@@ -246,6 +243,110 @@ pub async fn get_leaderboard(state: web::Data<AppState>) -> impl Responder {
             }))
         }
     }
+}
+
+/// The public leaderboard row shape: the existing fields plus `by_repo`.
+pub fn public_leaderboard_json(rows: &[leaderboard::LeaderboardRow]) -> Vec<serde_json::Value> {
+    rows.iter()
+        .map(|r| {
+            serde_json::json!({
+                "rank": r.rank,
+                "github_username": r.github_username,
+                "total_merit_points": r.total_points,
+                "current_role": r.current_role,
+                "contributions_count": r.contributions_count,
+                "by_repo": r.by_repo,
+            })
+        })
+        .collect()
+}
+
+fn header<'a>(headers: &'a HeaderMap, name: &str) -> Option<&'a str> {
+    headers.get(name).and_then(|h| h.to_str().ok())
+}
+
+/// GitLab webhook core, separated from actix state so it can be tested directly.
+/// Order: token (constant time) -> parse -> normalize -> registry -> delivery dedupe -> merit.
+pub async fn process_gitlab_webhook(
+    pool: &SqlitePool,
+    secret: Option<&str>,
+    registry: Arc<RepoRegistry>,
+    payments: Arc<PaymentConfig>,
+    rules: Arc<MeritRules>,
+    headers: &HeaderMap,
+    body: &[u8],
+) -> (StatusCode, serde_json::Value) {
+    if !forge::gitlab::verify_token(secret, header(headers, "X-Gitlab-Token")) {
+        error!("Rejected GitLab webhook: missing or invalid X-Gitlab-Token");
+        return (StatusCode::UNAUTHORIZED, serde_json::json!({"status": "error", "message": "invalid token"}));
+    }
+    let payload: forge::gitlab::GitLabWebhookPayload = match serde_json::from_slice(body) {
+        Ok(p) => p,
+        Err(e) => {
+            return (StatusCode::BAD_REQUEST, serde_json::json!({"status": "error", "message": format!("invalid payload: {}", e)}));
+        }
+    };
+    let delivery = header(headers, "X-Gitlab-Event-UUID")
+        .or_else(|| header(headers, "Idempotency-Key"))
+        .map(str::trim)
+        .filter(|d| !d.is_empty());
+    let ev = match forge::gitlab::normalize(&payload, delivery) {
+        Ok(Some(ev)) => ev,
+        Ok(None) => return (StatusCode::OK, serde_json::json!({"status": "ignored", "reason": "not a merit event"})),
+        Err(e) => return (StatusCode::BAD_REQUEST, serde_json::json!({"status": "error", "message": e})),
+    };
+    let processor = ForgeProcessor::new(pool.clone()).with_payments(payments).with_registry(registry).with_rules(rules);
+    let decision = processor.decide(&ev);
+    if decision != RepoDecision::Earn {
+        warn!("GitLab event for {:?} on {} earns nothing: {:?}", ev.repo, ev.host, decision);
+        return (StatusCode::OK, serde_json::json!({"status": "ignored", "reason": format!("{:?}", decision)}));
+    }
+    let delivery_key = delivery.map(|d| forge::gitlab::delivery_key(&ev.host, d));
+    if let Some(key) = &delivery_key {
+        match crate::github::dedupe::claim(pool, key).await {
+            Ok(true) => {}
+            Ok(false) => {
+                info!("Duplicate GitLab delivery {}; ignoring", key);
+                return (StatusCode::OK, serde_json::json!({"status": "duplicate"}));
+            }
+            Err(e) => {
+                error!("dedupe claim failed: {}", e);
+                return (StatusCode::INTERNAL_SERVER_ERROR, serde_json::json!({"status": "error"}));
+            }
+        }
+    }
+    match processor.process(&ev).await {
+        Ok(outcome) => {
+            let status = match outcome {
+                ProcessOutcome::Applied { .. } => "success",
+                ProcessOutcome::Duplicate => "duplicate",
+                ProcessOutcome::Ignored(_) => "ignored",
+            };
+            (StatusCode::OK, serde_json::json!({"status": status}))
+        }
+        Err(e) => {
+            error!("Failed to handle GitLab webhook: {}", e);
+            if let Some(key) = &delivery_key {
+                let _ = crate::github::dedupe::release(pool, key).await;
+            }
+            (StatusCode::INTERNAL_SERVER_ERROR, serde_json::json!({"status": "error", "message": e.to_string()}))
+        }
+    }
+}
+
+#[post("/gitlab/webhook")]
+pub async fn gitlab_webhook(req: HttpRequest, body: web::Bytes, state: web::Data<AppState>) -> impl Responder {
+    let (status, json) = process_gitlab_webhook(
+        &state.db_pool,
+        state.config.gitlab.webhook_secret.as_deref(),
+        forge_registry(&state),
+        state.payments.clone(),
+        merit_rules(&state),
+        req.headers(),
+        &body,
+    )
+    .await;
+    HttpResponse::build(status).json(json)
 }
 
 #[cfg(test)]
@@ -268,5 +369,161 @@ mod signature_tests {
         assert!(!verify_github_signature(SECRET, BODY, None));
         assert!(!verify_github_signature(SECRET, BODY, Some("sha1=abc")));
         assert!(!verify_github_signature(b"", BODY, Some(SIG)));
+    }
+}
+
+#[cfg(test)]
+mod gitlab_webhook_tests {
+    use super::*;
+    use crate::forge::gitlab::tests::mr_hook;
+    use actix_web::test::TestRequest;
+    use sqlx::sqlite::SqlitePoolOptions;
+
+    const SECRET: &str = "gl-test-secret";
+
+    async fn pool() -> SqlitePool {
+        let pool = SqlitePoolOptions::new().max_connections(1).connect("sqlite::memory:").await.unwrap();
+        sqlx::migrate!("./migrations").run(&pool).await.unwrap();
+        pool
+    }
+
+    fn headers(token: Option<&str>, uuid: Option<&str>, idem: Option<&str>) -> HeaderMap {
+        let mut req = TestRequest::post().insert_header(("X-Gitlab-Event", "Merge Request Hook"));
+        if let Some(t) = token {
+            req = req.insert_header(("X-Gitlab-Token", t));
+        }
+        if let Some(u) = uuid {
+            req = req.insert_header(("X-Gitlab-Event-UUID", u));
+        }
+        if let Some(i) = idem {
+            req = req.insert_header(("Idempotency-Key", i));
+        }
+        req.to_http_request().headers().clone()
+    }
+
+    fn body(action: &str, path: &str) -> Vec<u8> {
+        serde_json::to_vec(&mr_hook(action, (5, "carol"), 5, path, &format!("https://gitlab.com/{path}"))).unwrap()
+    }
+
+    async fn call(pool: &SqlitePool, secret: Option<&str>, spec: &str, h: &HeaderMap, b: &[u8]) -> (StatusCode, serde_json::Value) {
+        let reg = Arc::new(RepoRegistry::from_spec(spec).unwrap());
+        let pay = Arc::new(PaymentConfig::from_lookup(|_| None));
+        process_gitlab_webhook(pool, secret, reg, pay, Arc::new(MeritRules::default()), h, b).await
+    }
+
+    /// (sum of merit, merit_activities, contributions, payout_ledger, processed keys)
+    async fn counts(pool: &SqlitePool) -> (i64, i64, i64, i64, i64) {
+        let c = |q: &'static str| async move { sqlx::query_scalar::<_, i64>(q).fetch_one(pool).await.unwrap() };
+        (
+            c("SELECT COALESCE(SUM(total_merit_points), 0) FROM contributors").await,
+            c("SELECT COUNT(*) FROM merit_activities").await,
+            c("SELECT COUNT(*) FROM contributions").await,
+            c("SELECT COUNT(*) FROM payout_ledger").await,
+            c("SELECT COUNT(*) FROM processed_webhook_events").await,
+        )
+    }
+
+    const LISTED: &str = "gitlab:gitlab.com:grp/proj";
+
+    #[tokio::test]
+    async fn wrong_missing_and_empty_tokens_are_rejected() {
+        let pool = pool().await;
+        let b = body("merge", "grp/proj");
+        for (secret, token) in [
+            (Some(SECRET), Some("wrong")),
+            (Some(SECRET), None),
+            (Some(SECRET), Some("")),
+            (Some(""), Some("")),   // empty secret rejects everything
+            (None, Some("")),       // unset secret rejects everything
+            (None, Some(SECRET)),
+        ] {
+            let (st, _) = call(&pool, secret, LISTED, &headers(token, Some("u-1"), None), &b).await;
+            assert_eq!(st, StatusCode::UNAUTHORIZED, "secret {secret:?} token {token:?}");
+        }
+        assert_eq!(counts(&pool).await, (0, 0, 0, 0, 0), "a rejected webhook must write nothing");
+        // Control: the right token is accepted
+        let (st, _) = call(&pool, Some(SECRET), LISTED, &headers(Some(SECRET), Some("u-1"), None), &b).await;
+        assert_eq!(st, StatusCode::OK);
+        assert_eq!(counts(&pool).await.0, 10);
+    }
+
+    #[tokio::test]
+    async fn replays_are_deduped_by_uuid_idempotency_key_and_effect_key() {
+        let pool = pool().await;
+        let ok = |uuid: Option<&'static str>, idem: Option<&'static str>| headers(Some(SECRET), uuid, idem);
+        let open = body("open", "grp/proj");
+        let merge = body("merge", "grp/proj");
+
+        let (st, j) = call(&pool, Some(SECRET), LISTED, &ok(Some("u-open"), None), &open).await;
+        assert_eq!((st, j["status"].as_str()), (StatusCode::OK, Some("success")));
+        let (st, j) = call(&pool, Some(SECRET), LISTED, &ok(Some("u-merge"), None), &merge).await;
+        assert_eq!((st, j["status"].as_str()), (StatusCode::OK, Some("success")));
+        let after = counts(&pool).await;
+        assert_eq!((after.0, after.1, after.2, after.3), (15, 2, 1, 1));
+
+        // Same UUID replayed
+        let (_, j) = call(&pool, Some(SECRET), LISTED, &ok(Some("u-merge"), None), &merge).await;
+        assert_eq!(j["status"], "duplicate");
+        // Idempotency-Key fallback replayed
+        let (_, j) = call(&pool, Some(SECRET), LISTED, &ok(None, Some("k-1")), &merge).await;
+        assert_eq!(j["status"], "duplicate", "fresh delivery key but merge effect already applied");
+        let (_, j) = call(&pool, Some(SECRET), LISTED, &ok(None, Some("k-1")), &merge).await;
+        assert_eq!(j["status"], "duplicate");
+        // No delivery id at all: effect key still dedupes
+        let (_, j) = call(&pool, Some(SECRET), LISTED, &ok(None, None), &merge).await;
+        assert_eq!(j["status"], "duplicate");
+        let now = counts(&pool).await;
+        assert_eq!((now.0, now.1, now.2, now.3), (15, 2, 1, 1), "replays changed merit or ledger");
+
+        let keys: Vec<String> = sqlx::query_scalar("SELECT event_key FROM processed_webhook_events ORDER BY event_key").fetch_all(&pool).await.unwrap();
+        assert!(keys.iter().all(|k| k.starts_with("gitlab:gitlab.com:")), "{keys:?}");
+        assert!(keys.contains(&"gitlab:gitlab.com:delivery:u-merge".to_string()));
+        assert!(keys.contains(&"gitlab:gitlab.com:delivery:k-1".to_string()));
+        assert!(keys.contains(&"gitlab:gitlab.com:pr_merged:id555:deadbeef".to_string()));
+    }
+
+    #[tokio::test]
+    async fn unlisted_mirror_and_unset_registry_earn_nothing() {
+        for spec in [
+            "gitlab:gitlab.com:grp/other",        // unlisted
+            "gitlab:gitlab.com:grp/proj:mirror",  // mirror
+            "",                                   // registry unset: GitLab refused
+            "github:github.com:grp/proj",         // same path, other provider
+        ] {
+            let pool = pool().await;
+            for action in ["open", "merge", "approved"] {
+                let (st, j) = call(&pool, Some(SECRET), spec, &headers(Some(SECRET), None, None), &body(action, "grp/proj")).await;
+                assert_eq!((st, j["status"].as_str()), (StatusCode::OK, Some("ignored")), "{spec} {action}");
+            }
+            assert_eq!(counts(&pool).await, (0, 0, 0, 0, 0), "{spec}: must earn nothing and create no ledger row");
+        }
+    }
+
+    #[tokio::test]
+    async fn self_approval_on_gitlab_earns_nothing_but_peer_approval_does() {
+        let pool = pool().await;
+        let h = headers(Some(SECRET), None, None);
+        call(&pool, Some(SECRET), LISTED, &h, &body("open", "grp/proj")).await;
+        let (_, j) = call(&pool, Some(SECRET), LISTED, &h, &body("approved", "grp/proj")).await;
+        assert_eq!(j["status"], "ignored");
+        let peer = serde_json::to_vec(&mr_hook("approved", (9, "maint"), 5, "grp/proj", "https://gitlab.com/grp/proj")).unwrap();
+        let (_, j) = call(&pool, Some(SECRET), LISTED, &h, &peer).await;
+        assert_eq!(j["status"], "success");
+        let maint: i64 = sqlx::query_scalar("SELECT total_merit_points FROM contributors WHERE github_username = 'gitlab:maint'").fetch_one(&pool).await.unwrap();
+        assert_eq!(maint, 10);
+    }
+
+    #[tokio::test]
+    async fn merge_by_maintainer_pays_the_recorded_author() {
+        let pool = pool().await;
+        let h = headers(Some(SECRET), None, None);
+        call(&pool, Some(SECRET), LISTED, &h, &body("open", "grp/proj")).await;
+        let by_maint = serde_json::to_vec(&mr_hook("merge", (9, "maint"), 5, "grp/proj", "https://gitlab.com/grp/proj")).unwrap();
+        let (_, j) = call(&pool, Some(SECRET), LISTED, &h, &by_maint).await;
+        assert_eq!(j["status"], "success");
+        let rows: Vec<(String, i64)> = sqlx::query_as("SELECT github_username, total_merit_points FROM contributors").fetch_all(&pool).await.unwrap();
+        assert_eq!(rows, vec![("gitlab:carol".to_string(), 15)]);
+        let (user, pr_id): (String, i64) = sqlx::query_as("SELECT github_username, pr_id FROM payout_ledger").fetch_one(&pool).await.unwrap();
+        assert_eq!((user.as_str(), pr_id), ("gitlab:carol", 555));
     }
 }
