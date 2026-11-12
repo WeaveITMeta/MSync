@@ -1,0 +1,64 @@
+schema = 1
+
+# Owners (rank 1000) are engine configuration, never CRA content. This example
+# assumes DSYNC_OWNER_MEMBER_IDS = "github:example-founder".
+# Contributors who are not listed here still earn merit under their forge
+# login and link Discord by OAuth proof.
+
+[[member]]
+id = "founder"
+name = "Example Founder"
+status = "active"
+
+[member.identities]
+github = "example-founder"
+discord = "100000000000000101"
+
+[[member]]
+id = "mckale"
+name = "McKale Olson"
+status = "active"
+
+[member.identities]
+github = "Simbuilder"
+discord = "100000000000000102"
+
+[[member.grant]]
+role = "lead-maintainer"
+granted_by = "founder"
+expires = "2027-11-01"
+
+[[member]]
+id = "ada-example"
+name = "Ada Example"
+status = "active"
+
+[member.identities]
+github = "ada-example"
+discord = "100000000000000103"
+
+[[member.grant]]
+role = "maintainer"
+granted_by = "mckale"
+expires = "2027-06-30"
+
+[[member]]
+id = "bo-example"
+name = "Bo Example"
+status = "active"
+
+[member.identities]
+github = "bo-example"
+discord = "100000000000000104"
+
+[[member.grant]]
+role = "reviewer"
+granted_by = "ada-example"
+
+[[member]]
+id = "cy-example"
+name = "Cy Example"
+status = "active"
+
+[member.identities]
+github = "cy-example"

@@ -1,0 +1,68 @@
+schema = 1
+
+# Hybrid mode: open-source tiers for the public repository (ceiling 30),
+# appointed job titles for staff. grants.two_person_min_rank = 50 and
+# grants.max_term_days = 180.
+
+[[role]]
+key = "newcomer"
+title = "Newcomer"
+kind = "tier"
+rank = 0
+min_merit = 0
+permissions = ["profile.self", "community.read"]
+
+[[role]]
+key = "contributor"
+title = "Contributor"
+kind = "tier"
+rank = 10
+min_merit = 50
+permissions = ["profile.self", "community.read", "community.post", "community.vote"]
+discord_role = "300000000000000010"
+
+[[role]]
+key = "core-contributor"
+title = "Core Contributor"
+kind = "tier"
+rank = 30
+min_merit = 500
+permissions = ["profile.self", "community.read", "community.post", "community.vote", "community.events"]
+discord_role = "300000000000000030"
+
+[[role]]
+key = "engineer"
+title = "Engineer"
+kind = "position"
+rank = 20
+permissions = ["community.post", "community.vote", "roster.read_members", "payouts.read_own"]
+discord_role = "300000000000000020"
+
+[[role]]
+key = "senior-engineer"
+title = "Senior Engineer"
+kind = "position"
+rank = 40
+permissions = ["community.post", "community.vote", "community.moderate", "roster.read_members", "payouts.read_own"]
+discord_role = "300000000000000040"
+
+[[role]]
+key = "head-of-cell-engineering"
+title = "Head of Cell Engineering"
+kind = "position"
+rank = 60
+permissions = ["community.moderate", "roster.read_full", "members.invite", "members.grant", "members.approve_grant", "members.revoke", "payouts.read_all"]
+discord_role = "300000000000000060"
+max_holders = 1
+term_days = 180
+compartments = ["cell-eng"]
+
+[[role]]
+key = "director"
+title = "Director"
+kind = "position"
+rank = 70
+permissions = ["members.invite", "members.grant", "members.approve_grant", "members.revoke", "members.suspend", "payouts.read_all", "payouts.approve", "policy.propose_change", "policy.approve_change", "consumers.manage", "roster.read_full", "audit.read_all", "compartment.manage"]
+discord_role = "300000000000000070"
+max_holders = 2
+term_days = 180

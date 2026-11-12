@@ -1,0 +1,32 @@
+schema = 1
+
+# Example CRA for an open-source project. Every name except McKale Olson is a
+# placeholder, every Discord id is a fake snowflake, and the repository path
+# is a placeholder. Replace them before use.
+
+[org]
+slug = "eustress-engine"
+name = "Eustress Engine"
+mode = "open"
+template = "open-source"
+
+[policy]
+# The open-mode default is 7 days; this example holds payouts a little longer.
+"payouts.hold_days" = 10
+
+[discord]
+guild_id = "100000000000000000"
+alert_channel_id = "100000000000000009"
+
+[[forge]]
+provider = "github"
+repo = "example-eustress/eustress-engine"
+visibility = "public"
+canonical = true
+payout_branches = ["main"]
+
+[[consumer]]
+key = "eustress-site"
+label = "Eustress Engine website"
+scopes = ["community.*", "profile.*"]
+fields = ["tier", "positions.title", "merit.vested", "permissions"]

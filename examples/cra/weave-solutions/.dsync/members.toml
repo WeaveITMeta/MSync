@@ -1,0 +1,68 @@
+schema = 1
+
+# Owners (rank 1000) are engine configuration, never CRA content. This example
+# assumes DSYNC_OWNER_MEMBER_IDS = "github:example-founder".
+
+[[member]]
+id = "founder"
+name = "Example Founder"
+status = "active"
+
+[member.identities]
+github = "example-founder"
+discord = "200000000000000101"
+
+[[member]]
+id = "mckale"
+name = "McKale Olson"
+status = "active"
+
+[member.identities]
+github = "Simbuilder"
+discord = "200000000000000102"
+
+[[member.grant]]
+role = "director"
+granted_by = "founder"
+expires = "2027-02-01"
+
+[[member]]
+id = "dee-example"
+name = "Dee Example"
+status = "active"
+
+[member.identities]
+github = "dee-example"
+discord = "200000000000000103"
+
+[[member.grant]]
+role = "senior-engineer"
+granted_by = "mckale"
+expires = "2027-01-31"
+
+[[member]]
+id = "eli-example"
+name = "Eli Example"
+status = "active"
+
+[member.identities]
+github = "eli-example"
+discord = "200000000000000104"
+
+[[member.grant]]
+role = "engineer"
+granted_by = "mckale"
+
+[[member]]
+id = "fay-example"
+name = "Fay Example"
+status = "active"
+
+[member.identities]
+github = "fay-example"
+discord = "200000000000000105"
+
+[[member.grant]]
+role = "contractor"
+granted_by = "mckale"
+expires = "2027-01-15"

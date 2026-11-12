@@ -1,0 +1,41 @@
+schema = 1
+rubric = "dsync-rubric-v1"
+scorers = ["agent"]
+min_scorers = 1
+score_window_days = 7
+
+[[event]]
+key = "pr_merged"
+base_points = 10
+max_points = 60
+weight = 1.0
+daily_cap = 150
+vesting_days = 14
+external_counts = true
+
+[[event]]
+key = "review_approved"
+base_points = 10
+max_points = 10
+weight = 1.0
+daily_cap = 40
+vesting_days = 14
+external_counts = true
+
+[[event]]
+key = "issue_closed"
+base_points = 5
+max_points = 20
+weight = 1.0
+daily_cap = 40
+vesting_days = 14
+external_counts = true
+
+[[event]]
+key = "release_published"
+base_points = 25
+max_points = 25
+weight = 1.0
+daily_cap = 25
+vesting_days = 14
+external_counts = false

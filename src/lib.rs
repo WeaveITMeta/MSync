@@ -1,4 +1,5 @@
 pub mod config;
+pub mod cra;
 pub mod discord;
 pub mod github;
 pub mod merit;

@@ -55,6 +55,9 @@ sha2 = "0.10"
 hex = "0.4"
 subtle = "2.5"
 
+# CRA (Central Rank Authority) file parsing
+toml = "0.8"
+
 # Async traits
 async-trait = "0.1"
 

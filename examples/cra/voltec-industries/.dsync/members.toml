@@ -1,0 +1,69 @@
+schema = 1
+
+# Owners (rank 1000) are engine configuration, never CRA content. This example
+# assumes DSYNC_OWNER_MEMBER_IDS = "github:example-founder".
+
+[[member]]
+id = "founder"
+name = "Example Founder"
+status = "active"
+
+[member.identities]
+github = "example-founder"
+discord = "300000000000000101"
+
+[[member]]
+id = "gus-example"
+name = "Gus Example"
+status = "active"
+
+[member.identities]
+github = "gus-example"
+gitlab = "gus-example"
+discord = "300000000000000102"
+
+[[member.grant]]
+role = "director"
+granted_by = "founder"
+expires = "2027-04-30"
+
+[[member]]
+id = "hana-example"
+name = "Hana Example"
+status = "active"
+
+[member.identities]
+gitlab = "hana-example"
+discord = "300000000000000103"
+
+[[member.grant]]
+role = "head-of-cell-engineering"
+granted_by = "gus-example"
+expires = "2027-05-01"
+
+[[member]]
+id = "mckale"
+name = "McKale Olson"
+status = "active"
+
+[member.identities]
+github = "Simbuilder"
+gitlab = "simbuilder"
+discord = "300000000000000104"
+
+[[member.grant]]
+role = "engineer"
+granted_by = "gus-example"
+
+[[member]]
+id = "ivo-example"
+name = "Ivo Example"
+status = "active"
+
+[member.identities]
+gitlab = "ivo-example"
+discord = "300000000000000105"
+
+[[member.grant]]
+role = "senior-engineer"
+granted_by = "hana-example"
