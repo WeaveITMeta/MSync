@@ -58,6 +58,9 @@ subtle = "2.5"
 # Random secrets for API tokens (already in the tree via uuid; no new crate)
 getrandom = "0.3"
 
+# CRA (Central Rank Authority) file parsing
+toml = "0.8"
+
 # Async traits
 async-trait = "0.1"
 

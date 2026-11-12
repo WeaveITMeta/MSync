@@ -1,0 +1,30 @@
+schema = 1
+enabled = true
+currency = "usd"
+
+[schedule]
+cadence = "weekly"
+day = "friday"
+hour_utc = 17
+mode = "prepare"
+
+[limits]
+min_payout_cents = 500
+max_per_payout_cents = 10000
+max_per_member_per_period_cents = 50000
+max_per_run_cents = 250000
+hold_days = 10
+
+[approval]
+approvals_required = 2
+min_approver_rank = 60
+
+[eligibility]
+min_rank = 0
+roles = []
+require_verified_identity = true
+
+[[rate]]
+branch = "main"
+base_cents = 1000
+merit_multiplier = 0.01

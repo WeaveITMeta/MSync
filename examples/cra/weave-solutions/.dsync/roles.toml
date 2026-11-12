@@ -1,0 +1,52 @@
+schema = 1
+
+# Appointed job titles only. The single tier is the floor every member sits
+# on; merit is recorded and shown but confers no rank (ceiling 0).
+# Closed mode: grants.two_person_min_rank = 30 and grants.max_term_days = 90,
+# so Senior Engineer and Director grants need two people and expire within 90
+# days.
+
+[[role]]
+key = "member"
+title = "Member"
+kind = "tier"
+rank = 0
+min_merit = 0
+permissions = ["profile.self", "community.read", "merit.read_own", "audit.read_own"]
+
+[[role]]
+key = "contractor"
+title = "Contractor"
+kind = "position"
+rank = 10
+permissions = ["community.post", "payouts.read_own"]
+discord_role = "200000000000000010"
+term_days = 90
+compartments = ["client-work"]
+
+[[role]]
+key = "engineer"
+title = "Engineer"
+kind = "position"
+rank = 20
+permissions = ["community.post", "community.vote", "roster.read_members", "payouts.read_own"]
+discord_role = "200000000000000020"
+
+[[role]]
+key = "senior-engineer"
+title = "Senior Engineer"
+kind = "position"
+rank = 30
+permissions = ["community.post", "community.vote", "roster.read_members", "payouts.read_own", "members.invite"]
+discord_role = "200000000000000030"
+term_days = 90
+
+[[role]]
+key = "director"
+title = "Director"
+kind = "position"
+rank = 70
+permissions = ["members.invite", "members.grant", "members.approve_grant", "members.revoke", "members.suspend", "payouts.read_all", "payouts.approve", "policy.propose_change", "policy.approve_change", "roster.read_full", "audit.read_all", "compartment.manage"]
+discord_role = "200000000000000070"
+max_holders = 3
+term_days = 90

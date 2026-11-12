@@ -1,0 +1,68 @@
+schema = 1
+
+# Earned tiers (merit 0 to 500, ranks 0 to 30, the open-mode ceiling) and
+# appointed positions (Reviewer, Maintainer, Lead Maintainer).
+
+[[role]]
+key = "newcomer"
+title = "Newcomer"
+kind = "tier"
+rank = 0
+min_merit = 0
+permissions = ["profile.self", "community.read", "leaderboard.read"]
+
+[[role]]
+key = "contributor"
+title = "Contributor"
+kind = "tier"
+rank = 10
+min_merit = 50
+permissions = ["profile.self", "community.read", "leaderboard.read", "community.post", "community.vote"]
+discord_role = "100000000000000010"
+
+[[role]]
+key = "active-contributor"
+title = "Active Contributor"
+kind = "tier"
+rank = 20
+min_merit = 150
+permissions = ["profile.self", "community.read", "leaderboard.read", "community.post", "community.vote", "community.events"]
+discord_role = "100000000000000020"
+
+[[role]]
+key = "core-contributor"
+title = "Core Contributor"
+kind = "tier"
+rank = 30
+min_merit = 500
+permissions = ["profile.self", "community.read", "leaderboard.read", "community.post", "community.vote", "community.events", "roster.read_members"]
+discord_role = "100000000000000030"
+
+[[role]]
+key = "reviewer"
+title = "Reviewer"
+kind = "position"
+rank = 40
+permissions = ["community.moderate", "roster.read_full", "merit.read_all"]
+discord_role = "100000000000000040"
+
+[[role]]
+key = "maintainer"
+title = "Maintainer"
+kind = "position"
+rank = 60
+permissions = ["members.invite", "members.grant", "members.approve_grant", "members.revoke", "members.suspend", "payouts.read_all", "payouts.approve", "roster.read_full", "merit.award_manual"]
+discord_role = "100000000000000060"
+max_holders = 5
+term_days = 365
+merit_eligibility = 1000
+
+[[role]]
+key = "lead-maintainer"
+title = "Lead Maintainer"
+kind = "position"
+rank = 80
+permissions = ["members.invite", "members.grant", "members.approve_grant", "members.revoke", "members.suspend", "payouts.read_all", "payouts.approve", "roster.read_full", "merit.award_manual", "merit.clawback", "policy.propose_change", "policy.approve_change", "consumers.manage", "discord.reconcile", "audit.read_all"]
+discord_role = "100000000000000080"
+max_holders = 2
+term_days = 365

@@ -1,0 +1,41 @@
+schema = 1
+
+# Example CRA for a closed-source company. Every name except McKale Olson is a
+# placeholder, every Discord id is a fake snowflake, and the repository paths
+# are placeholders. Replace them before use. This is an illustration of the
+# file format, not a description of the company.
+
+[org]
+slug = "weave-solutions"
+name = "Weave Solutions"
+mode = "closed"
+template = "closed-source"
+
+[policy]
+# Closed mode counts only internal.* and manual.award by default. Work in the
+# company's private repositories is internal work, so it is recorded too.
+# Merit still confers no rank: the closed-mode merit_rank_ceiling is 0.
+"merit.sources_enabled" = ["internal.*", "github.*", "manual.award"]
+
+[discord]
+guild_id = "200000000000000000"
+alert_channel_id = "200000000000000009"
+
+[[forge]]
+provider = "github"
+repo = "example-weave/weave-core"
+visibility = "private"
+canonical = true
+payout_branches = ["main"]
+
+[[forge]]
+provider = "github"
+repo = "example-weave/weave-infra"
+visibility = "private"
+canonical = true
+payout_branches = ["main"]
+
+[[compartment]]
+key = "client-work"
+label = "Client engagements"
+classification = "confidential"

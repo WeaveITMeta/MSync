@@ -1,5 +1,6 @@
 pub mod auth;
 pub mod config;
+pub mod cra;
 pub mod discord;
 pub mod forge;
 pub mod github;

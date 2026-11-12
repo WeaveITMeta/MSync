@@ -1,0 +1,50 @@
+schema = 1
+
+# Example CRA for a hybrid (open core) organization with one GitHub and one
+# GitLab repository. Every name except McKale Olson is a placeholder, every
+# Discord id is a fake snowflake, and the repository paths are placeholders.
+# Replace them before use. This is an illustration of the file format, not a
+# description of the company.
+
+[org]
+slug = "voltec-industries"
+name = "Voltec Industries"
+mode = "hybrid"
+template = "hybrid"
+
+[discord]
+guild_id = "300000000000000000"
+alert_channel_id = "300000000000000009"
+
+# Public community repository: external contributors earn merit here
+# (hybrid mode: merit.external_contributions_earn = public_repos_only).
+[[forge]]
+provider = "github"
+repo = "example-voltec/voltec-community"
+visibility = "public"
+canonical = true
+payout_branches = ["main"]
+
+# Private firmware repository on GitLab: staff only.
+[[forge]]
+provider = "gitlab"
+host = "gitlab.com"
+repo = "example-voltec/cell-firmware"
+visibility = "private"
+canonical = true
+payout_branches = ["main"]
+
+[[compartment]]
+key = "cell-eng"
+label = "Cell Engineering"
+classification = "confidential"
+
+# Voltec's rule: DSync standing reaches community features only. It never
+# reaches manufacturer data, messages, user management, roles or super admin.
+# The scopes below are community.* only, and Voltec enforces the same
+# allowlist in its own code.
+[[consumer]]
+key = "voltec-portal"
+label = "Voltec community portal"
+scopes = ["community.*"]
+fields = ["tier", "positions.title", "merit.vested", "permissions"]
