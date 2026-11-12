@@ -1,3 +1,4 @@
+pub mod api;
 pub mod calculator;
 pub mod leaderboard;
 pub mod rubric;
