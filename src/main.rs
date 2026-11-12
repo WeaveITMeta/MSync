@@ -9,6 +9,7 @@ use tokio::sync::RwLock;
 use tracing::{error, info};
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
+use dsync::auth::{Directory, EnvDirectory};
 use dsync::config::Config;
 use dsync::discord::{self, bot::DiscordBot};
 use dsync::merit::tracker::MeritTracker;
@@ -89,6 +90,24 @@ async fn main() -> Result<()> {
         }
     });
 
+    // API tokens rank seam and payout controls (v1 API + scheduler)
+    let env_directory = EnvDirectory::from_env();
+    info!("Payout approver owners configured: {}", env_directory.owner_count());
+    let directory: Arc<dyn Directory> = Arc::new(env_directory);
+    let api_ctx = payments::api::ApiContext {
+        pool: db_pool.clone(),
+        payments: payment_config.clone(),
+        stripe: stripe_api.clone(),
+        directory: directory.clone(),
+    };
+    let scheduler_secs: u64 = env::var("DSYNC_PAYOUT_SCHEDULER_SECS").ok().and_then(|v| v.parse().ok()).unwrap_or(60);
+    if scheduler_secs > 0 {
+        tokio::spawn(payments::schedule::run_scheduler(api_ctx.clone(), std::time::Duration::from_secs(scheduler_secs)));
+    } else {
+        info!("Payout scheduler disabled (DSYNC_PAYOUT_SCHEDULER_SECS=0)");
+    }
+    let api_data = web::Data::new(api_ctx);
+
     // Create app state
     let app_state = web::Data::new(AppState {
         config: config.clone(),
@@ -97,6 +116,7 @@ async fn main() -> Result<()> {
         discord_http,
         payments: payment_config,
         stripe: stripe_api,
+        directory,
     });
 
     // Start Actix web server
@@ -105,6 +125,7 @@ async fn main() -> Result<()> {
     HttpServer::new(move || {
         App::new()
             .app_data(app_state.clone())
+            .app_data(api_data.clone())
             .wrap(middleware::Logger::default())
             .wrap(middleware::NormalizePath::trim())
             .service(routes::health_check)
@@ -119,6 +140,7 @@ async fn main() -> Result<()> {
             .service(payments::routes::list_ledger)
             .service(payments::routes::approve_entry)
             .service(payments::routes::reject_entry)
+            .configure(payments::api::configure)
     })
     .bind((config.server.host.as_str(), config.server.port))?
     .run()

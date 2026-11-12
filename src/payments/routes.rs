@@ -1,3 +1,5 @@
+use super::approvals::{self, LegacyApproveOutcome};
+use super::error::PayoutError;
 use super::ledger::{self, LedgerError};
 use super::onboarding::{self, OnboardError};
 use super::signature::{token_matches, verify_stripe_signature, STRIPE_TOLERANCE_SECS};
@@ -30,6 +32,10 @@ fn ledger_error(e: LedgerError) -> HttpResponse {
         LedgerError::NotFound => HttpResponse::NotFound().json(json!({"status": "error", "message": e.to_string()})),
         LedgerError::InvalidState(..) => HttpResponse::Conflict().json(json!({"status": "error", "message": e.to_string()})),
         LedgerError::NotPayable(_) => HttpResponse::UnprocessableEntity().json(json!({"status": "error", "message": e.to_string()})),
+        LedgerError::Policy(_) => {
+            error!("{}", e);
+            HttpResponse::ServiceUnavailable().json(json!({"status": "error", "message": "payout policy unavailable"}))
+        }
         LedgerError::Db(err) => {
             error!("ledger db error: {}", err);
             HttpResponse::InternalServerError().json(json!({"status": "error", "message": "database error"}))
@@ -178,14 +184,34 @@ pub struct DecisionRequest {
     pub reason: Option<String>,
 }
 
+/// Legacy admin approve. With no stored payout policy: unchanged (pays immediately, decided_by
+/// from the body). With a stored policy: counts as one approval by `admin-token` and pays only when
+/// the policy allows a single approver and every other payable check passes (contract section 8).
 #[post("/api/admin/ledger/{id}/approve")]
 pub async fn approve_entry(req: HttpRequest, path: web::Path<String>, body: web::Json<DecisionRequest>, state: web::Data<AppState>) -> HttpResponse {
     if let Err(r) = require_admin(&req, &state) {
         return r;
     }
-    match ledger::approve(&state.db_pool, state.stripe.as_ref(), &path, &body.decided_by).await {
-        Ok(entry) => HttpResponse::Ok().json(json!({"status": "success", "entry": entry})),
-        Err(e) => ledger_error(e),
+    match approvals::legacy_admin_approve(
+        &state.db_pool,
+        state.stripe.as_ref(),
+        &state.payments,
+        state.directory.as_ref(),
+        &path,
+        &body.decided_by,
+        chrono::Utc::now(),
+    )
+    .await
+    {
+        Ok(LegacyApproveOutcome::Transferred { entry }) => HttpResponse::Ok().json(json!({"status": "success", "entry": entry})),
+        Ok(LegacyApproveOutcome::ApprovalRecorded { entry, blockers }) => HttpResponse::Accepted().json(json!({
+            "status": "approval_recorded",
+            "approver": crate::auth::LEGACY_ADMIN_MEMBER,
+            "entry": entry,
+            "blockers": blockers,
+        })),
+        Err(PayoutError::Ledger(e)) => ledger_error(e),
+        Err(e) => super::api::payout_error(e),
     }
 }
 

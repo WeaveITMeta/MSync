@@ -9,10 +9,10 @@ use sqlx::sqlite::{SqlitePool, SqlitePoolOptions};
 use std::sync::Mutex;
 
 #[derive(Default)]
-struct MockStripe {
-    transfers: Mutex<Vec<TransferRequest>>,
-    accounts_created: Mutex<u32>,
-    fail: bool,
+pub(super) struct MockStripe {
+    pub(super) transfers: Mutex<Vec<TransferRequest>>,
+    pub(super) accounts_created: Mutex<u32>,
+    pub(super) fail: bool,
 }
 
 #[async_trait]
@@ -33,7 +33,7 @@ impl StripeApi for MockStripe {
     }
 }
 
-fn cfg() -> PaymentConfig {
+pub(super) fn cfg() -> PaymentConfig {
     PaymentConfig::from_lookup(|k| match k {
         "DSYNC_PAY_BRANCHES" => Some("main, upcoming".into()),
         "DSYNC_PAY_BASE_CENTS_MAIN" => Some("2000".into()),
@@ -44,13 +44,13 @@ fn cfg() -> PaymentConfig {
     })
 }
 
-async fn pool() -> SqlitePool {
+pub(super) async fn pool() -> SqlitePool {
     let pool = SqlitePoolOptions::new().max_connections(1).connect("sqlite::memory:").await.unwrap();
     sqlx::migrate!("./migrations").run(&pool).await.unwrap();
     pool
 }
 
-async fn add_contributor(pool: &SqlitePool, gh: &str, acct: Option<&str>, enabled: bool) {
+pub(super) async fn add_contributor(pool: &SqlitePool, gh: &str, acct: Option<&str>, enabled: bool) {
     sqlx::query(
         "INSERT INTO contributors (id, github_username, discord_user_id, created_at, updated_at, stripe_account_id, stripe_payouts_enabled)
          VALUES (?, ?, 42, datetime('now'), datetime('now'), ?, ?)",
@@ -64,7 +64,7 @@ async fn add_contributor(pool: &SqlitePool, gh: &str, acct: Option<&str>, enable
     .unwrap();
 }
 
-fn merge(pr_id: i64, sha: &str, branch: &str) -> MergeEvent {
+pub(super) fn merge(pr_id: i64, sha: &str, branch: &str) -> MergeEvent {
     MergeEvent {
         pr_id,
         pr_number: pr_id,
