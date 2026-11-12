@@ -1,3 +1,4 @@
+pub mod auth;
 pub mod config;
 pub mod discord;
 pub mod github;
@@ -21,6 +22,8 @@ pub struct AppState {
     pub discord_http: Arc<serenity::http::Http>,
     pub payments: Arc<PaymentConfig>,
     pub stripe: Arc<dyn StripeApi>,
+    /// Rank seam (round 1: owners from DSYNC_OWNER_MEMBER_IDS). The CRA plugs in here later.
+    pub directory: Arc<dyn auth::Directory>,
 }
 
 #[cfg(test)]

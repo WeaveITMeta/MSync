@@ -1,4 +1,5 @@
 use super::config::PaymentConfig;
+use super::policy;
 use super::stripe::{StripeApi, TransferRequest};
 use serde::Serialize;
 use sqlx::SqlitePool;
@@ -54,15 +55,41 @@ pub enum LedgerError {
     InvalidState(String, &'static str),
     #[error("not payable: {0}")]
     NotPayable(String),
+    /// The stored payout policy could not be loaded (fail closed).
+    #[error("payout policy unavailable: {0}")]
+    Policy(String),
     #[error(transparent)]
     Db(#[from] sqlx::Error),
+}
+
+/// Conditions checked inside the atomic status claim (contract section 8: limits are re-checked
+/// at execute time, inside the same claim that marks the row). Every field is optional.
+#[derive(Debug, Clone, Default)]
+pub struct ClaimGuard {
+    pub min_cents: Option<i64>,
+    pub max_cents: Option<i64>,
+    /// (window_start, window_end, cap): amounts of this payee's rows that are approved/paid with
+    /// updated_at in [start, end), plus this row, must not exceed cap. Times as `YYYY-MM-DD HH:MM:SS`.
+    pub member_period: Option<(String, String, i64)>,
+    /// (run_id, cap): amounts of this run's rows that are approved/paid, plus this row, must not exceed cap.
+    pub run_cap: Option<(String, i64)>,
+    /// Refuse the claim when the payee is in payout_blocks.
+    pub check_blocks: bool,
+    /// Timestamp written to updated_at by the claim (defaults to datetime('now')).
+    pub now: Option<String>,
 }
 
 /// Record a merged PR. Returns Some(entry) when a new row was created, None when the
 /// branch is untracked or this (pr_id, merge_sha) was already recorded (duplicate webhook).
 /// Never moves money.
 pub async fn record_merge(pool: &SqlitePool, cfg: &PaymentConfig, ev: &MergeEvent) -> Result<Option<LedgerEntry>, LedgerError> {
-    let Some((base, amount)) = cfg.amount_for(&ev.branch, ev.merit_points) else {
+    // Rates, cap and currency come from the effective payout policy. With no stored policy that is
+    // PayoutPolicy::from_config(cfg), whose amount_for equals cfg.amount_for (tested).
+    let effective = policy::load_effective(pool, crate::auth::DEFAULT_ORG, cfg)
+        .await
+        .map_err(|e| LedgerError::Policy(e.to_string()))?;
+    let currency = effective.policy.currency.clone();
+    let Some((base, amount)) = effective.policy.amount_for(&ev.branch, ev.merit_points) else {
         info!("PR #{} merged into untracked branch '{}'; no ledger entry", ev.pr_number, ev.branch);
         return Ok(None);
     };
@@ -92,7 +119,7 @@ pub async fn record_merge(pool: &SqlitePool, cfg: &PaymentConfig, ev: &MergeEven
     .bind(base)
     .bind(ev.merit_points)
     .bind(amount)
-    .bind(&cfg.currency)
+    .bind(&currency)
     .bind(PENDING)
     .execute(pool)
     .await?;
@@ -101,7 +128,7 @@ pub async fn record_merge(pool: &SqlitePool, cfg: &PaymentConfig, ev: &MergeEven
         info!("Duplicate merge event for PR #{} ({}); ledger unchanged", ev.pr_number, ev.merge_sha);
         return Ok(None);
     }
-    info!("Ledger entry {} created: PR #{} by {} on {} = {} {}", id, ev.pr_number, ev.github_username, ev.branch, amount, cfg.currency);
+    info!("Ledger entry {} created: PR #{} by {} on {} = {} {}", id, ev.pr_number, ev.github_username, ev.branch, amount, currency);
     Ok(get(pool, &id).await?)
 }
 
@@ -148,10 +175,34 @@ pub async fn reject(pool: &SqlitePool, id: &str, by: &str, reason: &str) -> Resu
     get(pool, id).await?.ok_or(LedgerError::NotFound)
 }
 
-/// Approve a pending (or previously failed) entry and pay it via a Stripe Transfer.
-/// This is the ONLY place a transfer is created. Uses idempotency key `dsync-ledger-<id>`
-/// so a retry can never pay twice on Stripe's side.
+/// Approve a pending (or previously failed) entry and pay it via a Stripe Transfer, with no
+/// policy guard (the pre-policy behaviour, used by the legacy route when no policy is stored).
 pub async fn approve(pool: &SqlitePool, stripe: &dyn StripeApi, id: &str, by: &str) -> Result<LedgerEntry, LedgerError> {
+    claim_and_transfer(pool, stripe, id, by, None).await
+}
+
+/// Pay a pending (or previously failed) entry only if `guard` holds inside the atomic claim.
+/// Returns NotPayable when the guard refuses the claim.
+pub async fn pay_guarded(
+    pool: &SqlitePool,
+    stripe: &dyn StripeApi,
+    id: &str,
+    by: &str,
+    guard: &ClaimGuard,
+) -> Result<LedgerEntry, LedgerError> {
+    claim_and_transfer(pool, stripe, id, by, Some(guard)).await
+}
+
+/// The ONLY place a transfer is created. Claims the row atomically (status pending/failed ->
+/// approved, plus any guard conditions in the same UPDATE) and uses idempotency key
+/// `dsync-ledger-<id>` so a retry can never pay twice on Stripe's side.
+async fn claim_and_transfer(
+    pool: &SqlitePool,
+    stripe: &dyn StripeApi,
+    id: &str,
+    by: &str,
+    guard: Option<&ClaimGuard>,
+) -> Result<LedgerEntry, LedgerError> {
     let entry = get(pool, id).await?.ok_or(LedgerError::NotFound)?;
     if entry.status != PENDING && entry.status != FAILED {
         return Err(LedgerError::InvalidState(entry.status, "approved"));
@@ -182,18 +233,62 @@ pub async fn approve(pool: &SqlitePool, stripe: &dyn StripeApi, id: &str, by: &s
         }
     };
 
-    // Claim the row atomically so concurrent approvals can't both transfer.
-    let claimed = sqlx::query(
-        "UPDATE payout_ledger SET status = ?, decided_by = ?, updated_at = datetime('now') WHERE id = ? AND status = ?",
-    )
-    .bind(APPROVED)
-    .bind(by)
-    .bind(id)
-    .bind(&entry.status)
-    .execute(pool)
-    .await?;
+    // Claim the row atomically so concurrent approvals can't both transfer. Guard conditions
+    // are part of the same UPDATE, so a limit cannot be raced between check and claim.
+    let mut sql = String::from(
+        "UPDATE payout_ledger SET status = ?, decided_by = ?, updated_at = COALESCE(?, datetime('now')) WHERE id = ? AND status = ?",
+    );
+    if let Some(g) = guard {
+        if g.min_cents.is_some() {
+            sql.push_str(" AND amount_cents >= ?");
+        }
+        if g.max_cents.is_some() {
+            sql.push_str(" AND amount_cents <= ?");
+        }
+        if g.check_blocks {
+            sql.push_str(" AND NOT EXISTS (SELECT 1 FROM payout_blocks b WHERE b.payee_key = lower(payout_ledger.github_username))");
+        }
+        if g.member_period.is_some() {
+            sql.push_str(&format!(
+                " AND amount_cents + (SELECT COALESCE(SUM(p.amount_cents), 0) FROM payout_ledger p \
+                 WHERE lower(p.github_username) = lower(payout_ledger.github_username) AND p.id <> payout_ledger.id \
+                 AND p.status IN ('{APPROVED}', '{PAID}') AND p.updated_at >= ? AND p.updated_at < ?) <= ?"
+            ));
+        }
+        if g.run_cap.is_some() {
+            sql.push_str(&format!(
+                " AND amount_cents + (SELECT COALESCE(SUM(p.amount_cents), 0) FROM payout_ledger p \
+                 JOIN payout_run_items i ON i.ledger_id = p.id WHERE i.run_id = ? AND p.id <> payout_ledger.id \
+                 AND p.status IN ('{APPROVED}', '{PAID}')) <= ?"
+            ));
+        }
+    }
+    let mut q = sqlx::query(&sql)
+        .bind(APPROVED)
+        .bind(by)
+        .bind(guard.and_then(|g| g.now.clone()))
+        .bind(id)
+        .bind(&entry.status);
+    if let Some(g) = guard {
+        if let Some(min) = g.min_cents {
+            q = q.bind(min);
+        }
+        if let Some(max) = g.max_cents {
+            q = q.bind(max);
+        }
+        if let Some((start, end, cap)) = &g.member_period {
+            q = q.bind(start.clone()).bind(end.clone()).bind(*cap);
+        }
+        if let Some((run_id, cap)) = &g.run_cap {
+            q = q.bind(run_id.clone()).bind(*cap);
+        }
+    }
+    let claimed = q.execute(pool).await?;
     if claimed.rows_affected() == 0 {
         let current = get(pool, id).await?.map(|e| e.status).unwrap_or_default();
+        if guard.is_some() && current == entry.status {
+            return Err(LedgerError::NotPayable("a limit or block refused the claim".into()));
+        }
         return Err(LedgerError::InvalidState(current, "approved"));
     }
 
