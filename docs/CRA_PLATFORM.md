@@ -4,10 +4,10 @@ Status: build contract, 2026-11-12. This is the interface the implementation wor
 
 ## 1. Premise
 
-DSync is a management hierarchy tool for open-source and closed-source organizations: role-based access control plus payroll, driven by one hierarchy.
+DSync is a management hierarchy tool for open-source, source-available and closed-source organizations: role-based access control plus payroll, driven by one hierarchy.
 
 - **The Central Rank Authority (CRA) is the organization's repository.** The administration defines roles, job titles, ranks, permissions, members, merit rules and payout policy in files under `.dsync/` in a Git repository hosted on GitHub or GitLab. A change to the hierarchy is a commit, reviewed like code.
-- **DSync is the engine.** It verifies and loads the CRA, ingests forge events from GitHub and GitLab, scores work against a fixed rubric, keeps the merit ledger, computes each member's standing, and runs payouts.
+- **DSync is the engine.** It verifies and loads the CRA, ingests events from GitHub and GitLab through the Foundry API, scores work against a fixed rubric, keeps the merit ledger, computes each member's standing, and runs payouts.
 - **Everything else is a projection.** The Discord bot lives in the server and applies roles from the CRA. Portals (Eustress Engine, Weave Solutions, Voltec Industries) read standing through a signed API or their own SSO. Discord is never the source of truth: a role edited by hand in Discord is drift, and drift is reverted and reported.
 - **Merit tracks who moves the project forward.** Merit comes from events that land improvements (merged work, reviews, fixes, releases), weighted by a rubric score, not from activity volume. The hardest worker is visible and can be paid.
 - **Connectors are how it is easy.** Discord, GitHub and GitLab link through OAuth. A portal links through a consumer key. Nothing else is needed to start.
@@ -18,10 +18,12 @@ DSync is a management hierarchy tool for open-source and closed-source organizat
 |---|---|---|
 | CRA repository (`.dsync/`) | Roles, titles, ranks, permissions, members, appointments, merit rules, payout policy | Source of record for the hierarchy |
 | DSync engine (this service) | Verifies and loads the CRA; merit ledger; rubric scores; standing; payouts; audit | Source of record for earned state (merit, payouts, audit) |
-| Forge connectors (GitHub, GitLab) | Signed webhooks in; file reads at a commit SHA | Input only |
+| Foundry API (GitHub, GitLab) | Signed webhooks in; file reads at a commit SHA | Input only |
 | Discord bot | Applies and reconciles roles | Projection |
 | Portals / consumers | Read standing with scoped, signed requests | Projection |
 | REST API `/api/v1` and MCP server `/mcp` | Scoped tokens; merit scoring; payouts; hierarchy reads | Guarded entry points |
+
+"Foundry API" is the name for DSync's integration layer over code hosts (GitHub and GitLab today): signed webhooks in, file and review reads out. Code uses the `foundry` module and `Foundry*` types; configuration uses `[[foundry]]` and `DSYNC_FOUNDRY_REPOS`.
 
 Owners (rank 1000) are engine configuration (`DSYNC_OWNER_MEMBER_IDS`), never CRA content. A compromised repository cannot mint an owner.
 
@@ -37,8 +39,8 @@ schema = 1
 [org]
 slug = "eustress-engine"        # [a-z0-9-], unique
 name = "Eustress Engine"
-mode = "open"                   # open | closed | hybrid
-template = "open-source"        # informational
+mode = "source_available"       # open | source_available | hybrid | closed
+template = "source-available"   # informational
 
 [policy]                        # optional overrides of the mode defaults (hierarchy doc 3.2)
 "payouts.hold_days" = 10
@@ -47,7 +49,7 @@ template = "open-source"        # informational
 guild_id = "123456789012345678"
 alert_channel_id = "123456789012345679"
 
-[[forge]]                       # repositories whose events count
+[[foundry]]                     # repositories whose events count
 provider = "github"             # github | gitlab
 host = "github.com"             # optional; a self-managed GitLab host goes here
 repo = "EustressEngine/eustress"
@@ -61,6 +63,35 @@ label = "Eustress Engine website"
 scopes = ["community.*", "profile.*"]
 fields = ["tier", "positions.title", "merit.vested", "permissions"]
 ```
+
+### 3.1.1 Modes
+
+`mode` sets the policy defaults (hierarchy doc section 3.2). `[policy]` overrides any field. Four modes:
+
+| Field | open | source_available | hybrid | closed |
+|---|---|---|---|---|
+| `visibility.roster` | `public` | `members` | `members` | `need_to_know` |
+| `visibility.leaderboard` | `public` | `members` | `members` | `off` |
+| `visibility.profile` | `public` | `members` | `members` | `self_and_chain` |
+| `visibility.positions` | `public` | `members` | `members` | `need_to_know` |
+| `merit.external_contributions_earn` | `true` | `true` | `public_repos_only` | `false` |
+| `merit.sources_enabled` | all | all | all | `internal.*` plus `manual.award` |
+| `promotion.merit_rank_ceiling` | 30 | 30 | 30 | 0 |
+| `promotion.merit_may_confer_authority` | `false` | `false` | `false` | `false` |
+| `promotion.eligibility_nominations` | `true` | `true` | `true` | `false` |
+| `compartments.enabled` | `false` | `true` | `true` | `true` |
+| `probation.days` | 14 | 30 | 30 | 90 |
+| `payouts.eligible` | `verified_members` | `verified_members` | `verified_members` | `positions_only` |
+| `payouts.hold_days` | 7 | 7 | 7 | 14 |
+| `payouts.two_person_min_cents` | 50000 | 25000 | 25000 | 0 |
+| `grants.two_person_min_rank` | 60 | 50 | 50 | 30 |
+| `grants.max_term_days` | 365 | 180 | 180 | 90 |
+| `audit.visibility` | `members_summary` | `officers` | `officers` | `officers` |
+| `anomaly.profile_reads_per_hour` | 300 | 120 | 120 | 60 |
+| `anomaly.action_on_trip` | `alert` | `alert` | `alert` | `alert_and_freeze_reads` |
+| `consumers.subject_ids` | `pairwise` | `pairwise` | `pairwise` | `pairwise` |
+
+`source_available` is for a project whose code is public but whose license is not an open-source license (Eustress Engine is the example). Anyone can read the code and outside contributions earn XP, but the roster, leaderboard and job titles are visible to members only, and merit never buys authority. It differs from `hybrid` in one default: outside contributions earn in every listed repository, not only public ones.
 
 ### 3.2 `roles.toml`
 
@@ -113,7 +144,7 @@ expires = "2027-11-01"          # required when role rank >= grants.two_person_m
 
 Rules: an identity value belongs to at most one member; `grant.role` must be a `position`; `granted_by` must exist; no member may be `granted_by` themselves; expiry rules follow the effective policy.
 
-An identity listed here is proven by the administration. A contributor who is not in `members.toml` (the open-source case) earns merit under their forge login and links Discord by OAuth proof, never by typing a username.
+An identity listed here is proven by the administration. A contributor who is not in `members.toml` (the open-source case) earns merit under their GitHub or GitLab login and links Discord by OAuth proof, never by typing a username.
 
 ### 3.4 `merit.toml`
 
@@ -174,11 +205,11 @@ merit_multiplier = 0.01         # amount = base * (1 + merit_points * multiplier
 
 On a verified push webhook to the CRA repository's default branch that touches `.dsync/`:
 
-1. Fetch the five files at the pushed commit SHA through the forge API (never from the webhook body).
+1. Fetch the five files at the pushed commit SHA through the Foundry API (never from the webhook body).
 2. Parse and validate (section 3 rules). Any error rejects the snapshot.
 3. Diff against the active snapshot: roles added, removed or changed; grants added or removed; member status changes; policy, merit and payout changes.
 4. **Authorize the change** against the ACTIVE snapshot, never the new one (a change cannot authorize itself):
-   - The actor is the forge-authenticated identity that merged or pushed, mapped to a member through the active snapshot's identities. An unknown actor is refused. Owners are resolved from engine configuration.
+   - The actor is the identity GitHub or GitLab authenticated that merged or pushed, mapped to a member through the active snapshot's identities. An unknown actor is refused. Owners are resolved from engine configuration.
    - Strict inequality: adding or removing a grant of role R needs `rank(actor) > rank(R)`. Creating, deleting or changing a role with rank R (old or new, whichever is higher) needs `rank(actor) > R`. Changing a member's status needs `rank(actor) > rank(member)`. Nobody changes their own grants or status.
    - Two-person: changes to `org.toml` mode or policy, `merit.toml`, `payouts.toml`, any role at or above `grants.two_person_min_rank`, and any grant of such a role must arrive through a merged pull or merge request with an approving review from a second member who is not the author, not a beneficiary, and outranks the affected role under the same strict rule. Direct pushes carry no approver and fail this check.
 5. If authorized: store the snapshot (commit SHA, content hash, actor, approvers), make it active, write the audit entry, queue Discord reconciliation and consumer cache invalidation. If not: keep the active snapshot, record every violation, alert.
@@ -187,27 +218,27 @@ The mode switch preview McKale asked for is the diff from step 3, shown on the p
 
 Bootstrap: the first snapshot for an org is accepted only when the actor is an owner from engine configuration.
 
-## 5. Forge events (GitHub and GitLab)
+## 5. Foundry API events (GitHub and GitLab)
 
 One normalized event type feeds merit and payouts:
 
 ```
-ForgeEvent { provider, host, repo, kind, actor_login, subject_id, subject_number, title, merge_sha, base_branch, delivery_id }
+FoundryEvent { provider, host, repo, kind, actor_login, subject_id, subject_number, title, merge_sha, base_branch, delivery_id }
 kind: PrOpened | PrMerged | ReviewApproved | IssueClosed | ReleasePublished | Push
 ```
 
 - GitHub: `POST /github/webhook`, `X-Hub-Signature-256` HMAC over the raw body (exists today), `X-GitHub-Delivery` for dedupe.
 - GitLab: `POST /gitlab/webhook`, `X-Gitlab-Token` compared in constant time against the configured secret, `X-Gitlab-Event-UUID` (fallback `Idempotency-Key`) for dedupe. Merge request hooks map to `PrOpened` and `PrMerged`; an `approved` action maps to `ReviewApproved`.
 - GitHub dedupe keys keep their exact existing form, so a redelivery of an event processed before this change is still recognized. Every GitLab key is prefixed `gitlab:<host>:`, so a GitLab id can never collide with a GitHub id.
-- A repository not listed in `org.toml` `[[forge]]`, or listed with `canonical = false`, earns nothing and creates no payout row. This is what stops a mirrored repository from paying twice for one merge. Until CRA loading lands (round 2) the list comes from `DSYNC_FORGE_REPOS`; with it unset, GitHub behaves as it does today and GitLab is refused.
+- A repository not listed in `org.toml` `[[foundry]]`, or listed with `canonical = false`, earns nothing and creates no payout row. This is what stops a mirrored repository from paying twice for one merge. Until CRA loading lands (round 2) the list comes from `DSYNC_FOUNDRY_REPOS`; with it unset, GitHub behaves as it does today and GitLab is refused.
 - Contributors are keyed by `(provider, host, login)`. The legacy `contributors.github_username` column stays; a GitLab-only contributor stores `gitlab:<login>` there, a value no GitHub login can equal.
 
 ### 5.1 Many repositories, one score
 
-An organization lists any number of repositories across GitHub and GitLab (`[[forge]]` in `org.toml`). Each repository tracks its own XP.
+An organization lists any number of repositories across GitHub and GitLab (`[[foundry]]` in `org.toml`). Each repository tracks its own XP.
 
 - Every merit entry records where it was earned: `(provider, host, repo)`. Entries with no repository (legacy rows, manual awards) fall in an `unattributed` bucket.
-- One person can hold several forge identities (a GitHub login and a GitLab login). All of them map to one contributor, so their XP adds up.
+- One person can hold several Foundry API identities (a GitHub login and a GitLab login). All of them map to one contributor, so their XP adds up.
 - The leaderboard score is the sum of a person's XP across every repository. Each row drills down into the per-repository amounts, and the per-repository amounts always add up to the total.
 - A repository marked `visibility = "private"` is never named on a public response. Its XP still counts toward the total and appears in the drilldown as one combined `private repositories` line. A caller with `merit.read` sees the names.
 - A per-repository leaderboard (`?repo=`) ranks by the XP earned in that repository alone.
@@ -284,7 +315,7 @@ MCP (`POST /mcp`, JSON-RPC 2.0, same tokens and scopes): `rubric_get`, `merit_sc
 
 | Round | Work | State |
 |---|---|---|
-| 1 | Rubric, optional CodeRabbit, GitLab webhooks, forge normalization, per-repository XP and leaderboard drilldown | built and tested (merged, 2026-11-12) |
+| 1 | Rubric, optional CodeRabbit, GitLab webhooks, Foundry API normalization, per-repository XP and leaderboard drilldown | built and tested (merged, 2026-11-12) |
 | 1 | API tokens, payout policy, runs, approvals, schedule, REST | built and tested (merged, 2026-11-12) |
 | 1 | CRA parser, validator, change planner and authorizer; example CRAs for Eustress Engine, Weave Solutions, Voltec Industries | built and tested (merged, 2026-11-12) |
 | 2 | MCP server; REST merit and leaderboard endpoints | built and tested (merged, 2026-11-13) |
