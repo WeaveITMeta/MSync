@@ -4,6 +4,7 @@ pub mod cra;
 pub mod discord;
 pub mod forge;
 pub mod github;
+pub mod mcp;
 pub mod merit;
 pub mod models;
 pub mod payments;

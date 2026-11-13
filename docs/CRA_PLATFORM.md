@@ -287,7 +287,7 @@ MCP (`POST /mcp`, JSON-RPC 2.0, same tokens and scopes): `rubric_get`, `merit_sc
 | 1 | Rubric, optional CodeRabbit, GitLab webhooks, forge normalization, per-repository XP and leaderboard drilldown | built and tested (merged, 2026-11-12) |
 | 1 | API tokens, payout policy, runs, approvals, schedule, REST | built and tested (merged, 2026-11-12) |
 | 1 | CRA parser, validator, change planner and authorizer; example CRAs for Eustress Engine, Weave Solutions, Voltec Industries | built and tested (merged, 2026-11-12) |
-| 2 | MCP server; REST merit and leaderboard endpoints | in progress |
-| 2 | CRA loading on push; ranks, payee identities, repositories, merit rules and payout policy from the CRA | in progress |
+| 2 | MCP server; REST merit and leaderboard endpoints | built and tested (merged, 2026-11-13) |
+| 2 | CRA loading on push; ranks, payee identities, repositories, merit rules and payout policy from the CRA | built and tested (merged, 2026-11-13) |
 | 3 | Discord projection and reconciliation from the CRA; consumer sync API (HMAC) | not started |
 | 4 | Root accounts, OAuth linking, sessions, audit log | not started |

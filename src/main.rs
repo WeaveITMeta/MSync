@@ -12,6 +12,8 @@ use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 use dsync::auth::{CraDirectory, Directory, EnvDirectory};
 use dsync::config::Config;
 use dsync::discord::{self, bot::DiscordBot};
+use dsync::mcp;
+use dsync::merit::api as merit_api;
 use dsync::merit::tracker::MeritTracker;
 use dsync::payments::{self, PaymentConfig, StripeClient};
 use dsync::routes;
@@ -131,6 +133,7 @@ async fn main() -> Result<()> {
     } else {
         info!("Payout scheduler disabled (DSYNC_PAYOUT_SCHEDULER_SECS=0)");
     }
+    let mcp_api_ctx = api_ctx.clone();
     let api_data = web::Data::new(api_ctx);
 
     // Create app state
@@ -146,6 +149,17 @@ async fn main() -> Result<()> {
     });
     let cra_data = web::Data::from(cra_ctx);
 
+    // v1 merit/leaderboard REST and the MCP server share one MeritContext. Registry and rules
+    // are read per request through the routes seams (forge_registry, merit_rules).
+    let merit_ctx = merit_api::MeritContext {
+        pool: db_pool.clone(),
+        seams: Arc::new(merit_api::AppStateSeams(app_state.clone())),
+    };
+    let allow_mcp_execute = mcp::McpContext::allow_execute_from_env();
+    info!("MCP payouts_run_execute enabled: {}", allow_mcp_execute);
+    let mcp_data = web::Data::new(mcp::McpContext::new(mcp_api_ctx, merit_ctx.clone(), allow_mcp_execute));
+    let merit_data = web::Data::new(merit_ctx);
+
     // Start Actix web server
     info!("Starting web server on {}:{}", config.server.host, config.server.port);
     
@@ -154,6 +168,8 @@ async fn main() -> Result<()> {
             .app_data(app_state.clone())
             .app_data(api_data.clone())
             .app_data(cra_data.clone())
+            .app_data(merit_data.clone())
+            .app_data(mcp_data.clone())
             .wrap(middleware::Logger::default())
             .wrap(middleware::NormalizePath::trim())
             .service(routes::health_check)
@@ -170,6 +186,8 @@ async fn main() -> Result<()> {
             .service(payments::routes::reject_entry)
             .configure(dsync::cra::api::configure) // before payments: guards PUT /payouts/policy
             .configure(payments::api::configure)
+            .configure(merit_api::configure)
+            .configure(mcp::configure)
     })
     .bind((config.server.host.as_str(), config.server.port))?
     .run()
