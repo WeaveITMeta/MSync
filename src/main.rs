@@ -9,7 +9,7 @@ use tokio::sync::RwLock;
 use tracing::{error, info};
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
-use dsync::auth::{Directory, EnvDirectory};
+use dsync::auth::{CraDirectory, Directory, EnvDirectory};
 use dsync::config::Config;
 use dsync::discord::{self, bot::DiscordBot};
 use dsync::merit::tracker::MeritTracker;
@@ -93,7 +93,32 @@ async fn main() -> Result<()> {
     // API tokens rank seam and payout controls (v1 API + scheduler)
     let env_directory = EnvDirectory::from_env();
     info!("Payout approver owners configured: {}", env_directory.owner_count());
-    let directory: Arc<dyn Directory> = Arc::new(env_directory);
+    // CRA: the active snapshot (if any) from the store; refuse to start on an unusable one.
+    let cra_owners = env_directory.owner_entries();
+    let cra_handle = dsync::cra::CraHandle::new();
+    cra_handle
+        .reload_from_store(&db_pool, dsync::cra::loader::ORG_ID)
+        .await
+        .map_err(anyhow::Error::msg)?;
+    let directory: Arc<dyn Directory> = Arc::new(CraDirectory::new(env_directory, cra_handle.clone()));
+    let cra_ctx = Arc::new(dsync::cra::CraContext::new(
+        db_pool.clone(),
+        cra_handle.clone(),
+        directory.clone(),
+        cra_owners,
+        dsync::cra::loader::settings_from_config(&config),
+        dsync::cra::loader::source_from_config(&config),
+    ));
+    match (&cra_ctx.settings, cra_handle.active()) {
+        (Some(s), active) => info!(
+            "CRA repository {} branch {}; active snapshot: {:?}",
+            s.repo.spec(),
+            s.branch,
+            active.map(|a| a.commit_sha.clone())
+        ),
+        (None, _) => info!("No CRA repository configured (DSYNC_CRA_REPO); ranks from DSYNC_OWNER_MEMBER_IDS only"),
+    }
+    tokio::spawn(dsync::cra::loader::run_merit_refresher(cra_ctx.clone(), std::time::Duration::from_secs(60)));
     let api_ctx = payments::api::ApiContext {
         pool: db_pool.clone(),
         payments: payment_config.clone(),
@@ -117,7 +142,9 @@ async fn main() -> Result<()> {
         payments: payment_config,
         stripe: stripe_api,
         directory,
+        cra: cra_ctx.clone(),
     });
+    let cra_data = web::Data::from(cra_ctx);
 
     // Start Actix web server
     info!("Starting web server on {}:{}", config.server.host, config.server.port);
@@ -126,6 +153,7 @@ async fn main() -> Result<()> {
         App::new()
             .app_data(app_state.clone())
             .app_data(api_data.clone())
+            .app_data(cra_data.clone())
             .wrap(middleware::Logger::default())
             .wrap(middleware::NormalizePath::trim())
             .service(routes::health_check)
@@ -140,6 +168,7 @@ async fn main() -> Result<()> {
             .service(payments::routes::list_ledger)
             .service(payments::routes::approve_entry)
             .service(payments::routes::reject_entry)
+            .configure(dsync::cra::api::configure) // before payments: guards PUT /payouts/policy
             .configure(payments::api::configure)
     })
     .bind((config.server.host.as_str(), config.server.port))?

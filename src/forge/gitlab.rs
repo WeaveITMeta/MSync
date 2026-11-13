@@ -125,6 +125,55 @@ pub fn normalize(payload: &GitLabWebhookPayload, delivery: Option<&str>) -> Resu
     }))
 }
 
+/// A GitLab `Push Hook`, as far as CRA loading needs it. Parsed only after the token
+/// check. The CRA files themselves are never read from it.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GitLabPushPayload {
+    pub object_kind: String,
+    #[serde(rename = "ref")]
+    pub ref_name: String,
+    pub after: String,
+    #[serde(default)]
+    pub user_username: Option<String>,
+    pub project: GitLabProject,
+}
+
+/// Normalize a GitLab push hook to a [`ForgeEventKind::Push`] event (`base_branch` is
+/// the pushed branch, `merge_sha` the head commit, `actor_login` the pushing user).
+/// `Ok(None)`: not a branch push (tag, deletion, other hook). `Err`: a push hook
+/// missing what it needs.
+pub fn normalize_push(p: &GitLabPushPayload, delivery: Option<&str>) -> Result<Option<ForgeEvent>, String> {
+    if p.object_kind != "push" {
+        return Ok(None);
+    }
+    let Some(branch) = p.ref_name.strip_prefix("refs/heads/") else { return Ok(None) };
+    let head = p.after.trim().to_ascii_lowercase();
+    if head.is_empty() || head.bytes().all(|b| b == b'0') {
+        return Ok(None);
+    }
+    let user = p.user_username.clone().filter(|u| !u.is_empty()).ok_or("push hook without user_username")?;
+    let host = host_from_url(&p.project.web_url).ok_or("project.web_url has no host")?;
+    if p.project.path_with_namespace.trim().is_empty() {
+        return Err("project.path_with_namespace is empty".into());
+    }
+    Ok(Some(ForgeEvent {
+        provider: ForgeProvider::GitLab,
+        host: host.clone(),
+        repo: Some(p.project.path_with_namespace.clone()),
+        kind: ForgeEventKind::Push,
+        actor_login: user,
+        subject_id: 0,
+        subject_number: 0,
+        title: String::new(),
+        merge_sha: Some(head.clone()),
+        base_branch: Some(branch.to_string()),
+        delivery_id: delivery.map(str::to_string),
+        author_login: None,
+        body: None,
+        effect_key: provider_key(ForgeProvider::GitLab, &host, &format!("push:{}", head)),
+    }))
+}
+
 #[cfg(test)]
 pub(crate) mod tests {
     use super::*;
@@ -179,5 +228,34 @@ pub(crate) mod tests {
         assert!(norm(mr_hook("update", (5, "carol"), 5, "grp/proj", "https://gitlab.com/grp/proj")).is_none());
         let push: GitLabWebhookPayload = serde_json::from_value(serde_json::json!({"object_kind": "push"})).unwrap();
         assert!(normalize(&push, None).unwrap().is_none());
+    }
+
+    pub fn push_hook(branch_ref: &str, after: &str, user: &str, path: &str, web_url: &str) -> serde_json::Value {
+        serde_json::json!({
+            "object_kind": "push", "event_name": "push", "ref": branch_ref,
+            "before": "1111111111111111111111111111111111111111", "after": after, "checkout_sha": after,
+            "user_username": user, "user_name": "Some User",
+            "project": {"path_with_namespace": path, "web_url": web_url, "default_branch": "main"},
+            "commits": [{"id": after, "modified": [".dsync/members.toml"]}]
+        })
+    }
+
+    #[test]
+    fn push_normalization() {
+        let sha = "abcdef0123456789abcdef0123456789abcdef01";
+        let p: GitLabPushPayload = serde_json::from_value(push_hook("refs/heads/main", sha, "carol", "grp/cra", "https://GitLab.com/grp/cra")).unwrap();
+        let ev = normalize_push(&p, Some("u-9")).unwrap().unwrap();
+        assert_eq!(ev.kind, ForgeEventKind::Push);
+        assert_eq!((ev.host.as_str(), ev.repo.as_deref(), ev.base_branch.as_deref()), ("gitlab.com", Some("grp/cra"), Some("main")));
+        assert_eq!(ev.merge_sha.as_deref(), Some(sha));
+        assert_eq!(ev.actor_login, "carol");
+        assert_eq!(ev.effect_key, format!("gitlab:gitlab.com:push:{sha}"));
+        let tag: GitLabPushPayload = serde_json::from_value(push_hook("refs/tags/v1", sha, "carol", "grp/cra", "https://gitlab.com/grp/cra")).unwrap();
+        assert!(normalize_push(&tag, None).unwrap().is_none());
+        let del: GitLabPushPayload = serde_json::from_value(push_hook("refs/heads/main", "0000000000000000000000000000000000000000", "carol", "grp/cra", "https://gitlab.com/grp/cra")).unwrap();
+        assert!(normalize_push(&del, None).unwrap().is_none());
+        let mut anon = p;
+        anon.user_username = None;
+        assert!(normalize_push(&anon, None).is_err());
     }
 }

@@ -12,13 +12,20 @@
 //! 2. [`plan_change`] diffs the active snapshot against the new one.
 //! 3. [`authorize`] checks the plan against the ACTIVE snapshot.
 //! 4. [`standing`] and [`discord_projection`] compute what members hold.
+//!
+//! The engine side (database, network, clock) lives in [`store`], [`source`],
+//! [`loader`] and [`api`]; the pure modules above never call it.
 
+pub mod api;
 pub mod authz;
 pub mod catalog;
+pub mod loader;
 pub mod model;
 pub mod plan;
 pub mod policy;
+pub mod source;
 pub mod standing;
+pub mod store;
 pub mod validate;
 
 #[cfg(test)]
@@ -36,6 +43,8 @@ pub use model::*;
 pub use plan::{plan_change, ChangePlan};
 pub use policy::{effective_policy, mode_defaults, Mode, Policy};
 pub use standing::{discord_projection, standing, DiscordProjection, Standing};
+pub use loader::{load_commit, ActiveCra, CraContext, CraHandle, CraSettings, LoadOutcome};
+pub use source::{CraRepo, CraSource, GitHubSource, GitLabSource, SourceError};
 
 /// The schema version this engine reads.
 pub const SCHEMA_VERSION: i64 = 1;
