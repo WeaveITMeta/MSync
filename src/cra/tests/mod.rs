@@ -27,7 +27,7 @@ mode = "open"
 [discord]
 guild_id = "900000000000000000"
 
-[[forge]]
+[[foundry]]
 provider = "github"
 repo = "example/test"
 visibility = "public"
@@ -295,8 +295,8 @@ pub(super) fn assert_refused(files: &CraFiles, code: ErrorCode) {
     assert!(codes.contains(&code), "expected {code:?}, got {codes:?}");
 }
 
-pub(super) fn gh(login: &str) -> ForgeIdentity {
-    ForgeIdentity::github(login)
+pub(super) fn gh(login: &str) -> FoundryIdentity {
+    FoundryIdentity::github(login)
 }
 
 pub(super) fn owners() -> Vec<String> {

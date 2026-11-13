@@ -4,8 +4,8 @@
 use super::tools::{EXECUTE_TOOL, TOOLS};
 use super::*;
 use crate::auth::{create_token, scopes, EnvDirectory, NewToken, TokenCreator};
-use crate::forge::gitlab::tests::mr_hook;
-use crate::forge::{github, gitlab, ForgeProcessor, RepoRegistry};
+use crate::foundry::gitlab::tests::mr_hook;
+use crate::foundry::{github, gitlab, FoundryProcessor, RepoRegistry};
 use crate::github::webhook::GitHubWebhookPayload;
 use crate::merit::api::{self as merit_api, AppStateSeams, FixedSeams, MeritContext};
 use crate::merit::rubric::{CRITERIA, RUBRIC_ID, RUBRIC_SHA256};
@@ -165,7 +165,7 @@ async fn token(pool: &SqlitePool, member: &str, scopes: &[&str], payee: &[&str])
 
 /// Open (and optionally merge) GitLab MR id 555 in grp/proj authored by carol.
 async fn seed_mr(pool: &SqlitePool, merge: bool) {
-    let p = ForgeProcessor::new(pool.clone()).with_registry(registry()).with_rules(Arc::new(MeritRules::default()));
+    let p = FoundryProcessor::new(pool.clone()).with_registry(registry()).with_rules(Arc::new(MeritRules::default()));
     let actions: &[&str] = if merge { &["open", "merge"] } else { &["open"] };
     for action in actions {
         let payload: gitlab::GitLabWebhookPayload =
@@ -177,7 +177,7 @@ async fn seed_mr(pool: &SqlitePool, merge: bool) {
 
 /// Open + merge a GitHub PR by `login` in `repo`.
 async fn seed_gh_pr(pool: &SqlitePool, repo: &str, id: i64, login: &str) {
-    let p = ForgeProcessor::new(pool.clone()).with_registry(registry()).with_rules(Arc::new(MeritRules::default()));
+    let p = FoundryProcessor::new(pool.clone()).with_registry(registry()).with_rules(Arc::new(MeritRules::default()));
     for (action, merged) in [("opened", false), ("closed", true)] {
         let payload: GitHubWebhookPayload = serde_json::from_value(json!({
             "action": action, "repository": {"full_name": repo},
@@ -507,7 +507,7 @@ async fn self_score_is_refused_when_the_token_declares_the_author_login() {
     assert_eq!(count(&pool, "merit_scores").await, 1);
 }
 
-/// KNOWN LIMIT, pinned on purpose. Self-score detection uses only the forge logins derived from
+/// KNOWN LIMIT, pinned on purpose. Self-score detection uses only the GitHub and GitLab logins derived from
 /// the token's payee keys. The author's own token with no payee keys is NOT recognized as the
 /// author and the score is accepted. A later round supplies identities from the CRA; when it
 /// lands, this test must be changed deliberately to expect a refusal.
@@ -585,12 +585,12 @@ async fn public_leaderboard_hides_private_repo_while_v1_shows_it() {
     let reader = token(&pool, "bob", &[scopes::MERIT_READ], &[]).await;
     let payer = token(&pool, "pat", &[scopes::PAYOUTS_READ], &[]).await;
 
-    // Real app state and the production seams (routes::forge_registry), as main wires them.
+    // Real app state and the production seams (routes::foundry_registry), as main wires them.
     let config: crate::config::Config = serde_json::from_value(json!({
         "discord": {"token": "x", "application_id": 1},
         "github": {"token": "x", "webhook_secret": "s", "repo_owner": "o", "repo_name": "r"},
         "coderabbit": {"api_key": null},
-        "forge_repos": serde_json::to_value(&*registry()).unwrap(),
+        "foundry_repos": serde_json::to_value(&*registry()).unwrap(),
         "database_url": "sqlite::memory:",
         "server": {"host": "127.0.0.1", "port": 0}
     }))

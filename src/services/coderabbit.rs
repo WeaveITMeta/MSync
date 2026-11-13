@@ -5,7 +5,7 @@
 //! `Assessment::Total` (0..=100 plus one evidence string), stored through
 //! `merit::scoring::submit_score` like any other scorer.
 
-use crate::forge::{ForgeProvider, Subject};
+use crate::foundry::{FoundryProvider, Subject};
 use crate::merit::rubric::{RUBRIC_ID, RUBRIC_SHA256};
 use crate::merit::scoring::{Assessment, Scorer, ScorerSource, Submission};
 
@@ -18,10 +18,10 @@ pub fn coderabbit_scorer() -> Scorer {
     Scorer {
         id: CODERABBIT_SCORER_ID.to_string(),
         source: ScorerSource::CodeRabbit,
-        forge_logins: vec![
-            (ForgeProvider::GitHub, "coderabbitai".to_string()),
-            (ForgeProvider::GitHub, "coderabbitai[bot]".to_string()),
-            (ForgeProvider::GitLab, "coderabbitai".to_string()),
+        foundry_logins: vec![
+            (FoundryProvider::GitHub, "coderabbitai".to_string()),
+            (FoundryProvider::GitHub, "coderabbitai[bot]".to_string()),
+            (FoundryProvider::GitLab, "coderabbitai".to_string()),
         ],
     }
 }

@@ -48,7 +48,7 @@ curl -X POST https://dsync.example.org/api/v1/tokens \
 The response shows the token (`dsync_<id>_<secret>`) once. Store it in the agent's secret store. DSync keeps only its SHA-256.
 
 - `member_id` is who the agent acts as. Every write the agent makes (a score, a run, an approval, an execution) is recorded as this member. No tool input can name a different actor, scorer or approver; an input that tries is rejected with -32602.
-- `payee_keys` are the forge logins this member is paid under and has authored work under. A key starting `gitlab:` is a GitLab login (`gitlab:<login>`, or `gitlab:<host>:<login>` for a self-managed host). Any other key is a GitHub login. DSync uses these keys to stop a payee approving their own payout and to stop a scorer scoring their own work. Declare every login the member uses.
+- `payee_keys` are the GitHub and GitLab logins this member is paid under and has authored work under. A key starting `gitlab:` is a GitLab login (`gitlab:<login>`, or `gitlab:<host>:<login>` for a self-managed host). Any other key is a GitHub login. DSync uses these keys to stop a payee approving their own payout and to stop a scorer scoring their own work. Declare every login the member uses.
 - Give each agent the smallest set of scopes it needs, and an expiry.
 
 ## 3. Connecting a client
@@ -154,14 +154,14 @@ Input:
 | `subject.provider` | `github` or `gitlab` | |
 | `subject.host` | string, optional | Defaults to `github.com` or `gitlab.com` |
 | `subject.repo` | string | `org/repo` or `group/sub/project` |
-| `subject.subject_id` | string or integer | The forge-global id of the pull or merge request (GitHub `pull_request.id`, GitLab `object_attributes.id`), not its number. `n<number>` when the id was unknown at ingest |
+| `subject.subject_id` | string or integer | The global id of the pull or merge request (GitHub `pull_request.id`, GitLab `object_attributes.id`), not its number. `n<number>` when the id was unknown at ingest |
 | `rubric_id` | string | Must be `dsync-rubric-v1` |
 | `rubric_hash` | string | Must be the hash from `rubric_get` |
 | `ci_passed` | boolean | `false` caps the score at 40 |
 | `reverted` | boolean | `true` sets the score to 0 |
 | `criteria` | object | Exactly `impact`, `correctness`, `difficulty`, `quality`, `risk`, `communication`, each `{"level": 0..4, "evidence": "at least 20 characters"}` |
 
-The scorer is built from the token: id = the token's member, source = agent, forge logins = the member's payee keys. The engine refuses a scorer who authored the change, a second score from the same scorer on the same change, an unknown change, and anything the rubric rejects. After storing the score it applies the once-only merit adjustment (contract section 6): when the first valid aggregate for a merged change arrives within `score_window_days` of the merge, the change's merit is re-priced once.
+The scorer is built from the token: id = the token's member, source = agent, GitHub and GitLab logins = the member's payee keys. The engine refuses a scorer who authored the change, a second score from the same scorer on the same change, an unknown change, and anything the rubric rejects. After storing the score it applies the once-only merit adjustment (contract section 6): when the first valid aggregate for a merged change arrives within `score_window_days` of the merge, the change's merit is re-priced once.
 
 ```json
 {"jsonrpc":"2.0","id":4,"method":"tools/call","params":{"name":"merit_score_submit","arguments":{
@@ -309,15 +309,15 @@ REST: `POST /api/v1/payouts/runs/{id}/execute`.
 - **Never `payouts.prepare` and `payouts.approve` and `payouts.execute` together.** That is the full payout path in one credential.
 - **Never `payouts.policy`.** An agent that can rewrite the policy can lower `approvals_required`, remove limits, or shorten the hold. Policy changes belong to people.
 - **Never `tokens.manage`.** It lets the holder mint more tokens with the scopes it holds.
-- **Never a token without its payee keys.** A token for a member who is ever paid, or who authors work, must declare every forge login that member uses. Without them DSync cannot tell that the member is scoring their own work (see section 7).
+- **Never a token without its payee keys.** A token for a member who is ever paid, or who authors work, must declare every GitHub or GitLab login that member uses. Without them DSync cannot tell that the member is scoring their own work (see section 7).
 - **Never a token without an expiry** for an automated agent. Rotate it. Revoke it with `POST /api/v1/tokens/{id}/revoke` when the agent is retired.
 - Give a scoring agent `merit.read` and `merit.score` only. Give a reporting agent `merit.read` and `payouts.read` only.
 
 ## 7. Known limit: self-score detection depends on payee keys
 
-A scorer may not score work they authored (contract section 6). Today DSync decides who the scorer is on the forge from the payee keys declared on the member's tokens. A key starting `gitlab:` is a GitLab login; any other key is a GitHub login. DSync also follows linked forge identities of the author's contributor record.
+A scorer may not score work they authored (contract section 6). Today DSync decides who the scorer is on GitHub and GitLab from the payee keys declared on the member's tokens. A key starting `gitlab:` is a GitLab login; any other key is a GitHub login. DSync also follows linked GitHub and GitLab identities of the author's contributor record.
 
-If a member's tokens declare no payee keys, DSync does not know the member's forge logins, so it does not recognize the member as the author of their own work and accepts the score. This is a known limit. A later round supplies member identities from the CRA (`members.toml` `[member.identities]`) and closes it. The test `known_limit_scorer_without_payee_keys_is_not_recognized_as_author` pins today's behaviour so that change is made deliberately.
+If a member's tokens declare no payee keys, DSync does not know the member's GitHub and GitLab logins, so it does not recognize the member as the author of their own work and accepts the score. This is a known limit. A later round supplies member identities from the CRA (`members.toml` `[member.identities]`) and closes it. The test `known_limit_scorer_without_payee_keys_is_not_recognized_as_author` pins today's behaviour so that change is made deliberately.
 
 Until then, the mitigation is operational: always declare payee keys on tokens (section 6). Once merit rules load from the CRA (`merit.toml`), a `min_scorers` greater than 1 also means one scorer alone cannot set a score. Today the rules are the contract 3.4 defaults, with `min_scorers = 1`.
 

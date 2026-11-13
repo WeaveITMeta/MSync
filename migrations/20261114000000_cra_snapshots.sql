@@ -2,7 +2,7 @@
 -- `.dsync/` files at one commit. Additive only.
 --
 -- status: active | superseded | rejected. Rejected attempts are kept, never deleted.
--- retryable = 1 marks a rejection caused by the forge API (fetch or context error) or a
+-- retryable = 1 marks a rejection caused by the Foundry API (fetch or context error) or a
 -- concurrent activation; the same commit may be attempted again. Every other outcome is
 -- final for its (org, commit): loading the same commit twice does nothing the second time.
 CREATE TABLE IF NOT EXISTS cra_snapshots (

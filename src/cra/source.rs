@@ -3,10 +3,10 @@
 //!
 //! Rules every implementation follows:
 //!
-//! - The files come from the forge API at the commit SHA, never from a webhook body.
+//! - The files come from the Foundry API at the commit SHA, never from a webhook body.
 //! - Only a merged pull or merge request whose merge commit IS this SHA makes the
 //!   change `via_pull_request`. Anything else is a direct push.
-//! - An approval counts only when the forge shows it is current: not dismissed or
+//! - An approval counts only when GitHub or GitLab shows it is current: not dismissed or
 //!   revoked, and given on (GitHub) or after (GitLab) the request's last commit. If
 //!   the API cannot tell, the approval does not count.
 //! - Any API error, missing field or ambiguous answer is an `Err`. The loader turns
@@ -21,8 +21,8 @@ use reqwest::header::{ACCEPT, USER_AGENT};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-use super::{ChangeContext, CraFileKind, CraFiles, ForgeIdentity};
-use crate::forge::ForgeProvider;
+use super::{ChangeContext, CraFileKind, CraFiles, FoundryIdentity};
+use crate::foundry::FoundryProvider;
 
 /// Largest `.dsync/` file the loader accepts. Anything larger is refused.
 pub const MAX_FILE_BYTES: usize = 512 * 1024;
@@ -33,7 +33,7 @@ const MAX_PAGES: usize = 20;
 /// The CRA repository: `provider:host:path` (env `DSYNC_CRA_REPO`).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CraRepo {
-    pub provider: ForgeProvider,
+    pub provider: FoundryProvider,
     /// Lowercase host.
     pub host: String,
     /// Lowercase repository path (`owner/repo`, `group/sub/project`).
@@ -41,7 +41,7 @@ pub struct CraRepo {
 }
 
 impl CraRepo {
-    pub fn new(provider: ForgeProvider, host: &str, path: &str) -> Self {
+    pub fn new(provider: FoundryProvider, host: &str, path: &str) -> Self {
         CraRepo {
             provider,
             host: host.trim().to_ascii_lowercase(),
@@ -55,7 +55,7 @@ impl CraRepo {
         if parts.len() != 3 {
             return Err(format!("DSYNC_CRA_REPO: '{spec}' is not provider:host:path"));
         }
-        let provider = ForgeProvider::parse(parts[0])
+        let provider = FoundryProvider::parse(parts[0])
             .ok_or_else(|| format!("DSYNC_CRA_REPO: unknown provider '{}'", parts[0]))?;
         let repo = CraRepo::new(provider, parts[1], parts[2]);
         if repo.host.is_empty() || repo.path.is_empty() || !repo.path.contains('/') {
@@ -68,7 +68,7 @@ impl CraRepo {
     }
 
     /// Is `(provider, host, repo)` this repository? Host and path compare case-insensitively.
-    pub fn matches(&self, provider: ForgeProvider, host: &str, repo: &str) -> bool {
+    pub fn matches(&self, provider: FoundryProvider, host: &str, repo: &str) -> bool {
         provider == self.provider
             && host.trim().eq_ignore_ascii_case(&self.host)
             && repo.trim().trim_matches('/').eq_ignore_ascii_case(&self.path)
@@ -82,17 +82,17 @@ impl CraRepo {
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum SourceError {
     /// Transport failure or a non-success HTTP status.
-    #[error("forge API error: {0}")]
+    #[error("Foundry API error: {0}")]
     Api(String),
     /// The API answered, but not in a shape that settles the question.
-    #[error("ambiguous forge answer: {0}")]
+    #[error("ambiguous Foundry API answer: {0}")]
     Ambiguous(String),
     /// The request itself cannot be answered (bad SHA, unknown pusher, file too large).
     #[error("{0}")]
     Invalid(String),
 }
 
-/// A CRA repository on a forge.
+/// A CRA repository on GitHub or GitLab.
 #[async_trait]
 pub trait CraSource: Send + Sync {
     /// The repository this source reads.
@@ -106,7 +106,7 @@ pub trait CraSource: Send + Sync {
     async fn change_context(
         &self,
         sha: &str,
-        pusher: Option<&ForgeIdentity>,
+        pusher: Option<&FoundryIdentity>,
         today: NaiveDate,
     ) -> Result<ChangeContext, SourceError>;
 
@@ -138,15 +138,15 @@ pub fn encode_component(s: &str) -> String {
     out
 }
 
-fn cra_provider(p: ForgeProvider) -> super::ForgeProvider {
+fn cra_provider(p: FoundryProvider) -> super::FoundryProvider {
     match p {
-        ForgeProvider::GitHub => super::ForgeProvider::Github,
-        ForgeProvider::GitLab => super::ForgeProvider::Gitlab,
+        FoundryProvider::GitHub => super::FoundryProvider::Github,
+        FoundryProvider::GitLab => super::FoundryProvider::Gitlab,
     }
 }
 
-fn identity(p: ForgeProvider, login: &str) -> ForgeIdentity {
-    ForgeIdentity { provider: cra_provider(p), login: login.to_string() }
+fn identity(p: FoundryProvider, login: &str) -> FoundryIdentity {
+    FoundryIdentity { provider: cra_provider(p), login: login.to_string() }
 }
 
 fn http_client() -> reqwest::Client {
@@ -194,7 +194,7 @@ fn same_login(a: &str, b: &str) -> bool {
 }
 
 /// The pusher of a direct push. Without one the actor is unknown and the load is refused.
-fn direct_push(provider: ForgeProvider, pusher: Option<&ForgeIdentity>, today: NaiveDate) -> Result<ChangeContext, SourceError> {
+fn direct_push(provider: FoundryProvider, pusher: Option<&FoundryIdentity>, today: NaiveDate) -> Result<ChangeContext, SourceError> {
     let pusher = pusher.ok_or_else(|| {
         SourceError::Invalid(
             "the commit did not arrive through a merged request and no verified push webhook names its pusher".into(),
@@ -207,7 +207,7 @@ fn direct_push(provider: ForgeProvider, pusher: Option<&ForgeIdentity>, today: N
 }
 
 /// The merger must be the pusher when a verified webhook names one.
-fn check_merger(provider: ForgeProvider, merger: &str, pusher: Option<&ForgeIdentity>) -> Result<(), SourceError> {
+fn check_merger(provider: FoundryProvider, merger: &str, pusher: Option<&FoundryIdentity>) -> Result<(), SourceError> {
     if let Some(p) = pusher {
         if p.provider != cra_provider(provider) || !same_login(&p.login, merger) {
             return Err(SourceError::Ambiguous(format!(
@@ -341,7 +341,7 @@ impl CraSource for GitHubSource {
         Ok(out)
     }
 
-    async fn change_context(&self, sha: &str, pusher: Option<&ForgeIdentity>, today: NaiveDate) -> Result<ChangeContext, SourceError> {
+    async fn change_context(&self, sha: &str, pusher: Option<&FoundryIdentity>, today: NaiveDate) -> Result<ChangeContext, SourceError> {
         let sha = normalize_sha(sha)?;
         let prs = self.json(&format!("/commits/{sha}/pulls?per_page={PER_PAGE}"), "pulls for commit").await?;
         let prs = array(&prs, "pulls for commit")?;
@@ -353,7 +353,7 @@ impl CraSource for GitHubSource {
             })
             .collect();
         let number = match merged.as_slice() {
-            [] => return direct_push(ForgeProvider::GitHub, pusher, today),
+            [] => return direct_push(FoundryProvider::GitHub, pusher, today),
             [one] => one
                 .get("number")
                 .and_then(Value::as_i64)
@@ -375,15 +375,15 @@ impl CraSource for GitHubSource {
         let head = str_at(&pr, &["head", "sha"])
             .map(str::to_ascii_lowercase)
             .ok_or_else(|| SourceError::Ambiguous(format!("pull request #{number} has no head commit")))?;
-        check_merger(ForgeProvider::GitHub, merger, pusher)?;
+        check_merger(FoundryProvider::GitHub, merger, pusher)?;
 
         let reviews = self.reviews(number).await?;
         let approvers = github_approvers(&reviews, &head);
         Ok(ChangeContext {
-            actor: identity(ForgeProvider::GitHub, merger),
+            actor: identity(FoundryProvider::GitHub, merger),
             via_pull_request: true,
-            author: Some(identity(ForgeProvider::GitHub, author)),
-            approvers: approvers.iter().map(|a| identity(ForgeProvider::GitHub, a)).collect(),
+            author: Some(identity(FoundryProvider::GitHub, author)),
+            approvers: approvers.iter().map(|a| identity(FoundryProvider::GitHub, a)).collect(),
             today,
         })
     }
@@ -527,7 +527,7 @@ impl CraSource for GitLabSource {
         Ok(out)
     }
 
-    async fn change_context(&self, sha: &str, pusher: Option<&ForgeIdentity>, today: NaiveDate) -> Result<ChangeContext, SourceError> {
+    async fn change_context(&self, sha: &str, pusher: Option<&FoundryIdentity>, today: NaiveDate) -> Result<ChangeContext, SourceError> {
         let sha = normalize_sha(sha)?;
         let mrs = self.json(&format!("/repository/commits/{sha}/merge_requests"), "merge requests for commit").await?;
         let mrs = array(&mrs, "merge requests for commit")?;
@@ -539,7 +539,7 @@ impl CraSource for GitLabSource {
             })
             .collect();
         let iid = match merged.as_slice() {
-            [] => return direct_push(ForgeProvider::GitLab, pusher, today),
+            [] => return direct_push(FoundryProvider::GitLab, pusher, today),
             [one] => one
                 .get("iid")
                 .and_then(Value::as_i64)
@@ -558,17 +558,17 @@ impl CraSource for GitLabSource {
             .ok_or_else(|| SourceError::Ambiguous(format!("merge request !{iid} has no merge user")))?;
         let author = str_at(&mr, &["author", "username"])
             .ok_or_else(|| SourceError::Ambiguous(format!("merge request !{iid} has no author")))?;
-        check_merger(ForgeProvider::GitLab, merger, pusher)?;
+        check_merger(FoundryProvider::GitLab, merger, pusher)?;
 
         let approvals = self.json(&format!("/merge_requests/{iid}/approvals"), "approvals").await?;
         let versions = self.paged(&format!("/merge_requests/{iid}/versions"), "versions").await?;
         let notes = self.paged(&format!("/merge_requests/{iid}/notes?sort=asc&order_by=created_at"), "notes").await?;
         let approvers = gitlab_approvers(&approvals, &notes, &versions);
         Ok(ChangeContext {
-            actor: identity(ForgeProvider::GitLab, merger),
+            actor: identity(FoundryProvider::GitLab, merger),
             via_pull_request: true,
-            author: Some(identity(ForgeProvider::GitLab, author)),
-            approvers: approvers.iter().map(|a| identity(ForgeProvider::GitLab, a)).collect(),
+            author: Some(identity(FoundryProvider::GitLab, author)),
+            approvers: approvers.iter().map(|a| identity(FoundryProvider::GitLab, a)).collect(),
             today,
         })
     }

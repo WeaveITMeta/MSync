@@ -1,6 +1,6 @@
-//! GitHub payload -> [`ForgeEvent`]. Dedupe keys keep their exact pre-normalization form.
+//! GitHub payload -> [`FoundryEvent`]. Dedupe keys keep their exact pre-normalization form.
 
-use super::{ForgeEvent, ForgeEventKind, ForgeProvider};
+use super::{FoundryEvent, FoundryEventKind, FoundryProvider};
 use crate::github::webhook::{GitHubUser, GitHubWebhookPayload, PullRequestPayload, RepositoryPayload};
 use serde::Deserialize;
 
@@ -34,9 +34,9 @@ pub fn review_approved_key(pr: Option<&PullRequestPayload>, reviewer: &str) -> S
     format!("review_approved:{}:{}", pr_part, reviewer)
 }
 
-fn base(pr: &PullRequestPayload, payload: &GitHubWebhookPayload, kind: ForgeEventKind, actor: String, key: String, delivery: Option<&str>) -> ForgeEvent {
-    ForgeEvent {
-        provider: ForgeProvider::GitHub,
+fn base(pr: &PullRequestPayload, payload: &GitHubWebhookPayload, kind: FoundryEventKind, actor: String, key: String, delivery: Option<&str>) -> FoundryEvent {
+    FoundryEvent {
+        provider: FoundryProvider::GitHub,
         host: HOST.to_string(),
         repo: payload.repository.as_ref().map(|r| r.full_name.clone()),
         kind,
@@ -54,14 +54,14 @@ fn base(pr: &PullRequestPayload, payload: &GitHubWebhookPayload, kind: ForgeEven
 }
 
 /// Normalize a GitHub webhook. Returns None for events that carry no merit effect.
-pub fn normalize(event_type: &str, payload: &GitHubWebhookPayload, delivery: Option<&str>) -> Option<ForgeEvent> {
+pub fn normalize(event_type: &str, payload: &GitHubWebhookPayload, delivery: Option<&str>) -> Option<FoundryEvent> {
     match event_type {
         "pull_request" => {
             let pr = payload.pull_request.as_ref()?;
             let actor = pr.user.login.clone();
             match payload.action.as_deref().unwrap_or("") {
-                "opened" => Some(base(pr, payload, ForgeEventKind::PrOpened, actor, pr_opened_key(pr), delivery)),
-                "closed" if pr.merged => Some(base(pr, payload, ForgeEventKind::PrMerged, actor, pr_merged_key(pr), delivery)),
+                "opened" => Some(base(pr, payload, FoundryEventKind::PrOpened, actor, pr_opened_key(pr), delivery)),
+                "closed" if pr.merged => Some(base(pr, payload, FoundryEventKind::PrMerged, actor, pr_merged_key(pr), delivery)),
                 _ => None,
             }
         }
@@ -73,12 +73,12 @@ pub fn normalize(event_type: &str, payload: &GitHubWebhookPayload, delivery: Opt
             let reviewer = review.user.login.clone();
             let key = review_approved_key(payload.pull_request.as_ref(), &reviewer);
             Some(match payload.pull_request.as_ref() {
-                Some(pr) => base(pr, payload, ForgeEventKind::ReviewApproved, reviewer, key, delivery),
-                None => ForgeEvent {
-                    provider: ForgeProvider::GitHub,
+                Some(pr) => base(pr, payload, FoundryEventKind::ReviewApproved, reviewer, key, delivery),
+                None => FoundryEvent {
+                    provider: FoundryProvider::GitHub,
                     host: HOST.to_string(),
                     repo: payload.repository.as_ref().map(|r| r.full_name.clone()),
-                    kind: ForgeEventKind::ReviewApproved,
+                    kind: FoundryEventKind::ReviewApproved,
                     actor_login: reviewer,
                     subject_id: 0,
                     subject_number: 0,
@@ -112,10 +112,10 @@ pub struct GitHubPushPayload {
     pub sender: Option<GitHubUser>,
 }
 
-/// Normalize a GitHub `push` to a [`ForgeEventKind::Push`] event: `base_branch` is the
+/// Normalize a GitHub `push` to a [`FoundryEventKind::Push`] event: `base_branch` is the
 /// pushed branch, `merge_sha` the pushed head commit, `actor_login` the authenticated
 /// sender. Tags, branch deletions and pushes without a sender or repository are None.
-pub fn normalize_push(p: &GitHubPushPayload, delivery: Option<&str>) -> Option<ForgeEvent> {
+pub fn normalize_push(p: &GitHubPushPayload, delivery: Option<&str>) -> Option<FoundryEvent> {
     let branch = p.ref_name.strip_prefix("refs/heads/")?.to_string();
     let head = p.after.trim().to_ascii_lowercase();
     if p.deleted || head.is_empty() || head.bytes().all(|b| b == b'0') {
@@ -123,11 +123,11 @@ pub fn normalize_push(p: &GitHubPushPayload, delivery: Option<&str>) -> Option<F
     }
     let sender = p.sender.as_ref().map(|s| s.login.clone()).filter(|l| !l.is_empty())?;
     let repo = p.repository.as_ref().map(|r| r.full_name.clone()).filter(|r| !r.is_empty())?;
-    Some(ForgeEvent {
-        provider: ForgeProvider::GitHub,
+    Some(FoundryEvent {
+        provider: FoundryProvider::GitHub,
         host: HOST.to_string(),
         repo: Some(repo),
-        kind: ForgeEventKind::Push,
+        kind: FoundryEventKind::Push,
         actor_login: sender,
         subject_id: 0,
         subject_number: 0,
@@ -201,7 +201,7 @@ mod tests {
             "repository": {"full_name": "Org/CRA"}, "sender": {"login": "alice"}, "pusher": {"name": "alice"}
         })).unwrap();
         let ev = normalize_push(&p, Some("d-1")).unwrap();
-        assert_eq!(ev.kind, ForgeEventKind::Push);
+        assert_eq!(ev.kind, FoundryEventKind::Push);
         assert_eq!(ev.base_branch.as_deref(), Some("main"));
         assert_eq!(ev.merge_sha.as_deref(), Some("abcdef0123456789abcdef0123456789abcdef01"));
         assert_eq!(ev.actor_login, "alice");

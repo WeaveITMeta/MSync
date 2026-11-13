@@ -150,7 +150,7 @@ async fn main() -> Result<()> {
     let cra_data = web::Data::from(cra_ctx);
 
     // v1 merit/leaderboard REST and the MCP server share one MeritContext. Registry and rules
-    // are read per request through the routes seams (forge_registry, merit_rules).
+    // are read per request through the routes seams (foundry_registry, merit_rules).
     let merit_ctx = merit_api::MeritContext {
         pool: db_pool.clone(),
         seams: Arc::new(merit_api::AppStateSeams(app_state.clone())),

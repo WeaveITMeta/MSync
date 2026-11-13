@@ -1,11 +1,11 @@
-//! The merit and payout path, run on a normalized [`ForgeEvent`] from any forge.
+//! The merit and payout path, run on a normalized [`FoundryEvent`] from GitHub or GitLab.
 //!
 //! Every effect is claimed once through `processed_webhook_events` with the event's
 //! `effect_key` (released if applying fails, so a redelivery can retry). The payout
 //! ledger is written through `payments::ledger::record_merge`, unchanged.
 
 use super::identity::resolve_contributor;
-use super::{ForgeEvent, ForgeEventKind, ForgeProvider, RepoDecision, RepoRef, RepoRegistry, Subject};
+use super::{FoundryEvent, FoundryEventKind, FoundryProvider, RepoDecision, RepoRef, RepoRegistry, Subject};
 use crate::github::dedupe;
 use crate::merit::scoring::{self, MeritRules};
 use crate::models::{ActivityType, ContributionStatus, Contributor};
@@ -28,14 +28,14 @@ pub enum ProcessOutcome {
 }
 
 #[derive(Clone)]
-pub struct ForgeProcessor {
+pub struct FoundryProcessor {
     pool: SqlitePool,
     payments: Option<Arc<PaymentConfig>>,
     registry: Arc<RepoRegistry>,
     rules: Arc<MeritRules>,
 }
 
-impl ForgeProcessor {
+impl FoundryProcessor {
     /// Legacy registry (GitHub only), default merit rules, no payments.
     pub fn new(pool: SqlitePool) -> Self {
         Self {
@@ -66,11 +66,11 @@ impl ForgeProcessor {
     }
 
     /// Would this event's repository earn? (Checked before any state is written.)
-    pub fn decide(&self, ev: &ForgeEvent) -> RepoDecision {
+    pub fn decide(&self, ev: &FoundryEvent) -> RepoDecision {
         self.registry.decide(ev.provider, &ev.host, ev.repo.as_deref())
     }
 
-    pub async fn process(&self, ev: &ForgeEvent) -> Result<ProcessOutcome> {
+    pub async fn process(&self, ev: &FoundryEvent) -> Result<ProcessOutcome> {
         match self.decide(ev) {
             RepoDecision::Earn => {}
             other => {
@@ -79,9 +79,9 @@ impl ForgeProcessor {
             }
         }
         match ev.kind {
-            ForgeEventKind::PrOpened => self.pr_opened(ev).await,
-            ForgeEventKind::PrMerged => self.pr_merged(ev).await,
-            ForgeEventKind::ReviewApproved => self.review_approved(ev).await,
+            FoundryEventKind::PrOpened => self.pr_opened(ev).await,
+            FoundryEventKind::PrMerged => self.pr_merged(ev).await,
+            FoundryEventKind::ReviewApproved => self.review_approved(ev).await,
             other => Ok(ProcessOutcome::Ignored(format!("{:?} earns nothing yet", other))),
         }
     }
@@ -101,7 +101,7 @@ impl ForgeProcessor {
         }
     }
 
-    async fn pr_opened(&self, ev: &ForgeEvent) -> Result<ProcessOutcome> {
+    async fn pr_opened(&self, ev: &FoundryEvent) -> Result<ProcessOutcome> {
         let Some(author) = ev.author_login.clone() else {
             return Ok(ProcessOutcome::Ignored("author unknown".into()));
         };
@@ -116,7 +116,7 @@ impl ForgeProcessor {
         })
     }
 
-    async fn pr_merged(&self, ev: &ForgeEvent) -> Result<ProcessOutcome> {
+    async fn pr_merged(&self, ev: &FoundryEvent) -> Result<ProcessOutcome> {
         let subject = ev.subject();
         let author = match ev.author_login.clone() {
             Some(a) => Some(a),
@@ -142,9 +142,9 @@ impl ForgeProcessor {
         Ok(outcome)
     }
 
-    async fn review_approved(&self, ev: &ForgeEvent) -> Result<ProcessOutcome> {
+    async fn review_approved(&self, ev: &FoundryEvent) -> Result<ProcessOutcome> {
         let reviewer = ev.actor_login.clone();
-        if ev.provider == ForgeProvider::GitLab {
+        if ev.provider == FoundryProvider::GitLab {
             // GitLab can allow authors to approve their own MR; that earns nothing.
             let author = match ev.author_login.clone() {
                 Some(a) => Some(a),
@@ -164,7 +164,7 @@ impl ForgeProcessor {
         })
     }
 
-    async fn apply_opened(&self, ev: &ForgeEvent, author: &str) -> Result<i32> {
+    async fn apply_opened(&self, ev: &FoundryEvent, author: &str) -> Result<i32> {
         let contributor = resolve_contributor(&self.pool, ev.provider, &ev.host, author).await?;
         self.insert_contribution(ev, &contributor, author, ContributionStatus::Pending, 0, None).await?;
         let points = self.rules.pr_opened.points(None);
@@ -174,7 +174,7 @@ impl ForgeProcessor {
         Ok(points)
     }
 
-    async fn apply_merged(&self, ev: &ForgeEvent, subject: Option<&Subject>, author: &str) -> Result<i32> {
+    async fn apply_merged(&self, ev: &FoundryEvent, subject: Option<&Subject>, author: &str) -> Result<i32> {
         let contributor = resolve_contributor(&self.pool, ev.provider, &ev.host, author).await?;
         // The engine never invents a score: a score counts only if scorers already submitted one.
         let score = match subject {
@@ -193,7 +193,7 @@ impl ForgeProcessor {
         Ok(points)
     }
 
-    async fn apply_review(&self, ev: &ForgeEvent, reviewer: &str) -> Result<i32> {
+    async fn apply_review(&self, ev: &FoundryEvent, reviewer: &str) -> Result<i32> {
         let c = resolve_contributor(&self.pool, ev.provider, &ev.host, reviewer).await?;
         let points = self.rules.review_approved.points(None);
         self.record_activity(ev, c.id, ActivityType::CodeReview, points, "Approved a pull request review".to_string()).await?;
@@ -216,7 +216,7 @@ impl ForgeProcessor {
         .flatten())
     }
 
-    async fn insert_contribution(&self, ev: &ForgeEvent, c: &Contributor, author: &str, status: ContributionStatus, points: i32, score: Option<f32>) -> Result<()> {
+    async fn insert_contribution(&self, ev: &FoundryEvent, c: &Contributor, author: &str, status: ContributionStatus, points: i32, score: Option<f32>) -> Result<()> {
         let s = ev.subject();
         let merged_at = matches!(status, ContributionStatus::Merged).then(Utc::now);
         sqlx::query(
@@ -246,7 +246,7 @@ impl ForgeProcessor {
 
     /// Mark the contribution merged: by subject; for GitHub, fall back to legacy rows
     /// (no subject columns) by PR number; insert a row when none exists.
-    async fn mark_merged(&self, ev: &ForgeEvent, c: &Contributor, author: &str, points: i32, score: Option<f32>) -> Result<()> {
+    async fn mark_merged(&self, ev: &FoundryEvent, c: &Contributor, author: &str, points: i32, score: Option<f32>) -> Result<()> {
         let merged = ContributionStatus::Merged as i32;
         let now = Utc::now();
         let mut updated = 0;
@@ -269,7 +269,7 @@ impl ForgeProcessor {
             .await?
             .rows_affected();
         }
-        if updated == 0 && ev.provider == ForgeProvider::GitHub {
+        if updated == 0 && ev.provider == FoundryProvider::GitHub {
             updated = sqlx::query(
                 "UPDATE contributions SET status = ?, merged_at = ?, merit_points = ?, rubric_score = ?
                  WHERE github_pr_number = ? AND subject_id IS NULL",
@@ -290,7 +290,7 @@ impl ForgeProcessor {
     }
 
     /// Merit recorded for an already-processed merge (for the payout path on redelivery).
-    async fn recorded_merit(&self, ev: &ForgeEvent) -> Result<i32> {
+    async fn recorded_merit(&self, ev: &FoundryEvent) -> Result<i32> {
         if let Some(s) = ev.subject() {
             let p: Option<i64> = sqlx::query_scalar(
                 "SELECT merit_points FROM contributions WHERE provider = ? AND host = ? AND repo = ? AND subject_id = ?
@@ -306,7 +306,7 @@ impl ForgeProcessor {
                 return Ok(p as i32);
             }
         }
-        if ev.provider != ForgeProvider::GitHub {
+        if ev.provider != FoundryProvider::GitHub {
             return Ok(0);
         }
         Ok(sqlx::query_scalar::<_, i64>(
@@ -318,7 +318,7 @@ impl ForgeProcessor {
         .unwrap_or(0) as i32)
     }
 
-    async fn record_payout(&self, ev: &ForgeEvent, username: &str, merit_points: i32) -> Result<()> {
+    async fn record_payout(&self, ev: &FoundryEvent, username: &str, merit_points: i32) -> Result<()> {
         // Payment ledger (pending_approval only; no money moves here; idempotent on pr_id+merge_sha)
         if let Some(cfg) = &self.payments {
             match (ev.merge_sha.clone(), ev.base_branch.clone()) {
@@ -341,7 +341,7 @@ impl ForgeProcessor {
         Ok(())
     }
 
-    async fn record_activity(&self, ev: &ForgeEvent, contributor_id: Uuid, kind: ActivityType, points: i32, description: String) -> Result<()> {
+    async fn record_activity(&self, ev: &FoundryEvent, contributor_id: Uuid, kind: ActivityType, points: i32, description: String) -> Result<()> {
         let r: Option<RepoRef> = ev.repo_ref();
         sqlx::query(
             "INSERT INTO merit_activities (id, contributor_id, activity_type, merit_change, description, metadata,

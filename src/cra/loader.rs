@@ -8,7 +8,7 @@
 //! unchanged active snapshot.
 //!
 //! [`CraHandle`] holds the active snapshot behind an `Arc` that is swapped on
-//! activation. [`CraContext`] ties the store, the forge source, the handle and the
+//! activation. [`CraContext`] ties the store, the Foundry API source, the handle and the
 //! engine owners together for the webhook handlers and the read API.
 
 use std::collections::{BTreeMap, BTreeSet, HashMap};
@@ -23,10 +23,10 @@ use uuid::Uuid;
 use super::model::{Cadence, EventKind, MeritFile, OrgFile, PayoutDay, PayoutsFile, RepoVisibility, RunMode, Scorer};
 use super::source::{normalize_sha, CraRepo, CraSource, SourceError};
 use super::store::{self, Activation, Attempt, RecordedViolation, Recorded, SnapshotRow};
-use super::{authorize, plan_change, ChangeContext, ForgeIdentity, Snapshot};
+use super::{authorize, plan_change, ChangeContext, FoundryIdentity, Snapshot};
 use crate::auth::Directory;
-use crate::forge::identity::{find_contributor, link_forge_identity, resolve_contributor, LinkError};
-use crate::forge::{ForgeEvent, ForgeEventKind, ForgeProvider, RepoEntry, RepoRegistry};
+use crate::foundry::identity::{find_contributor, link_foundry_identity, resolve_contributor, LinkError};
+use crate::foundry::{FoundryEvent, FoundryEventKind, FoundryProvider, RepoEntry, RepoRegistry};
 use crate::merit::scoring::{EventRule, MeritRules, ScorerSource};
 use crate::payments::policy as pay;
 
@@ -86,7 +86,7 @@ impl LoadOutcome {
 }
 
 fn source_violation(e: &SourceError) -> RecordedViolation {
-    RecordedViolation::new("SourceError", "forge", e.to_string())
+    RecordedViolation::new("SourceError", "foundry", e.to_string())
 }
 
 fn already(row: &SnapshotRow) -> LoadOutcome {
@@ -118,7 +118,7 @@ pub async fn load_commit(
     source: &dyn CraSource,
     cra_repo: &CraRepo,
     sha: &str,
-    pusher: Option<&ForgeIdentity>,
+    pusher: Option<&FoundryIdentity>,
     owners: &[String],
     today: NaiveDate,
 ) -> Result<LoadOutcome, sqlx::Error> {
@@ -171,7 +171,7 @@ pub async fn load_commit(
         return Ok(already(&row));
     }
 
-    // 3. The files, from the forge API at the SHA.
+    // 3. The files, from the Foundry API at the SHA.
     let files = match source.fetch_files(&sha).await {
         Ok(f) => f,
         Err(e) => return reject(sha, None, None, None, vec![source_violation(&e)], None, true).await,
@@ -263,18 +263,18 @@ pub async fn load_commit(
 
 // --------------------------------------------------------------- identities
 
-fn engine_provider(p: super::ForgeProvider) -> ForgeProvider {
+fn engine_provider(p: super::FoundryProvider) -> FoundryProvider {
     match p {
-        super::ForgeProvider::Github => ForgeProvider::GitHub,
-        super::ForgeProvider::Gitlab => ForgeProvider::GitLab,
+        super::FoundryProvider::Github => FoundryProvider::GitHub,
+        super::FoundryProvider::Gitlab => FoundryProvider::GitLab,
     }
 }
 
 /// Hosts a provider's identities are valid on: the hosts of that provider in
-/// `org.toml` `[[forge]]`, or the provider's public host when none is listed.
-fn hosts_for(org: &OrgFile, provider: ForgeProvider) -> Vec<String> {
+/// `org.toml` `[[foundry]]`, or the provider's public host when none is listed.
+fn hosts_for(org: &OrgFile, provider: FoundryProvider) -> Vec<String> {
     let mut hosts: BTreeSet<String> = org
-        .forges
+        .foundries
         .iter()
         .filter(|f| engine_provider(f.provider) == provider)
         .map(|f| f.host.clone().unwrap_or_else(|| provider.default_host().to_string()).to_ascii_lowercase())
@@ -286,10 +286,10 @@ fn hosts_for(org: &OrgFile, provider: ForgeProvider) -> Vec<String> {
 }
 
 /// Every `(provider, host, login)` a member is attested to hold.
-pub fn member_forge_logins(snap: &Snapshot, member_id: &str) -> Vec<(ForgeProvider, String, String)> {
+pub fn member_foundry_logins(snap: &Snapshot, member_id: &str) -> Vec<(FoundryProvider, String, String)> {
     let Some(m) = snap.member(member_id) else { return Vec::new() };
     let mut out = Vec::new();
-    for (p, login) in [(ForgeProvider::GitHub, &m.identities.github), (ForgeProvider::GitLab, &m.identities.gitlab)] {
+    for (p, login) in [(FoundryProvider::GitHub, &m.identities.github), (FoundryProvider::GitLab, &m.identities.gitlab)] {
         if let Some(login) = login {
             for host in hosts_for(&snap.org, p) {
                 out.push((p, host, login.clone()));
@@ -299,13 +299,13 @@ pub fn member_forge_logins(snap: &Snapshot, member_id: &str) -> Vec<(ForgeProvid
     out
 }
 
-/// On activation: attach every member's forge identities to one contributor so their
+/// On activation: attach every member's GitHub and GitLab identities to one contributor so their
 /// XP adds up. An identity that already belongs to another contributor is reported as a
 /// conflict and never merged.
 pub async fn link_member_identities(pool: &SqlitePool, snap: &Snapshot) -> Vec<IdentityLinkReport> {
     let mut reports = Vec::new();
     for m in &snap.members.members {
-        let logins = member_forge_logins(snap, &m.id);
+        let logins = member_foundry_logins(snap, &m.id);
         if logins.is_empty() {
             continue;
         }
@@ -342,7 +342,7 @@ pub async fn link_member_identities(pool: &SqlitePool, snap: &Snapshot) -> Vec<I
         };
         for (p, host, login) in &logins {
             let label = format!("{p}:{host}:{}", login.to_ascii_lowercase());
-            let (result, message) = match link_forge_identity(pool, primary, *p, host, login).await {
+            let (result, message) = match link_foundry_identity(pool, primary, *p, host, login).await {
                 Ok(()) => ("linked", String::new()),
                 Err(LinkError::Conflict(x)) => {
                     warn!("CRA member {}: identity {} belongs to another contributor; not merged", m.id, x);
@@ -361,7 +361,7 @@ pub async fn link_member_identities(pool: &SqlitePool, snap: &Snapshot) -> Vec<I
 pub async fn member_merit(pool: &SqlitePool, snap: &Snapshot, member_id: &str) -> Result<u64, sqlx::Error> {
     let mut seen = BTreeSet::new();
     let mut total: u64 = 0;
-    for (p, host, login) in member_forge_logins(snap, member_id) {
+    for (p, host, login) in member_foundry_logins(snap, member_id) {
         if let Some(c) = find_contributor(pool, p, &host, &login).await? {
             if seen.insert(c.id) {
                 total = total.saturating_add(c.total_merit_points.max(0) as u64);
@@ -428,7 +428,7 @@ impl CraHandle {
             Some(row) => {
                 let snapshot = parse_stored(&row).map_err(|e| format!("active CRA snapshot {} is unusable: {e}", row.id))?;
                 let repo = CraRepo::new(
-                    ForgeProvider::parse(&row.provider).ok_or("active CRA snapshot has an unknown provider")?,
+                    FoundryProvider::parse(&row.provider).ok_or("active CRA snapshot has an unknown provider")?,
                     &row.host,
                     &row.repo,
                 );
@@ -468,10 +468,10 @@ impl CraHandle {
 
 // ------------------------------------------------------------------- seams
 
-/// `org.toml` `[[forge]]` as the repository registry: canonical and visibility as listed.
+/// `org.toml` `[[foundry]]` as the repository registry: canonical and visibility as listed.
 pub fn registry_from_cra(org: &OrgFile) -> RepoRegistry {
     RepoRegistry::from_entries(
-        org.forges
+        org.foundries
             .iter()
             .map(|f| {
                 let provider = engine_provider(f.provider);
@@ -651,16 +651,16 @@ impl CraContext {
     }
 
     /// Is this verified push for the CRA repository's configured branch?
-    pub fn is_cra_push(&self, ev: &ForgeEvent) -> bool {
+    pub fn is_cra_push(&self, ev: &FoundryEvent) -> bool {
         let Some(s) = &self.settings else { return false };
-        ev.kind == ForgeEventKind::Push
+        ev.kind == FoundryEventKind::Push
             && ev.repo.as_deref().map_or(false, |r| s.repo.matches(ev.provider, &ev.host, r))
             && ev.base_branch.as_deref() == Some(s.branch.as_str())
             && ev.merge_sha.is_some()
     }
 
     /// Run the loader for one commit and, on activation, swap the runtime state.
-    pub async fn load_and_apply(&self, sha: &str, pusher: Option<&ForgeIdentity>, today: NaiveDate) -> Result<LoadOutcome, CraRuntimeError> {
+    pub async fn load_and_apply(&self, sha: &str, pusher: Option<&FoundryIdentity>, today: NaiveDate) -> Result<LoadOutcome, CraRuntimeError> {
         let settings = self.settings.as_ref().ok_or(CraRuntimeError::NotConfigured)?;
         let source = self.source.as_ref().ok_or(CraRuntimeError::NotConfigured)?;
         let _guard = self.load_lock.lock().await;
@@ -673,15 +673,15 @@ impl CraContext {
 
     /// The push webhook trigger. `None` when the push is not for the CRA repository's
     /// configured branch: nothing is loaded.
-    pub async fn on_push(&self, ev: &ForgeEvent, today: NaiveDate) -> Option<Result<LoadOutcome, CraRuntimeError>> {
+    pub async fn on_push(&self, ev: &FoundryEvent, today: NaiveDate) -> Option<Result<LoadOutcome, CraRuntimeError>> {
         if !self.is_cra_push(ev) {
             return None;
         }
         let sha = ev.merge_sha.clone()?;
-        let pusher = ForgeIdentity {
+        let pusher = FoundryIdentity {
             provider: match ev.provider {
-                ForgeProvider::GitHub => super::ForgeProvider::Github,
-                ForgeProvider::GitLab => super::ForgeProvider::Gitlab,
+                FoundryProvider::GitHub => super::FoundryProvider::Github,
+                FoundryProvider::GitLab => super::FoundryProvider::Gitlab,
             },
             login: ev.actor_login.clone(),
         };
@@ -711,17 +711,17 @@ pub fn settings_from_config(cfg: &crate::config::Config) -> Option<CraSettings> 
     cfg.cra.repo.clone().map(|repo| CraSettings { repo, branch: cfg.cra.branch.clone() })
 }
 
-/// The forge source for the configured CRA repository: GitHub with `GITHUB_TOKEN`,
+/// The Foundry API source for the configured CRA repository: GitHub with `GITHUB_TOKEN`,
 /// GitLab with `GITLAB_TOKEN`.
 pub fn source_from_config(cfg: &crate::config::Config) -> Option<Arc<dyn CraSource>> {
     let repo = cfg.cra.repo.clone()?;
     Some(match repo.provider {
-        ForgeProvider::GitHub => Arc::new(super::source::GitHubSource::new(
+        FoundryProvider::GitHub => Arc::new(super::source::GitHubSource::new(
             repo,
             cfg.cra.github_api_base.clone(),
             Some(cfg.github.token.clone()),
         )) as Arc<dyn CraSource>,
-        ForgeProvider::GitLab => Arc::new(super::source::GitLabSource::new(
+        FoundryProvider::GitLab => Arc::new(super::source::GitLabSource::new(
             repo,
             cfg.cra.gitlab_api_base.clone(),
             cfg.cra.gitlab_token.clone(),

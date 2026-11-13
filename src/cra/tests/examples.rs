@@ -4,7 +4,7 @@
 use std::collections::BTreeMap;
 
 use super::*;
-use crate::cra::model::{ForgeProvider, RepoVisibility};
+use crate::cra::model::{FoundryProvider, RepoVisibility};
 use crate::cra::policy::PayoutEligible;
 
 const SLUGS: &[&str] = &["eustress-engine", "weave-solutions", "voltec-industries"];
@@ -34,7 +34,7 @@ fn every_example_loads_validates_and_bootstraps_by_its_owner() {
 #[test]
 fn examples_have_the_modes_they_claim() {
     let mode = |slug: &str| load_ok(&example(slug)).mode_label;
-    assert_eq!(mode("eustress-engine"), Mode::Open);
+    assert_eq!(mode("eustress-engine"), Mode::SourceAvailable);
     assert_eq!(mode("weave-solutions"), Mode::Closed);
     assert_eq!(mode("voltec-industries"), Mode::Hybrid);
 }
@@ -54,7 +54,7 @@ fn mckale_has_a_different_standing_in_each_organization() {
     // The same GitHub login resolves to each org's own member.
     for slug in SLUGS {
         let s = load_ok(&example(slug));
-        assert_eq!(s.member_by_forge(&gh("simbuilder")).map(|m| m.id.as_str()), Some("mckale"));
+        assert_eq!(s.member_by_foundry(&gh("simbuilder")).map(|m| m.id.as_str()), Some("mckale"));
     }
 }
 
@@ -75,17 +75,21 @@ fn only_mckale_is_a_real_person_and_every_discord_id_is_a_fake_snowflake() {
                 assert!(d[1..].starts_with("000000000000"), "{slug}: {d}");
             }
         }
-        for f in &s.org.forges {
+        for f in &s.org.foundries {
             assert!(f.repo.starts_with("example-"), "{slug}: {} is not a placeholder repository", f.repo);
         }
     }
 }
 
 #[test]
-fn eustress_is_open_source_with_earned_tiers_and_appointed_positions() {
+fn eustress_is_source_available_with_earned_tiers_and_appointed_positions() {
     let s = load_ok(&example("eustress-engine"));
-    assert_eq!(s.org.forges.len(), 1);
-    assert_eq!(s.org.forges[0].visibility, RepoVisibility::Public);
+    // Source available: outside contributions earn, the roster is for members.
+    assert_eq!(s.policy.merit_external_contributions_earn, crate::cra::policy::ExternalEarn::Yes);
+    assert_eq!(s.policy.visibility_roster, crate::cra::policy::Visibility::Members);
+    assert_eq!(s.policy.grants_two_person_min_rank, 50);
+    assert_eq!(s.org.foundries.len(), 1);
+    assert_eq!(s.org.foundries[0].visibility, RepoVisibility::Public);
     assert_eq!(s.org.consumers.len(), 1);
     assert_eq!(s.payouts.schedule.cadence, Cadence::Weekly);
     let positions: Vec<&str> = s.roles.roles.iter().filter(|r| r.kind == RoleKind::Position).map(|r| r.title.as_str()).collect();
@@ -109,7 +113,7 @@ fn weave_merit_is_recorded_but_confers_no_rank() {
     let s = load_ok(&example("weave-solutions"));
     assert_eq!(s.policy.promotion_merit_rank_ceiling, 0);
     assert_eq!(s.policy.payouts_eligible, PayoutEligible::PositionsOnly);
-    assert!(s.org.forges.iter().all(|f| f.visibility == RepoVisibility::Private));
+    assert!(s.org.foundries.iter().all(|f| f.visibility == RepoVisibility::Private));
     assert!(s.roles.roles.iter().filter(|r| r.kind == RoleKind::Tier).all(|r| r.rank == 0));
     assert_eq!(s.payouts.schedule.cadence, Cadence::Monthly);
     assert!(s.payouts.eligibility.roles.iter().all(|k| s.role(k).unwrap().kind == RoleKind::Position));
@@ -120,10 +124,10 @@ fn weave_merit_is_recorded_but_confers_no_rank() {
 }
 
 #[test]
-fn voltec_exercises_both_forges_and_keeps_its_portal_on_community_scopes() {
+fn voltec_exercises_github_and_gitlab_and_keeps_its_portal_on_community_scopes() {
     let s = load_ok(&example("voltec-industries"));
-    let providers: Vec<ForgeProvider> = s.org.forges.iter().map(|f| f.provider).collect();
-    assert_eq!(providers, vec![ForgeProvider::Github, ForgeProvider::Gitlab]);
+    let providers: Vec<FoundryProvider> = s.org.foundries.iter().map(|f| f.provider).collect();
+    assert_eq!(providers, vec![FoundryProvider::Github, FoundryProvider::Gitlab]);
     assert!(s.roles.roles.iter().any(|r| r.title == "Head of Cell Engineering" && r.compartments == vec!["cell-eng".to_string()]));
     assert!(s.org.compartments.iter().any(|c| c.key == "cell-eng"));
     assert_eq!(s.org.consumers.len(), 1);
@@ -132,9 +136,9 @@ fn voltec_exercises_both_forges_and_keeps_its_portal_on_community_scopes() {
         assert!(c.scopes.iter().all(|x| x.starts_with("community.")), "{:?}", c.scopes);
     }
     // A GitLab-only member resolves through the GitLab identity.
-    let hana = s.member_by_forge(&ForgeIdentity::gitlab("HANA-example")).unwrap();
+    let hana = s.member_by_foundry(&FoundryIdentity::gitlab("HANA-example")).unwrap();
     assert_eq!(hana.id, "hana-example");
-    assert!(s.member_by_forge(&gh("hana-example")).is_none(), "providers must not cross");
+    assert!(s.member_by_foundry(&gh("hana-example")).is_none(), "providers must not cross");
 }
 
 #[test]
@@ -155,7 +159,7 @@ fn voltec_renewing_a_two_person_grant_needs_a_second_person() {
     let r = authorize(Some(&old), &plan, &ctx(false, &[]), &founder());
     assert!(vcodes(&r).contains(&ViolationCode::DirectPushNeedsApproval), "{r:?}");
     // Hana cannot approve her own renewal (and she is not above 60 anyway).
-    let hana = ChangeContext { approvers: vec![ForgeIdentity::gitlab("hana-example")], ..ctx(true, &[]) };
+    let hana = ChangeContext { approvers: vec![FoundryIdentity::gitlab("hana-example")], ..ctx(true, &[]) };
     let r = authorize(Some(&old), &plan, &hana, &founder());
     assert!(vcodes(&r).contains(&ViolationCode::NoQualifiedApprover), "{r:?}");
     assert!(authorize(Some(&old), &plan, &ctx(true, &["example-founder"]), &founder()).is_ok());
@@ -169,13 +173,13 @@ fn voltec_head_of_cell_engineering_may_staff_her_team_but_not_above_herself() {
     let newbie = "\n[[member]]\nid = \"jo-example\"\nname = \"Jo Example\"\nstatus = \"active\"\n\n[member.identities]\ngitlab = \"jo-example\"\n\n[[member.grant]]\nrole = \"engineer\"\ngranted_by = \"hana-example\"\n";
     let new = load_ok(&append(files.clone(), F::Members, newbie));
     let plan = plan_change(Some(&old), &new);
-    let ctx = ChangeContext { actor: ForgeIdentity::gitlab("hana-example"), via_pull_request: false, author: None, approvers: vec![], today: today() };
+    let ctx = ChangeContext { actor: FoundryIdentity::gitlab("hana-example"), via_pull_request: false, author: None, approvers: vec![], today: today() };
     assert!(authorize(Some(&old), &plan, &ctx, &founder()).is_ok(), "{:?}", authorize(Some(&old), &plan, &ctx, &founder()));
     // She cannot appoint a Director (70).
     let director = newbie.replace("role = \"engineer\"", "role = \"director\"\nexpires = \"2027-01-01\"");
     let new = load_ok(&append(files, F::Members, &director));
     let plan = plan_change(Some(&old), &new);
-    let ctx = ChangeContext { via_pull_request: true, author: Some(ForgeIdentity::gitlab("hana-example")), approvers: vec![gh("example-founder")], ..ctx };
+    let ctx = ChangeContext { via_pull_request: true, author: Some(FoundryIdentity::gitlab("hana-example")), approvers: vec![gh("example-founder")], ..ctx };
     let r = authorize(Some(&old), &plan, &ctx, &founder());
     assert!(vcodes(&r).contains(&ViolationCode::InsufficientRank), "{r:?}");
 }

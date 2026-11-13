@@ -18,7 +18,7 @@ alert_channel_id = "300000000000000009"
 
 # Public community repository: external contributors earn merit here
 # (hybrid mode: merit.external_contributions_earn = public_repos_only).
-[[forge]]
+[[foundry]]
 provider = "github"
 repo = "example-voltec/voltec-community"
 visibility = "public"
@@ -26,7 +26,7 @@ canonical = true
 payout_branches = ["main"]
 
 # Private firmware repository on GitLab: staff only.
-[[forge]]
+[[foundry]]
 provider = "gitlab"
 host = "gitlab.com"
 repo = "example-voltec/cell-firmware"

@@ -5,7 +5,7 @@
 //! own scorer.
 
 use super::rubric::{self, CriterionScore, RubricError, RUBRIC_ID, RUBRIC_SHA256};
-use crate::forge::{legacy_username, provider_key, ForgeProvider, Subject};
+use crate::foundry::{legacy_username, provider_key, FoundryProvider, Subject};
 use crate::models::ActivityType;
 use chrono::{DateTime, Duration, Utc};
 use serde::{Deserialize, Serialize};
@@ -41,8 +41,8 @@ impl ScorerSource {
 pub struct Scorer {
     pub id: String,
     pub source: ScorerSource,
-    /// The scorer's own forge logins; a scorer may not score a subject authored by any of them.
-    pub forge_logins: Vec<(ForgeProvider, String)>,
+    /// The scorer's own GitHub and GitLab logins; a scorer may not score a subject authored by any of them.
+    pub foundry_logins: Vec<(FoundryProvider, String)>,
 }
 
 /// What a scorer submits. Agents submit per-criterion levels; CodeRabbit submits a
@@ -187,10 +187,10 @@ async fn load_subject(pool: &SqlitePool, s: &Subject) -> Result<Option<SubjectRo
     }))
 }
 
-/// Is any of the scorer's forge logins the subject's author (directly, through a
-/// linked forge identity, or through the legacy username)?
+/// Is any of the scorer's GitHub and GitLab logins the subject's author (directly, through a
+/// linked GitHub or GitLab identity, or through the legacy username)?
 async fn is_author(pool: &SqlitePool, s: &Subject, row: &SubjectRow, scorer: &Scorer) -> Result<bool, sqlx::Error> {
-    for (provider, login) in &scorer.forge_logins {
+    for (provider, login) in &scorer.foundry_logins {
         let login_n = login.trim().to_ascii_lowercase();
         if login_n.is_empty() {
             continue;
@@ -199,7 +199,7 @@ async fn is_author(pool: &SqlitePool, s: &Subject, row: &SubjectRow, scorer: &Sc
             return Ok(true);
         }
         let linked: i64 = sqlx::query_scalar(
-            "SELECT COUNT(*) FROM forge_identities WHERE provider = ? AND login = ? AND contributor_id = ?",
+            "SELECT COUNT(*) FROM foundry_identities WHERE provider = ? AND login = ? AND contributor_id = ?",
         )
         .bind(provider.as_str())
         .bind(&login_n)
@@ -442,9 +442,9 @@ pub async fn apply_score_adjustment(pool: &SqlitePool, subject: &Subject, rules:
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::forge::gitlab::tests::mr_hook;
-    use crate::forge::identity::{find_contributor, link_forge_identity};
-    use crate::forge::{gitlab, ForgeProcessor, RepoRegistry};
+    use crate::foundry::gitlab::tests::mr_hook;
+    use crate::foundry::identity::{find_contributor, link_foundry_identity};
+    use crate::foundry::{gitlab, FoundryProcessor, RepoRegistry};
     use crate::merit::rubric::CRITERIA;
     use sqlx::sqlite::SqlitePoolOptions;
     use std::sync::Arc;
@@ -455,12 +455,12 @@ mod tests {
         pool
     }
 
-    fn processor(pool: &SqlitePool, rules: MeritRules) -> ForgeProcessor {
+    fn processor(pool: &SqlitePool, rules: MeritRules) -> FoundryProcessor {
         let reg = RepoRegistry::from_spec("gitlab:gitlab.com:grp/proj").unwrap();
-        ForgeProcessor::new(pool.clone()).with_registry(Arc::new(reg)).with_rules(Arc::new(rules))
+        FoundryProcessor::new(pool.clone()).with_registry(Arc::new(reg)).with_rules(Arc::new(rules))
     }
 
-    async fn gl(p: &ForgeProcessor, action: &str, user: (i64, &str)) {
+    async fn gl(p: &FoundryProcessor, action: &str, user: (i64, &str)) {
         let payload: gitlab::GitLabWebhookPayload =
             serde_json::from_value(mr_hook(action, user, 5, "grp/proj", "https://gitlab.com/grp/proj")).unwrap();
         let ev = gitlab::normalize(&payload, None).unwrap().unwrap();
@@ -468,11 +468,11 @@ mod tests {
     }
 
     fn subject() -> Subject {
-        Subject::new(ForgeProvider::GitLab, "gitlab.com", "Grp/Proj", "555")
+        Subject::new(FoundryProvider::GitLab, "gitlab.com", "Grp/Proj", "555")
     }
 
-    fn agent(id: &str, logins: &[(ForgeProvider, &str)]) -> Scorer {
-        Scorer { id: id.into(), source: ScorerSource::Agent, forge_logins: logins.iter().map(|(p, l)| (*p, l.to_string())).collect() }
+    fn agent(id: &str, logins: &[(FoundryProvider, &str)]) -> Scorer {
+        Scorer { id: id.into(), source: ScorerSource::Agent, foundry_logins: logins.iter().map(|(p, l)| (*p, l.to_string())).collect() }
     }
 
     fn rubric_sub(level: u8) -> Submission {
@@ -505,18 +505,18 @@ mod tests {
         let p = processor(&pool, MeritRules::default());
         gl(&p, "open", (5, "carol")).await;
 
-        // Same forge login as the author (case-insensitive)
-        let e = submit_score(&pool, &rubric_sub(3), &agent("agent-carol", &[(ForgeProvider::GitLab, "Carol")])).await;
+        // Same GitHub or GitLab login as the author (case-insensitive)
+        let e = submit_score(&pool, &rubric_sub(3), &agent("agent-carol", &[(FoundryProvider::GitLab, "Carol")])).await;
         assert!(matches!(e, Err(ScoreError::SelfScore)), "{e:?}");
 
         // A different login linked to the same contributor
-        let carol = find_contributor(&pool, ForgeProvider::GitLab, "gitlab.com", "carol").await.unwrap().unwrap();
-        link_forge_identity(&pool, carol.id, ForgeProvider::GitHub, "github.com", "carol-gh").await.unwrap();
-        let e = submit_score(&pool, &rubric_sub(3), &agent("agent-x", &[(ForgeProvider::GitHub, "carol-gh")])).await;
+        let carol = find_contributor(&pool, FoundryProvider::GitLab, "gitlab.com", "carol").await.unwrap().unwrap();
+        link_foundry_identity(&pool, carol.id, FoundryProvider::GitHub, "github.com", "carol-gh").await.unwrap();
+        let e = submit_score(&pool, &rubric_sub(3), &agent("agent-x", &[(FoundryProvider::GitHub, "carol-gh")])).await;
         assert!(matches!(e, Err(ScoreError::SelfScore)), "{e:?}");
 
         // Control: an unrelated scorer is accepted
-        let ok = submit_score(&pool, &rubric_sub(3), &agent("agent-dave", &[(ForgeProvider::GitLab, "dave")])).await.unwrap();
+        let ok = submit_score(&pool, &rubric_sub(3), &agent("agent-dave", &[(FoundryProvider::GitLab, "dave")])).await.unwrap();
         assert_eq!(ok.score, 75.0);
         assert_eq!(list_scores(&pool, &subject()).await.unwrap().len(), 1);
     }
@@ -533,7 +533,7 @@ mod tests {
         assert_eq!(list_scores(&pool, &subject()).await.unwrap().len(), 1);
 
         let mut other = rubric_sub(2);
-        other.subject = Subject::new(ForgeProvider::GitLab, "gitlab.com", "grp/proj", "999");
+        other.subject = Subject::new(FoundryProvider::GitLab, "gitlab.com", "grp/proj", "999");
         assert!(matches!(submit_score(&pool, &other, &s).await, Err(ScoreError::UnknownSubject)));
     }
 

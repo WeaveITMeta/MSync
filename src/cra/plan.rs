@@ -11,7 +11,7 @@ use serde::Serialize;
 
 use super::model::{Member, MemberStatus, RoleKind};
 use super::policy::Mode;
-use super::{ForgeIdentity, ForgeProvider, Snapshot};
+use super::{FoundryIdentity, FoundryProvider, Snapshot};
 
 /// One changed value. `None` means absent on that side.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -67,8 +67,8 @@ pub struct MemberTarget {
     /// either snapshot, because merit is not visible here. Owners are raised
     /// to 1000 by [`super::authorize`], which knows the owner list.
     pub rank: u32,
-    /// Forge identities of the member in either snapshot.
-    pub forge_identities: Vec<ForgeIdentity>,
+    /// GitHub and GitLab identities of the member in either snapshot.
+    pub foundry_identities: Vec<FoundryIdentity>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -139,7 +139,7 @@ pub struct ChangePlan {
     pub mode_change: Option<ModeChange>,
     /// Effective policy fields that change, keyed by the override key.
     pub policy_changes: Vec<FieldChange>,
-    /// Other `org.toml` changes: name, discord, forges, consumers,
+    /// Other `org.toml` changes: name, discord, `[[foundry]]` repositories, consumers,
     /// compartments, permissions_extra, template.
     pub org_changes: Vec<FieldChange>,
     pub roles_added: Vec<RoleSummary>,
@@ -276,13 +276,13 @@ fn role_rank_either(snaps: &[&Snapshot], role: &str) -> u32 {
     snaps.iter().filter_map(|s| s.role(role)).map(|r| r.rank).max().unwrap_or(0)
 }
 
-fn forge_ids(m: &Member) -> Vec<ForgeIdentity> {
+fn foundry_ids(m: &Member) -> Vec<FoundryIdentity> {
     let mut v = Vec::new();
     if let Some(l) = &m.identities.github {
-        v.push(ForgeIdentity { provider: ForgeProvider::Github, login: l.clone() });
+        v.push(FoundryIdentity { provider: FoundryProvider::Github, login: l.clone() });
     }
     if let Some(l) = &m.identities.gitlab {
-        v.push(ForgeIdentity { provider: ForgeProvider::Gitlab, login: l.clone() });
+        v.push(FoundryIdentity { provider: FoundryProvider::Gitlab, login: l.clone() });
     }
     v
 }
@@ -290,21 +290,21 @@ fn forge_ids(m: &Member) -> Vec<ForgeIdentity> {
 fn target(snaps: &[&Snapshot], id: &str) -> MemberTarget {
     let mut rank = snaps.iter().map(|s| s.policy.promotion_merit_rank_ceiling).max().unwrap_or(0);
     let mut name = String::new();
-    let mut ids: Vec<ForgeIdentity> = Vec::new();
+    let mut ids: Vec<FoundryIdentity> = Vec::new();
     for s in snaps {
         if let Some(m) = s.member(id) {
             name = m.name.clone();
             for g in &m.grants {
                 rank = rank.max(role_rank_either(snaps, &g.role));
             }
-            for fi in forge_ids(m) {
+            for fi in foundry_ids(m) {
                 if !ids.iter().any(|x| x.matches(fi.provider, &fi.login)) {
                     ids.push(fi);
                 }
             }
         }
     }
-    MemberTarget { id: id.to_string(), name, rank, forge_identities: ids }
+    MemberTarget { id: id.to_string(), name, rank, foundry_identities: ids }
 }
 
 fn position_pairs(s: &Snapshot) -> BTreeSet<(String, String)> {

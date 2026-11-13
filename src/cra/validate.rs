@@ -107,24 +107,24 @@ fn org(v: &mut V) {
         }
     }
 
-    // forges
+    // [[foundry]] repositories
     let mut seen = BTreeSet::new();
-    for f in &o.forges {
+    for f in &o.foundries {
         let parts: Vec<&str> = f.repo.split('/').collect();
         if parts.len() < 2 || parts.iter().any(|p| p.trim().is_empty()) {
-            v.err(F, ErrorCode::InvalidRepo, format!("forge repo `{}` must be `owner/name`", f.repo));
+            v.err(F, ErrorCode::InvalidRepo, format!("[[foundry]] repo `{}` must be `owner/name`", f.repo));
         }
         if let Some(h) = &f.host {
             if h.trim().is_empty() || h.contains('/') || h.contains(':') {
-                v.err(F, ErrorCode::InvalidRepo, format!("forge host `{h}` must be a bare host name"));
+                v.err(F, ErrorCode::InvalidRepo, format!("[[foundry]] host `{h}` must be a bare host name"));
             }
         }
         let host = f.host.clone().unwrap_or_else(|| default_host(f.provider).to_string()).to_ascii_lowercase();
         if !seen.insert((f.provider, host.clone(), f.repo.to_ascii_lowercase())) {
-            v.err(F, ErrorCode::DuplicateForge, format!("forge {}:{}/{} is listed twice", f.provider.as_str(), host, f.repo));
+            v.err(F, ErrorCode::DuplicateFoundry, format!("[[foundry]] repository {}:{}/{} is listed twice", f.provider.as_str(), host, f.repo));
         }
         if !f.canonical && !f.payout_branches.is_empty() {
-            v.err(F, ErrorCode::MirrorPaysOut, format!("forge `{}` is not canonical but lists payout_branches", f.repo));
+            v.err(F, ErrorCode::MirrorPaysOut, format!("[[foundry]] repository `{}` is not canonical but lists payout_branches", f.repo));
         }
     }
 
@@ -168,10 +168,10 @@ fn org(v: &mut V) {
     }
 }
 
-pub(crate) fn default_host(p: ForgeProvider) -> &'static str {
+pub(crate) fn default_host(p: FoundryProvider) -> &'static str {
     match p {
-        ForgeProvider::Github => "github.com",
-        ForgeProvider::Gitlab => "gitlab.com",
+        FoundryProvider::Github => "github.com",
+        FoundryProvider::Gitlab => "gitlab.com",
     }
 }
 
@@ -294,7 +294,7 @@ fn members(v: &mut V) {
             if provider == "discord" && !is_snowflake(value) {
                 v.err(F, ErrorCode::InvalidSnowflake, format!("member `{}` discord identity `{value}` is not a snowflake", m.id));
             }
-            // Forge logins are case-insensitive; Discord ids are exact.
+            // GitHub and GitLab logins are case-insensitive; Discord ids are exact.
             let norm = value.to_ascii_lowercase();
             if let Some(prev) = identities.insert((provider, norm), m.id.as_str()) {
                 v.err(F, ErrorCode::DuplicateIdentity, format!("{provider} identity `{value}` belongs to both `{prev}` and `{}`", m.id));
@@ -448,7 +448,7 @@ fn payouts(v: &mut V) {
     // rates
     let payable: BTreeSet<&str> = s
         .org
-        .forges
+        .foundries
         .iter()
         .filter(|f| f.canonical)
         .flat_map(|f| f.payout_branches.iter().map(|b| b.as_str()))
@@ -459,7 +459,7 @@ fn payouts(v: &mut V) {
             v.err(F, ErrorCode::DuplicateRate, format!("rate for branch `{}` is declared twice", r.branch));
         }
         if !payable.contains(r.branch.as_str()) {
-            v.err(F, ErrorCode::RateBranchNotPayable, format!("rate branch `{}` is not a payout branch of any canonical forge", r.branch));
+            v.err(F, ErrorCode::RateBranchNotPayable, format!("rate branch `{}` is not a payout branch of any canonical repository", r.branch));
         }
         if !r.merit_multiplier.is_finite() || r.merit_multiplier < 0.0 {
             v.err(F, ErrorCode::InvalidValue, format!("rate `{}` merit_multiplier must be a finite number >= 0", r.branch));

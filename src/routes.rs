@@ -1,5 +1,5 @@
 use crate::cra::loader::{CraContext, CraHandle, CraRuntimeError, LoadOutcome};
-use crate::forge::{self, ForgeProcessor, ProcessOutcome, RepoDecision, RepoRegistry};
+use crate::foundry::{self, FoundryProcessor, ProcessOutcome, RepoDecision, RepoRegistry};
 use crate::github::webhook::{GitHubWebhookHandler, GitHubWebhookPayload};
 use crate::merit::leaderboard::{self, LeaderboardQuery};
 use crate::merit::scoring::MeritRules;
@@ -26,13 +26,13 @@ pub fn merit_rules_for(handle: &CraHandle) -> Arc<MeritRules> {
     }
 }
 
-/// Repository registry in force: the active CRA snapshot's `org.toml` `[[forge]]`, or
-/// `DSYNC_FORGE_REPOS` when no snapshot is active.
-pub fn forge_registry(state: &AppState) -> Arc<RepoRegistry> {
-    forge_registry_for(&state.cra.handle, &state.config.forge_repos)
+/// Repository registry in force: the active CRA snapshot's `org.toml` `[[foundry]]`, or
+/// `DSYNC_FOUNDRY_REPOS` when no snapshot is active.
+pub fn foundry_registry(state: &AppState) -> Arc<RepoRegistry> {
+    foundry_registry_for(&state.cra.handle, &state.config.foundry_repos)
 }
 
-pub fn forge_registry_for(handle: &CraHandle, fallback: &RepoRegistry) -> Arc<RepoRegistry> {
+pub fn foundry_registry_for(handle: &CraHandle, fallback: &RepoRegistry) -> Arc<RepoRegistry> {
     match handle.active() {
         Some(a) => Arc::new(crate::cra::loader::registry_from_cra(&a.snapshot.org)),
         None => Arc::new(fallback.clone()),
@@ -156,7 +156,7 @@ pub async fn github_webhook(
 
     let handler = GitHubWebhookHandler::new(state.db_pool.clone())
         .with_payments(state.payments.clone())
-        .with_registry(forge_registry(&state))
+        .with_registry(foundry_registry(&state))
         .with_rules(merit_rules(&state));
 
     match handler.handle_webhook(event_type, payload).await {
@@ -182,7 +182,7 @@ pub async fn github_webhook(
                     }))
                 }
                 Some(r) => {
-                    // A rejection caused by the forge API may be retried: let a redelivery through.
+                    // A rejection caused by the Foundry API may be retried: let a redelivery through.
                     if matches!(r, Ok(LoadOutcome::Rejected { retryable: true, .. })) {
                         if let Some(key) = &delivery_key {
                             let _ = crate::github::dedupe::release(&state.db_pool, key).await;
@@ -221,14 +221,14 @@ pub async fn github_cra_push(
     if event_type != "push" {
         return None;
     }
-    let push: forge::github::GitHubPushPayload = match serde_json::from_slice(body) {
+    let push: foundry::github::GitHubPushPayload = match serde_json::from_slice(body) {
         Ok(p) => p,
         Err(e) => {
             warn!("GitHub push payload did not parse: {}", e);
             return None;
         }
     };
-    let ev = forge::github::normalize_push(&push, delivery)?;
+    let ev = foundry::github::normalize_push(&push, delivery)?;
     cra.on_push(&ev, chrono::Utc::now().date_naive()).await
 }
 
@@ -307,7 +307,7 @@ pub async fn get_contributor_stats(
 
 #[get("/api/leaderboard")]
 pub async fn get_leaderboard(state: web::Data<AppState>) -> impl Responder {
-    let registry = forge_registry(&state);
+    let registry = foundry_registry(&state);
     // Public: private repositories are combined, never named.
     let q = LeaderboardQuery { repo: None, limit: 25, include_private_names: false };
     match leaderboard::leaderboard(&state.db_pool, &registry, q).await {
@@ -372,11 +372,11 @@ pub async fn process_gitlab_webhook_with_cra(
     headers: &HeaderMap,
     body: &[u8],
 ) -> (StatusCode, serde_json::Value) {
-    if !forge::gitlab::verify_token(secret, header(headers, "X-Gitlab-Token")) {
+    if !foundry::gitlab::verify_token(secret, header(headers, "X-Gitlab-Token")) {
         error!("Rejected GitLab webhook: missing or invalid X-Gitlab-Token");
         return (StatusCode::UNAUTHORIZED, serde_json::json!({"status": "error", "message": "invalid token"}));
     }
-    let payload: forge::gitlab::GitLabWebhookPayload = match serde_json::from_slice(body) {
+    let payload: foundry::gitlab::GitLabWebhookPayload = match serde_json::from_slice(body) {
         Ok(p) => p,
         Err(e) => {
             return (StatusCode::BAD_REQUEST, serde_json::json!({"status": "error", "message": format!("invalid payload: {}", e)}));
@@ -399,18 +399,18 @@ pub async fn process_gitlab_webhook_with_cra(
             }
         }
     }
-    let ev = match forge::gitlab::normalize(&payload, delivery) {
+    let ev = match foundry::gitlab::normalize(&payload, delivery) {
         Ok(Some(ev)) => ev,
         Ok(None) => return (StatusCode::OK, serde_json::json!({"status": "ignored", "reason": "not a merit event"})),
         Err(e) => return (StatusCode::BAD_REQUEST, serde_json::json!({"status": "error", "message": e})),
     };
-    let processor = ForgeProcessor::new(pool.clone()).with_payments(payments).with_registry(registry).with_rules(rules);
+    let processor = FoundryProcessor::new(pool.clone()).with_payments(payments).with_registry(registry).with_rules(rules);
     let decision = processor.decide(&ev);
     if decision != RepoDecision::Earn {
         warn!("GitLab event for {:?} on {} earns nothing: {:?}", ev.repo, ev.host, decision);
         return (StatusCode::OK, serde_json::json!({"status": "ignored", "reason": format!("{:?}", decision)}));
     }
-    let delivery_key = delivery.map(|d| forge::gitlab::delivery_key(&ev.host, d));
+    let delivery_key = delivery.map(|d| foundry::gitlab::delivery_key(&ev.host, d));
     if let Some(key) = &delivery_key {
         match crate::github::dedupe::claim(pool, key).await {
             Ok(true) => {}
@@ -446,14 +446,14 @@ pub async fn process_gitlab_webhook_with_cra(
 /// The CRA side of a verified GitLab push hook. `None` unless it is a branch push to
 /// the CRA repository's configured branch.
 pub async fn gitlab_cra_push(cra: &CraContext, body: &[u8], delivery: Option<&str>) -> Option<Result<LoadOutcome, CraRuntimeError>> {
-    let push: forge::gitlab::GitLabPushPayload = match serde_json::from_slice(body) {
+    let push: foundry::gitlab::GitLabPushPayload = match serde_json::from_slice(body) {
         Ok(p) => p,
         Err(e) => {
             warn!("GitLab push hook did not parse: {}", e);
             return None;
         }
     };
-    let ev = match forge::gitlab::normalize_push(&push, delivery) {
+    let ev = match foundry::gitlab::normalize_push(&push, delivery) {
         Ok(Some(ev)) => ev,
         Ok(None) => return None,
         Err(e) => {
@@ -469,7 +469,7 @@ pub async fn gitlab_webhook(req: HttpRequest, body: web::Bytes, state: web::Data
     let (status, json) = process_gitlab_webhook_with_cra(
         &state.db_pool,
         state.config.gitlab.webhook_secret.as_deref(),
-        forge_registry(&state),
+        foundry_registry(&state),
         state.payments.clone(),
         merit_rules(&state),
         Some(state.cra.as_ref()),
@@ -507,7 +507,7 @@ mod signature_tests {
 #[cfg(test)]
 mod gitlab_webhook_tests {
     use super::*;
-    use crate::forge::gitlab::tests::mr_hook;
+    use crate::foundry::gitlab::tests::mr_hook;
     use actix_web::test::TestRequest;
     use sqlx::sqlite::SqlitePoolOptions;
 

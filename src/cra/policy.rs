@@ -15,19 +15,37 @@ use super::model::OrgFile;
 /// The organization mode. It is a label that selects defaults, never a flag
 /// that code branches on.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
-#[serde(rename_all = "lowercase")]
+#[serde(rename_all = "snake_case")]
 pub enum Mode {
     Open,
+    /// Public code under a license that is not an open-source license
+    /// (contract 3.1.1). Written `source_available` in `org.toml`.
+    SourceAvailable,
     Hybrid,
     Closed,
 }
 
 impl Mode {
+    /// Every mode, in contract table order.
+    pub const ALL: [Mode; 4] = [Mode::Open, Mode::SourceAvailable, Mode::Hybrid, Mode::Closed];
+
+    /// The value written in `org.toml`.
     pub fn as_str(self) -> &'static str {
         match self {
             Mode::Open => "open",
+            Mode::SourceAvailable => "source_available",
             Mode::Hybrid => "hybrid",
             Mode::Closed => "closed",
+        }
+    }
+
+    /// The human label.
+    pub fn label(self) -> &'static str {
+        match self {
+            Mode::Open => "Open",
+            Mode::SourceAvailable => "Source available",
+            Mode::Hybrid => "Hybrid",
+            Mode::Closed => "Closed",
         }
     }
 }
@@ -151,7 +169,7 @@ pub const POLICY_KEYS: &[&str] = &[
     "consumers.subject_ids",
 ];
 
-/// The per-mode defaults of hierarchy doc 3.2.
+/// The per-mode defaults of hierarchy doc 3.2 and contract 3.1.1.
 pub fn mode_defaults(mode: Mode) -> Policy {
     use Visibility::*;
     match mode {
@@ -174,6 +192,30 @@ pub fn mode_defaults(mode: Mode) -> Policy {
             grants_max_term_days: 365,
             audit_visibility: AuditVisibility::MembersSummary,
             anomaly_profile_reads_per_hour: 300,
+            anomaly_action_on_trip: AnomalyAction::Alert,
+            consumers_subject_ids: "pairwise".into(),
+        },
+        // Contract 3.1.1: as hybrid, except that outside contributions earn
+        // in every listed repository, not only public ones.
+        Mode::SourceAvailable => Policy {
+            visibility_roster: Members,
+            visibility_leaderboard: Members,
+            visibility_profile: Members,
+            visibility_positions: Members,
+            merit_external_contributions_earn: ExternalEarn::Yes,
+            merit_sources_enabled: vec!["*".into()],
+            promotion_merit_rank_ceiling: 30,
+            promotion_merit_may_confer_authority: false,
+            promotion_eligibility_nominations: true,
+            compartments_enabled: true,
+            probation_days: 30,
+            payouts_eligible: PayoutEligible::VerifiedMembers,
+            payouts_hold_days: 7,
+            payouts_two_person_min_cents: 25_000,
+            grants_two_person_min_rank: 50,
+            grants_max_term_days: 180,
+            audit_visibility: AuditVisibility::Officers,
+            anomaly_profile_reads_per_hour: 120,
             anomaly_action_on_trip: AnomalyAction::Alert,
             consumers_subject_ids: "pairwise".into(),
         },

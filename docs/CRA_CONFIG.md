@@ -25,7 +25,7 @@ This document is the reference for the file formats, every validation rule, and 
 
 | File | Holds |
 |---|---|
-| `org.toml` | Identity of the organization, mode, policy overrides, Discord guild, forge repositories, portals (consumers), compartments, extra permissions |
+| `org.toml` | Identity of the organization, mode, policy overrides, Discord guild, GitHub and GitLab repositories (`[[foundry]]`), portals (consumers), compartments, extra permissions |
 | `roles.toml` | Tiers (earned) and positions (appointed), with rank, title, permissions and Discord role |
 | `members.toml` | Members, their status, their identities, and the positions granted to them |
 | `merit.toml` | Rubric, scorers and merit events |
@@ -49,7 +49,7 @@ schema = 1
 [org]
 slug = "voltec-industries"     # required, [a-z0-9-]
 name = "Voltec Industries"     # required, not empty
-mode = "hybrid"                # required: open | hybrid | closed
+mode = "hybrid"                # required: open | source_available | hybrid | closed
 template = "hybrid"            # optional, informational
 
 [policy]                       # optional overrides of the mode defaults (section 7)
@@ -63,7 +63,7 @@ class = "basic"                # basic | sensitive | authority
 guild_id = "300000000000000000"
 alert_channel_id = "300000000000000009"   # optional
 
-[[forge]]                      # repositories whose events count
+[[foundry]]                    # GitHub and GitLab repositories whose events count
 provider = "gitlab"            # github | gitlab
 host = "gitlab.com"            # optional; github.com or gitlab.com by default
 repo = "example-voltec/cell-firmware"     # owner/name
@@ -85,11 +85,11 @@ fields = ["tier", "positions.title", "merit.vested", "permissions"]
 
 Validation rules:
 
-- `org.slug` is a valid key. `org.name` is not empty. `org.mode` is one of the three modes.
+- `org.slug` is a valid key. `org.name` is not empty. `org.mode` is one of the four modes (section 7).
 - Every `[policy]` key is a known policy field (section 7), with the right type and a value from that field's allowed set. `consumers.subject_ids` accepts only `pairwise`.
 - `discord.guild_id` and `discord.alert_channel_id` are snowflakes.
 - `permissions_extra`: each key has the shape `surface.action`, is not already in the catalog, and is declared once.
-- `forge`: `repo` is `owner/name`; `host`, when set, is a bare host name; the same provider, host and repository is listed once (case-insensitive); `canonical` is required; a repository with `canonical = false` may not list `payout_branches`.
+- `foundry`: `repo` is `owner/name`; `host`, when set, is a bare host name; the same provider, host and repository is listed once (case-insensitive); `canonical` is required; a repository with `canonical = false` may not list `payout_branches`.
 - `consumer`: key valid and unique; each scope is either `surface.*` for a known surface or an exact known permission; each field is one of `status`, `tier`, `positions.title`, `positions.rank`, `positions.expires_at`, `merit.vested`, `permissions`.
 - `compartment`: key valid and unique. Declaring a compartment while the effective policy has `compartments.enabled = false` is refused.
 
@@ -164,7 +164,7 @@ Validation rules:
 - Expiry: a grant of a role at or above `grants.two_person_min_rank` needs `expires`, at most `grants.max_term_days` after the validation date. A grant of a role that sets `term_days` needs `expires`, at most `term_days` after the validation date. When both apply, the shorter limit wins. Because time only moves forward, a grant that was valid when loaded stays valid on every later load.
 - `max_holders`: live grants (member not removed, grant not expired on the validation date) may not exceed it.
 
-An identity listed here is proven by the administration. A contributor who is not in `members.toml` earns merit under their forge login and links Discord by OAuth proof, never by typing a username.
+An identity listed here is proven by the administration. A contributor who is not in `members.toml` earns merit under their GitHub or GitLab login and links Discord by OAuth proof, never by typing a username.
 
 ## 5. `merit.toml`
 
@@ -236,34 +236,36 @@ Validation rules:
 - `approval.approvals_required` is at least 1. A payee can never approve their own payout; this is not configurable.
 - `approval.min_approver_rank` and `eligibility.min_rank` are 0 to 1000.
 - Every role in `eligibility.roles` exists. When the policy sets `payouts.eligible = "positions_only"`, none of them may be a tier.
-- Each rate branch is declared once, is a `payout_branches` entry of some canonical forge, and has a finite `merit_multiplier` of at least 0.
+- Each rate branch is declared once, is a `payout_branches` entry of some canonical repository, and has a finite `merit_multiplier` of at least 0.
 
 ## 7. Policy fields and mode defaults
 
 The mode selects defaults; `[policy]` overrides them field by field. Code reads only the policy fields. The mode is read in exactly one function (`policy::resolve_org_policy`), and a test scans `src/cra/` to keep it that way.
 
-| Policy field | open | hybrid | closed |
-|---|---|---|---|
-| `visibility.roster` | `public` | `members` | `need_to_know` |
-| `visibility.leaderboard` | `public` | `members` | `off` |
-| `visibility.profile` | `public` | `members` | `self_and_chain` |
-| `visibility.positions` | `public` | `members` | `need_to_know` |
-| `merit.external_contributions_earn` | `true` | `public_repos_only` | `false` |
-| `merit.sources_enabled` | all | all | `internal.*`, `manual.award` |
-| `promotion.merit_rank_ceiling` | 30 | 30 | 0 |
-| `promotion.merit_may_confer_authority` | `false` | `false` | `false` |
-| `promotion.eligibility_nominations` | `true` | `true` | `false` |
-| `compartments.enabled` | `false` | `true` | `true` |
-| `probation.days` | 14 | 30 | 90 |
-| `payouts.eligible` | `verified_members` | `verified_members` | `positions_only` |
-| `payouts.hold_days` | 7 | 7 | 14 |
-| `payouts.two_person_min_cents` | 50000 | 25000 | 0 |
-| `grants.two_person_min_rank` | 60 | 50 | 30 |
-| `grants.max_term_days` | 365 | 180 | 90 |
-| `audit.visibility` | `members_summary` | `officers` | `officers` |
-| `anomaly.profile_reads_per_hour` | 300 | 120 | 60 |
-| `anomaly.action_on_trip` | `alert` | `alert` | `alert_and_freeze_reads` |
-| `consumers.subject_ids` | `pairwise` | `pairwise` | `pairwise` |
+| Policy field | open | source_available | hybrid | closed |
+|---|---|---|---|---|
+| `visibility.roster` | `public` | `members` | `members` | `need_to_know` |
+| `visibility.leaderboard` | `public` | `members` | `members` | `off` |
+| `visibility.profile` | `public` | `members` | `members` | `self_and_chain` |
+| `visibility.positions` | `public` | `members` | `members` | `need_to_know` |
+| `merit.external_contributions_earn` | `true` | `true` | `public_repos_only` | `false` |
+| `merit.sources_enabled` | all | all | all | `internal.*`, `manual.award` |
+| `promotion.merit_rank_ceiling` | 30 | 30 | 30 | 0 |
+| `promotion.merit_may_confer_authority` | `false` | `false` | `false` | `false` |
+| `promotion.eligibility_nominations` | `true` | `true` | `true` | `false` |
+| `compartments.enabled` | `false` | `true` | `true` | `true` |
+| `probation.days` | 14 | 30 | 30 | 90 |
+| `payouts.eligible` | `verified_members` | `verified_members` | `verified_members` | `positions_only` |
+| `payouts.hold_days` | 7 | 7 | 7 | 14 |
+| `payouts.two_person_min_cents` | 50000 | 25000 | 25000 | 0 |
+| `grants.two_person_min_rank` | 60 | 50 | 50 | 30 |
+| `grants.max_term_days` | 365 | 180 | 180 | 90 |
+| `audit.visibility` | `members_summary` | `officers` | `officers` | `officers` |
+| `anomaly.profile_reads_per_hour` | 300 | 120 | 120 | 60 |
+| `anomaly.action_on_trip` | `alert` | `alert` | `alert` | `alert_and_freeze_reads` |
+| `consumers.subject_ids` | `pairwise` | `pairwise` | `pairwise` | `pairwise` |
+
+`source_available` (label "Source available") is for a project whose code is public under a license that is not an open-source license; Eustress Engine is the example. It is `hybrid` with one difference: outside contributions earn in every listed repository, not only public ones.
 
 `merit.sources_enabled` accepts `"all"` or a list of patterns. `merit.external_contributions_earn` accepts `true`, `false` or `"public_repos_only"`.
 
@@ -303,9 +305,9 @@ It also computes the impact: members who gain or lose each position Discord role
 
 Every change is authorized against the ACTIVE snapshot, never the new one. A change cannot authorize itself.
 
-**Who is acting.** The actor is the forge-authenticated identity that merged or pushed. It is mapped to a member through the active snapshot's identities. An actor who is not a member of the active snapshot, and is not an owner, is refused. An actor whose entry is suspended or removed is refused. Approvers are resolved the same way. Rank and permissions come from the active snapshot on the date of the change: an expired grant confers nothing.
+**Who is acting.** The actor is the identity, authenticated by GitHub or GitLab, that merged or pushed. It is mapped to a member through the active snapshot's identities. An actor who is not a member of the active snapshot, and is not an owner, is refused. An actor whose entry is suspended or removed is refused. Approvers are resolved the same way. Rank and permissions come from the active snapshot on the date of the change: an expired grant confers nothing.
 
-**Owners.** The owner list comes from engine configuration. An entry is either a member id (`mckale`) or a forge identity (`github:Simbuilder`). Owners have rank 1000 and every permission. A member who is an owner is protected at rank 1000, so nobody can change an owner's entry from the repository.
+**Owners.** The owner list comes from engine configuration. An entry is either a member id (`mckale`) or a GitHub or GitLab identity (`github:Simbuilder`). Owners have rank 1000 and every permission. A member who is an owner is protected at rank 1000, so nobody can change an owner's entry from the repository.
 
 **Strict inequality.** Every rank check is "strictly above". Equal rank is never enough.
 
@@ -350,7 +352,7 @@ Every violation is returned, not just the first.
 `examples/cra/voltec-industries/.dsync/` is a hybrid organization. All names except McKale Olson, every repository path and every Discord id are placeholders.
 
 1. **Mode.** `org.toml` sets `mode = "hybrid"`. The effective policy is the hybrid column of section 7: the merit rank ceiling is 30, two-person changes start at rank 50, grants at or above 50 expire within 180 days, compartments are on, and payouts hold for 7 days.
-2. **Forges.** One public GitHub repository, where external contributors earn merit, and one private GitLab repository on `gitlab.com`, for staff. Both are canonical and pay out on `main`.
+2. **Repositories.** One public GitHub repository, where external contributors earn merit, and one private GitLab repository on `gitlab.com`, for staff. Both are canonical and pay out on `main`.
 3. **Roles.** Three earned tiers (Newcomer 0, Contributor 10, Core Contributor 30; none above the ceiling and none with an authority permission) and four job titles: Engineer 20, Senior Engineer 40, Head of Cell Engineering 60 (one holder, 180-day term, compartment `cell-eng`) and Director 70.
 4. **Members.** Gus Example is Director until 2027-04-30. Hana Example, a GitLab-only member, is Head of Cell Engineering until 2027-05-01. McKale Olson is an Engineer. Ivo Example is a Senior Engineer.
 5. **Portal.** The `voltec-portal` consumer reads `community.*` only. DSync standing never reaches Voltec's manufacturer data, messages, user management, roles or super admin, and Voltec enforces the same allowlist in its own code.
@@ -368,14 +370,14 @@ Where the contract left a point open, the code chose the following.
 - **Permissions as well as rank.** The contract's change rules are rank rules. The hierarchy document's grant rule (4.5), which the contract keeps, also requires the matching permission. The code requires both.
 - **Removing a grant** needs rank above both the role and the member (contract: the role; hierarchy doc: the member). The stricter of the two applies.
 - **Status changes and member entries** are two-person when the member's rank is at or above the threshold. The contract lists status changes as one-person; a suspension removes everything a revocation would, so it gets the same protection.
-- **Every other `org.toml` change** (forges, consumers, Discord, compartments, name) is two-person, like mode and policy. Forges decide what pays and consumers decide what data leaves.
+- **Every other `org.toml` change** (`[[foundry]]` repositories, consumers, Discord, compartments, name) is two-person, like mode and policy. Repositories decide what pays and consumers decide what data leaves.
 - **Org-level changes** need rank above the higher of the old and new `grants.two_person_min_rank`.
 - **The approver may not be the actor** who merged, as well as not the author.
 - **Owners** may be listed as member ids or as `provider:login`. Only the second form can bootstrap.
 - **Authorization does not see merit**, so a member's protected rank never drops below the merit ceiling, and an actor's rank comes from positions only.
 - **Compartments** are declared in `org.toml` `[[compartment]]`, which the contract did not define.
 - **`limits.hold_days`** must be at least the policy's `payouts.hold_days`.
-- **Rate branches** must be payout branches of a canonical forge.
+- **Rate branches** must be payout branches of a canonical repository.
 - **Probation** is not applied: the CRA does not record when a member joined or was granted a position.
 
 ## 14. Connecting a repository
@@ -391,7 +393,7 @@ This section is the engine side: how DSync finds the CRA repository, loads it on
 | `GITHUB_TOKEN` | Read access to a GitHub CRA repository (contents, pull requests, reviews). The token the service already uses. |
 | `GITLAB_TOKEN` | Read access to a GitLab CRA repository (`read_api`). Optional; needed when the project is private. |
 | `DSYNC_CRA_GITHUB_API`, `DSYNC_CRA_GITLAB_API` | API base overrides. Defaults: `https://api.github.com` for github.com, `https://<host>/api/v3` for GitHub Enterprise, `https://<host>/api/v4` for GitLab. |
-| `DSYNC_OWNER_MEMBER_IDS` | Owners (rank 1000), comma separated. An entry is a member id (`mckale`) or a forge identity (`github:Simbuilder`, `gitlab:someone`). Only the forge form can bootstrap the first snapshot. An entry with a `:` that is not `github:<login>` or `gitlab:<login>` is ignored. |
+| `DSYNC_OWNER_MEMBER_IDS` | Owners (rank 1000), comma separated. An entry is a member id (`mckale`) or a GitHub or GitLab identity (`github:Simbuilder`, `gitlab:someone`). Only the provider form can bootstrap the first snapshot. An entry with a `:` that is not `github:<login>` or `gitlab:<login>` is ignored. |
 | `GITHUB_WEBHOOK_SECRET`, `GITLAB_WEBHOOK_SECRET` | The existing webhook secrets. A push that fails the signature or token check is refused before anything is read. |
 
 If an active snapshot is stored but no longer reproduces its content hash, DSync refuses to start rather than fall back to another source of rank.
@@ -411,10 +413,10 @@ For a verified push to the CRA repository's branch, DSync takes the pushed head 
 
 1. Refuses anything that is not a full commit SHA. Files are only ever read at an exact commit.
 2. Does nothing if this commit already has a final outcome (accepted or rejected). A redelivered or replayed push cannot change a verdict or roll the hierarchy back.
-3. Fetches the five `.dsync/` files through the forge API at that SHA. The webhook body supplies only the branch, the SHA and the authenticated pusher; its content is never trusted.
-4. Builds the change context from the forge API: whether the commit is the merge commit of a merged pull or merge request, who merged it, who wrote it, and who approved it. A merged request whose merge commit is not this SHA does not count; the push is then a direct push by the webhook's pusher. An approval counts only if it is current. On GitHub, the reviewer's latest verdict is `APPROVED` and was given on the request's head commit. On GitLab, the user is still in the approvals list and their latest approval note is later than the request's last push. When the API cannot tell, the approval does not count.
+3. Fetches the five `.dsync/` files through the Foundry API at that SHA. The webhook body supplies only the branch, the SHA and the authenticated pusher; its content is never trusted.
+4. Builds the change context from the Foundry API: whether the commit is the merge commit of a merged pull or merge request, who merged it, who wrote it, and who approved it. A merged request whose merge commit is not this SHA does not count; the push is then a direct push by the webhook's pusher. An approval counts only if it is current. On GitHub, the reviewer's latest verdict is `APPROVED` and was given on the request's head commit. On GitLab, the user is still in the approvals list and their latest approval note is later than the request's last push. When the API cannot tell, the approval does not count.
 5. Parses and validates (sections 1 to 6), plans the change against the active snapshot (section 10), and authorizes it against the active snapshot (section 11).
-6. If everything passes, activates it in one transaction: the old active snapshot becomes `superseded`, the new one `active`. Then it links every member's forge identities (14.6) and swaps the engine's runtime state.
+6. If everything passes, activates it in one transaction: the old active snapshot becomes `superseded`, the new one `active`. Then it links every member's GitHub and GitLab identities (14.6) and swaps the engine's runtime state.
 7. If anything fails, records a `rejected` attempt with every violation. The active snapshot stays as it was.
 
 A commit that changes nothing in `.dsync/` (an empty plan) is a no-op and records nothing.
@@ -427,16 +429,16 @@ A commit that changes nothing in `.dsync/` (an empty plan) is a no-op and record
 
 - A file error (sections 1 to 6) carries its error code (`RankOutOfRange`, `UnknownRole`, ...) and the file name as `item`.
 - An authorization violation (section 11) carries its code (`InsufficientRank`, `DirectPushNeedsApproval`, `NoQualifiedApprover`, `NotBootstrapOwner`, ...) and the change as `item`, for example ``grant `maintainer` to `cy-example` ``.
-- `SourceError`: the forge API failed, or gave an answer that settles nothing (an HTTP error, two merged requests claiming the commit, a pusher who is not the merger, a direct push with no known pusher). These rejections are `retryable`: the same commit may be loaded again once the forge answers, by a redelivery or a reload.
+- `SourceError`: the Foundry API failed, or gave an answer that settles nothing (an HTTP error, two merged requests claiming the commit, a pusher who is not the merger, a direct push with no known pusher). These rejections are `retryable`: the same commit may be loaded again once the Foundry API answers, by a redelivery or a reload.
 - `InvalidCommitSha`; `ActiveSnapshotUnusable` (the stored active snapshot no longer reproduces its content hash; retryable); `ActiveChanged` (another commit was activated while this one was checked; retryable).
 
 To fix a rejected change, push a new commit. A rejected commit keeps its verdict.
 
 ### 14.5 Bootstrapping the first snapshot
 
-The first snapshot is accepted only when the actor is an owner from engine configuration in the forge form. A member id means nothing before a snapshot exists, and the new snapshot cannot vouch for itself.
+The first snapshot is accepted only when the actor is an owner from engine configuration in the provider form. A member id means nothing before a snapshot exists, and the new snapshot cannot vouch for itself.
 
-1. Put your forge identity in `DSYNC_OWNER_MEMBER_IDS` (for example `github:Simbuilder`) and set `DSYNC_CRA_REPO`. Restart DSync.
+1. Put your GitHub or GitLab identity in `DSYNC_OWNER_MEMBER_IDS` (for example `github:Simbuilder`) and set `DSYNC_CRA_REPO`. Restart DSync.
 2. Add the webhook (14.2).
 3. As that owner, push the five files to the CRA branch, or merge a pull request that adds them. `GET /api/v1/cra/snapshots` should then show an `active` row with you as `actor`.
 
@@ -446,14 +448,14 @@ If the files landed before the webhook existed, merge them through a pull reques
 
 | Seam | With an active snapshot | With none |
 |---|---|---|
-| Ranks (payout approvers, eligibility, token management) | Owners from engine configuration stay 1000, whether the token names the owner entry or a member whose forge identity is an owner entry. Every other member has their standing rank (section 9), with all merit counted as vested. An id the snapshot does not list has no rank. | Owners 1000, everyone else none |
+| Ranks (payout approvers, eligibility, token management) | Owners from engine configuration stay 1000, whether the token names the owner entry or a member whose GitHub or GitLab identity is an owner entry. Every other member has their standing rank (section 9), with all merit counted as vested. An id the snapshot does not list has no rank. | Owners 1000, everyone else none |
 | Payee identity | A ledger row paid to a member's attested GitHub or GitLab login belongs to that member, so they cannot approve it even if their token declares no payee key. | Token `payee_keys` only |
 | Roles (eligibility) | Active positions and the tier | None |
-| Repositories that earn | `org.toml` `[[forge]]`: `canonical = false` earns nothing and creates no payout row; `visibility = "private"` is never named publicly | `DSYNC_FORGE_REPOS` |
+| Repositories that earn | `org.toml` `[[foundry]]`: `canonical = false` earns nothing and creates no payout row; `visibility = "private"` is never named publicly | `DSYNC_FOUNDRY_REPOS` |
 | Merit rules | `merit.toml`: `pr_merged` and `review_approved` from their `[[event]]`; an event not listed earns nothing; opening a pull request earns nothing | Contract 3.4 defaults |
 | Payout policy | `payouts.toml`. `PUT /api/v1/payouts/policy` answers 409 because the policy is authored in the CRA. `GET` shows it with `updated_by = cra:<commit>`. | The stored policy, or the env default |
 
-On activation each member's forge identities are attached to one contributor, so XP earned under a GitHub login and a GitLab login adds up. A member with no contributor yet gets one. An identity that already belongs to a different contributor is reported as a `conflict` in the activation result and is never merged.
+On activation each member's GitHub and GitLab identities are attached to one contributor, so XP earned under a GitHub login and a GitLab login adds up. A member with no contributor yet gets one. An identity that already belongs to a different contributor is reported as a `conflict` in the activation result and is never merged.
 
 Read endpoints:
 
@@ -464,4 +466,4 @@ GET  /api/v1/cra/snapshots?limit=            hierarchy.read: recent attempts wit
 POST /api/v1/cra/reload                      hierarchy.read and rank 1000: re-run the loader on the branch head
 ```
 
-Not enforced yet: `weight`, `daily_cap`, `vesting_days` and `external_counts` in `merit.toml`; the Discord projection and consumer cache invalidation on activation (round 3). Ranks computed for the synchronous rank checks use a merit cache refreshed on activation, after each forge webhook and every 60 seconds.
+Not enforced yet: `weight`, `daily_cap`, `vesting_days` and `external_counts` in `merit.toml`; the Discord projection and consumer cache invalidation on activation (round 3). Ranks computed for the synchronous rank checks use a merit cache refreshed on activation, after each GitHub or GitLab webhook and every 60 seconds.

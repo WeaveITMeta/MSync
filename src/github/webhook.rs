@@ -1,4 +1,4 @@
-use crate::forge::{self, ForgeProcessor, ProcessOutcome, RepoRegistry};
+use crate::foundry::{self, FoundryProcessor, ProcessOutcome, RepoRegistry};
 use crate::merit::scoring::MeritRules;
 use crate::payments::PaymentConfig;
 use anyhow::Result;
@@ -56,16 +56,16 @@ pub struct GitHubUser {
     pub login: String,
 }
 
-/// GitHub webhook entry: normalizes the payload to a `ForgeEvent` and runs the shared
-/// merit and payout path (`forge::ForgeProcessor`).
+/// GitHub webhook entry: normalizes the payload to a `FoundryEvent` and runs the shared
+/// merit and payout path (`foundry::FoundryProcessor`).
 pub struct GitHubWebhookHandler {
-    processor: ForgeProcessor,
+    processor: FoundryProcessor,
 }
 
 impl GitHubWebhookHandler {
     /// Legacy registry (every GitHub repository earns), default merit rules, no payments.
     pub fn new(db_pool: SqlitePool) -> Self {
-        Self { processor: ForgeProcessor::new(db_pool) }
+        Self { processor: FoundryProcessor::new(db_pool) }
     }
 
     pub fn with_payments(mut self, cfg: Arc<PaymentConfig>) -> Self {
@@ -88,7 +88,7 @@ impl GitHubWebhookHandler {
     }
 
     pub async fn handle_delivery(&self, event_type: &str, payload: GitHubWebhookPayload, delivery: Option<&str>) -> Result<Option<ProcessOutcome>> {
-        match forge::github::normalize(event_type, &payload, delivery) {
+        match foundry::github::normalize(event_type, &payload, delivery) {
             Some(ev) => Ok(Some(self.processor.process(&ev).await?)),
             None => {
                 info!("Unhandled webhook event type/action: {} {:?}", event_type, payload.action);

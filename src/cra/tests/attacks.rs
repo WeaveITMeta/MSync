@@ -93,7 +93,7 @@ fn story_attacker_rewrites_his_identity_to_a_senior_members_login() {
 
     // Even after pushing, the next commit cal makes as "lena-gh" is resolved
     // through the ACTIVE snapshot, where that login still belongs to Lena.
-    // He does not have her login on the forge, so he cannot act as her; and
+    // He does not have her login on GitHub, so he cannot act as her; and
     // his own login maps to cal, rank 0.
     let r = auth(&old(), &add_grant(base(), "cal", "reviewer", "lena", None), &push("cal-gh"));
     assert_denied(&r, V::InsufficientRank);

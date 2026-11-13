@@ -5,7 +5,7 @@ use super::*;
 use crate::auth::{scopes, CraDirectory, Directory, EnvDirectory, Principal, DEFAULT_ORG};
 use crate::cra::tests::{add_grant, base, edit, today, F};
 use crate::cra::{CraFiles, GitHubSource, GitLabSource};
-use crate::forge::{self as forge_mod};
+use crate::foundry::{self as foundry_mod};
 use crate::payments::{approvals, ledger, policy as pay_policy, PaymentConfig};
 use chrono::Utc;
 use mockito::Matcher;
@@ -26,11 +26,11 @@ fn sha(n: u64) -> String {
 }
 
 fn repo() -> CraRepo {
-    CraRepo::new(ForgeProvider::GitHub, "github.com", "example/cra")
+    CraRepo::new(FoundryProvider::GitHub, "github.com", "example/cra")
 }
 
-fn gh(login: &str) -> ForgeIdentity {
-    ForgeIdentity::github(login)
+fn gh(login: &str) -> FoundryIdentity {
+    FoundryIdentity::github(login)
 }
 
 fn owners() -> Vec<String> {
@@ -85,7 +85,7 @@ impl CraSource for FakeSource {
             None => Err(SourceError::Api(format!("no commit {sha}"))),
         }
     }
-    async fn change_context(&self, sha: &str, _pusher: Option<&ForgeIdentity>, _today: NaiveDate) -> Result<ChangeContext, SourceError> {
+    async fn change_context(&self, sha: &str, _pusher: Option<&FoundryIdentity>, _today: NaiveDate) -> Result<ChangeContext, SourceError> {
         match self.commits.lock().unwrap().get(sha) {
             Some((_, c)) => c.clone(),
             None => Err(SourceError::Api(format!("no commit {sha}"))),
@@ -198,7 +198,7 @@ async fn a_two_person_change_through_a_direct_push_is_rejected() {
 }
 
 #[tokio::test]
-async fn a_forge_api_error_rejects_the_load_and_can_be_retried() {
+async fn a_foundry_api_error_rejects_the_load_and_can_be_retried() {
     let pool = pool().await;
     let src = FakeSource::new();
     let first = bootstrap(&pool, &src, base(), &sha(1)).await;
@@ -215,7 +215,7 @@ async fn a_forge_api_error_rejects_the_load_and_can_be_retried() {
     assert_eq!(rejected_codes(&load(&pool, &src, &sha(2)).await), vec!["SourceError"]);
     assert_eq!(active_id(&pool).await, Some(first));
 
-    // A transient failure is not final: the forge recovers and the commit loads.
+    // A transient failure is not final: the Foundry API recovers and the commit loads.
     src.commit(&sha(2), Ok(change), Ok(direct("mia-gh")));
     assert!(matches!(load(&pool, &src, &sha(2)).await, LoadOutcome::Activated { .. }));
     let rejected: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM cra_snapshots WHERE status = 'rejected' AND commit_sha = ?")
@@ -240,7 +240,7 @@ async fn loading_the_same_commit_twice_does_nothing_the_second_time() {
     // A rejected commit stays rejected: a redelivery does not get a second verdict.
     src.commit(&sha(2), Ok(add_grant(base(), "cal", "reviewer", "mia", None)), Ok(direct("cal-gh")));
     let LoadOutcome::Rejected { snapshot_id, .. } = load(&pool, &src, &sha(2)).await else { panic!() };
-    // Even if the forge now tells a different story about who pushed it.
+    // Even if the Foundry API now tells a different story about who pushed it.
     src.commit(&sha(2), Ok(add_grant(base(), "cal", "reviewer", "mia", None)), Ok(direct("mia-gh")));
     assert!(matches!(load(&pool, &src, &sha(2)).await, LoadOutcome::AlreadyProcessed { snapshot_id: s, .. } if s == snapshot_id));
     assert_eq!(row_count(&pool).await, 2);
@@ -319,7 +319,7 @@ async fn invalid_files_and_bad_shas_are_rejected() {
     for not_a_sha in ["main", "refs/heads/main", "abc123", &"0".repeat(40)] {
         assert_eq!(rejected_codes(&load(&pool, &src, not_a_sha).await), vec!["InvalidCommitSha"], "{not_a_sha}");
     }
-    assert!(!src.fetched().iter().any(|s| s == "main"), "a branch name must never reach the forge");
+    assert!(!src.fetched().iter().any(|s| s == "main"), "a branch name must never reach the Foundry API");
     assert_eq!(active_id(&pool).await, Some(first));
 }
 
@@ -397,9 +397,9 @@ async fn a_push_to_another_repository_or_branch_loads_nothing() {
 async fn a_gitlab_push_hook_triggers_only_for_the_cra_repository() {
     use actix_web::test::TestRequest;
     let pool = pool().await;
-    let gl_repo = CraRepo::new(ForgeProvider::GitLab, "gitlab.com", "grp/cra");
+    let gl_repo = CraRepo::new(FoundryProvider::GitLab, "gitlab.com", "grp/cra");
     let src = Arc::new(FakeSource { repo: gl_repo.clone(), ..FakeSource::new() });
-    let gl_owner = ChangeContext { actor: ForgeIdentity::gitlab("test-owner"), ..direct("x") };
+    let gl_owner = ChangeContext { actor: FoundryIdentity::gitlab("test-owner"), ..direct("x") };
     src.commit(&sha(7), Ok(base()), Ok(gl_owner));
     let handle = CraHandle::new();
     let dir: Arc<dyn Directory> = Arc::new(EnvDirectory::default());
@@ -427,7 +427,7 @@ async fn a_gitlab_push_hook_triggers_only_for_the_cra_repository() {
             crate::routes::process_gitlab_webhook_with_cra(&pool, Some("s"), reg, pay, rules, Some(ctx), &headers, &b).await
         }
     };
-    use crate::forge::gitlab::tests::push_hook;
+    use crate::foundry::gitlab::tests::push_hook;
     let (st, j) = call(push_hook("refs/heads/dev", &sha(7), "test-owner", "grp/cra", "https://gitlab.com/grp/cra")).await;
     assert_eq!((st.as_u16(), j["status"].as_str()), (200, Some("ignored")));
     let (_, j) = call(push_hook("refs/heads/main", &sha(7), "test-owner", "grp/other", "https://gitlab.com/grp/other")).await;
@@ -680,7 +680,7 @@ fn github_approvers_sorted(reviews: &[serde_json::Value], head: &str) -> Vec<Str
 const GL_ENC: &str = "grp%2Fcra";
 
 fn gl_repo() -> CraRepo {
-    CraRepo::new(ForgeProvider::GitLab, "gitlab.com", "grp/cra")
+    CraRepo::new(FoundryProvider::GitLab, "gitlab.com", "grp/cra")
 }
 
 async fn gl_files(server: &mut mockito::ServerGuard, sha_: &str, files: &CraFiles) -> Vec<mockito::Mock> {
@@ -704,7 +704,7 @@ fn gl_source(server: &mockito::ServerGuard) -> GitLabSource {
     GitLabSource::new(gl_repo(), Some(server.url()), Some("gl-token".into()))
 }
 
-/// GitLab flavour of the base fixture: every member's forge identity is on GitLab.
+/// GitLab flavour of the base fixture: every member's identity is on GitLab.
 fn gl_base() -> CraFiles {
     let mut f = base();
     f.members = f.members.replace("github = ", "gitlab = ");
@@ -728,7 +728,7 @@ async fn gitlab_files_are_fetched_at_the_pushed_sha() {
         .with_body("[]")
         .create_async()
         .await;
-    let o = load_commit(&pool, &gl_source(&server), &gl_repo(), &s, Some(&ForgeIdentity::gitlab("test-owner")), &gl_owners(), today())
+    let o = load_commit(&pool, &gl_source(&server), &gl_repo(), &s, Some(&FoundryIdentity::gitlab("test-owner")), &gl_owners(), today())
         .await
         .unwrap();
     assert!(matches!(o, LoadOutcome::Activated { .. }), "{o:?}");
@@ -784,13 +784,13 @@ fn note(user: &str, body: &str, at: &str) -> serde_json::Value {
 async fn gitlab_an_approval_that_predates_the_last_commit_does_not_count() {
     let pool = pool().await;
     let fake = FakeSource { repo: gl_repo(), ..FakeSource::new() };
-    fake.commit(&sha(1), Ok(gl_base()), Ok(ChangeContext { actor: ForgeIdentity::gitlab("test-owner"), ..direct("x") }));
+    fake.commit(&sha(1), Ok(gl_base()), Ok(ChangeContext { actor: FoundryIdentity::gitlab("test-owner"), ..direct("x") }));
     assert!(matches!(
         load_commit(&pool, &fake, &gl_repo(), &sha(1), None, &gl_owners(), today()).await.unwrap(),
         LoadOutcome::Activated { .. }
     ));
     let change = add_grant(gl_base(), "cal", "maintainer", "lena", Some("2027-01-01"));
-    let gl = |l: &str| ForgeIdentity::gitlab(l);
+    let gl = |l: &str| FoundryIdentity::gitlab(l);
 
     // lars approved at 10:00, lena pushed again at 11:00 (approvals not reset), then merged.
     let mut server = mockito::Server::new_async().await;
@@ -826,7 +826,7 @@ async fn gitlab_an_approval_that_predates_the_last_commit_does_not_count() {
 async fn gitlab_api_errors_reject_the_load() {
     let pool = pool().await;
     let fake = FakeSource { repo: gl_repo(), ..FakeSource::new() };
-    fake.commit(&sha(1), Ok(gl_base()), Ok(ChangeContext { actor: ForgeIdentity::gitlab("test-owner"), ..direct("x") }));
+    fake.commit(&sha(1), Ok(gl_base()), Ok(ChangeContext { actor: FoundryIdentity::gitlab("test-owner"), ..direct("x") }));
     let first = match load_commit(&pool, &fake, &gl_repo(), &sha(1), None, &gl_owners(), today()).await.unwrap() {
         LoadOutcome::Activated { snapshot_id, .. } => snapshot_id,
         o => panic!("{o:?}"),
@@ -853,7 +853,7 @@ async fn gitlab_api_errors_reject_the_load() {
         .with_status(503)
         .create_async()
         .await;
-    let o = load_commit(&pool, &gl_source(&server), &gl_repo(), &merge, Some(&ForgeIdentity::gitlab("lena-gh")), &gl_owners(), today())
+    let o = load_commit(&pool, &gl_source(&server), &gl_repo(), &merge, Some(&FoundryIdentity::gitlab("lena-gh")), &gl_owners(), today())
         .await
         .unwrap();
     assert_eq!(rejected_codes(&o), vec!["SourceError"]);
@@ -939,7 +939,7 @@ async fn with_a_snapshot_rank_and_policy_come_from_the_cra() {
     assert_eq!(dir.rank_of("mckale"), Some(80), "Lead Maintainer");
     assert_eq!(dir.rank_of("bo-example"), Some(40), "Reviewer");
     assert_eq!(dir.rank_of("cy-example"), Some(10), "Contributor tier");
-    assert_eq!(dir.rank_of("founder"), Some(1000), "owner by forge identity stays 1000");
+    assert_eq!(dir.rank_of("founder"), Some(1000), "owner by GitHub or GitLab identity stays 1000");
     assert_eq!(dir.rank_of("nobody"), None);
     assert_eq!(dir.roles_of("ada-example"), vec!["maintainer", "newcomer"]);
     assert_eq!(dir.roles_of("cy-example"), vec!["contributor"]);
@@ -974,7 +974,7 @@ async fn with_a_snapshot_rank_and_policy_come_from_the_cra() {
 }
 
 #[tokio::test]
-async fn a_member_cannot_approve_a_payout_to_their_own_forge_login() {
+async fn a_member_cannot_approve_a_payout_to_their_own_foundry_login() {
     let pool = pool().await;
     let mut files = eustress();
     // Give Ada a GitLab login as well.
@@ -1008,12 +1008,12 @@ async fn a_member_cannot_approve_a_payout_to_their_own_forge_login() {
 async fn a_mirror_repository_in_org_toml_earns_nothing() {
     let pool = pool().await;
     let mut files = eustress();
-    files.org.push_str("\n[[forge]]\nprovider = \"gitlab\"\nrepo = \"example-eustress/eustress-engine\"\nvisibility = \"public\"\ncanonical = false\n");
+    files.org.push_str("\n[[foundry]]\nprovider = \"gitlab\"\nrepo = \"example-eustress/eustress-engine\"\nvisibility = \"public\"\ncanonical = false\n");
     let (handle, _dir) = eustress_active(&pool, files).await;
-    let reg = crate::routes::forge_registry_for(&handle, &RepoRegistry::legacy());
-    assert_eq!(reg.decide(ForgeProvider::GitLab, "gitlab.com", Some("example-eustress/eustress-engine")), forge_mod::RepoDecision::Mirror);
-    assert_eq!(reg.decide(ForgeProvider::GitHub, "github.com", Some("example-eustress/eustress-engine")), forge_mod::RepoDecision::Earn);
-    assert_eq!(reg.decide(ForgeProvider::GitHub, "github.com", Some("someone/else")), forge_mod::RepoDecision::Unlisted);
+    let reg = crate::routes::foundry_registry_for(&handle, &RepoRegistry::legacy());
+    assert_eq!(reg.decide(FoundryProvider::GitLab, "gitlab.com", Some("example-eustress/eustress-engine")), foundry_mod::RepoDecision::Mirror);
+    assert_eq!(reg.decide(FoundryProvider::GitHub, "github.com", Some("example-eustress/eustress-engine")), foundry_mod::RepoDecision::Earn);
+    assert_eq!(reg.decide(FoundryProvider::GitHub, "github.com", Some("someone/else")), foundry_mod::RepoDecision::Unlisted);
 
     // A merge on the mirror through the real GitLab webhook path: nothing earned, no ledger row.
     use actix_web::test::TestRequest;
@@ -1021,7 +1021,7 @@ async fn a_mirror_repository_in_org_toml_earns_nothing() {
     let pay = Arc::new(PaymentConfig::from_lookup(|_| None));
     let rules = crate::routes::merit_rules_for(&handle);
     for action in ["open", "merge"] {
-        let b = serde_json::to_vec(&crate::forge::gitlab::tests::mr_hook(action, (5, "carol"), 5, "example-eustress/eustress-engine", "https://gitlab.com/example-eustress/eustress-engine")).unwrap();
+        let b = serde_json::to_vec(&crate::foundry::gitlab::tests::mr_hook(action, (5, "carol"), 5, "example-eustress/eustress-engine", "https://gitlab.com/example-eustress/eustress-engine")).unwrap();
         let (st, j) = crate::routes::process_gitlab_webhook(&pool, Some("s"), reg.clone(), pay.clone(), rules.clone(), &h, &b).await;
         assert_eq!((st.as_u16(), j["status"].as_str()), (200, Some("ignored")), "{action}");
     }
@@ -1031,7 +1031,7 @@ async fn a_mirror_repository_in_org_toml_earns_nothing() {
 
     // Control, no snapshot: the env registry is used unchanged.
     let env = RepoRegistry::from_spec("gitlab:gitlab.com:example-eustress/eustress-engine").unwrap();
-    let reg = crate::routes::forge_registry_for(&CraHandle::new(), &env);
+    let reg = crate::routes::foundry_registry_for(&CraHandle::new(), &env);
     assert_eq!(*reg, env);
     assert_eq!(*crate::routes::merit_rules_for(&CraHandle::new()), MeritRules::default());
 }
@@ -1123,9 +1123,9 @@ async fn put_payout_policy_is_refused_with_409_while_a_snapshot_is_active() {
 async fn activation_links_member_identities_and_reports_conflicts() {
     let pool = pool().await;
     // carol earned under GitLab before the CRA existed; an unrelated contributor holds `ada-gl`.
-    crate::forge::identity::resolve_contributor(&pool, ForgeProvider::GitLab, "gitlab.com", "carol-gl").await.unwrap();
-    crate::forge::identity::resolve_contributor(&pool, ForgeProvider::GitHub, "github.com", "ada-example").await.unwrap();
-    crate::forge::identity::resolve_contributor(&pool, ForgeProvider::GitLab, "gitlab.com", "ada-gl").await.unwrap();
+    crate::foundry::identity::resolve_contributor(&pool, FoundryProvider::GitLab, "gitlab.com", "carol-gl").await.unwrap();
+    crate::foundry::identity::resolve_contributor(&pool, FoundryProvider::GitHub, "github.com", "ada-example").await.unwrap();
+    crate::foundry::identity::resolve_contributor(&pool, FoundryProvider::GitLab, "gitlab.com", "ada-gl").await.unwrap();
     let mut files = eustress();
     files.members = files
         .members
@@ -1143,11 +1143,11 @@ async fn activation_links_member_identities_and_reports_conflicts() {
     assert_eq!(find("ada-example", "github:github.com:ada-example").as_deref(), Some("linked"));
     // cy had no GitHub contributor; the GitLab one is primary and the GitHub login joins it.
     assert_eq!(find("cy-example", "github:github.com:cy-example").as_deref(), Some("linked"));
-    let a = crate::forge::identity::find_contributor(&pool, ForgeProvider::GitHub, "github.com", "cy-example").await.unwrap().unwrap();
-    let b = crate::forge::identity::find_contributor(&pool, ForgeProvider::GitLab, "gitlab.com", "carol-gl").await.unwrap().unwrap();
+    let a = crate::foundry::identity::find_contributor(&pool, FoundryProvider::GitHub, "github.com", "cy-example").await.unwrap().unwrap();
+    let b = crate::foundry::identity::find_contributor(&pool, FoundryProvider::GitLab, "gitlab.com", "carol-gl").await.unwrap().unwrap();
     assert_eq!(a.id, b.id, "one person, one contributor: XP adds up");
-    let x = crate::forge::identity::find_contributor(&pool, ForgeProvider::GitHub, "github.com", "ada-example").await.unwrap().unwrap();
-    let y = crate::forge::identity::find_contributor(&pool, ForgeProvider::GitLab, "gitlab.com", "ada-gl").await.unwrap().unwrap();
+    let x = crate::foundry::identity::find_contributor(&pool, FoundryProvider::GitHub, "github.com", "ada-example").await.unwrap().unwrap();
+    let y = crate::foundry::identity::find_contributor(&pool, FoundryProvider::GitLab, "gitlab.com", "ada-gl").await.unwrap().unwrap();
     assert_ne!(x.id, y.id, "a conflict is reported, never merged");
 }
 
@@ -1157,12 +1157,12 @@ async fn hierarchy_and_standing_lookups() {
     let (handle, dir) = eustress_active(&pool, eustress()).await;
     let h = crate::cra::api::hierarchy_get(&handle).unwrap();
     let hv = serde_json::to_value(&h).unwrap();
-    assert_eq!((hv["org_slug"].as_str(), hv["mode"].as_str()), (Some("eustress-engine"), Some("open")));
+    assert_eq!((hv["org_slug"].as_str(), hv["mode"].as_str()), (Some("eustress-engine"), Some("source_available")));
     let ranks: Vec<u32> = h.roles.iter().map(|r| r.rank).collect();
     assert!(ranks.windows(2).all(|w| w[0] >= w[1]), "{ranks:?}");
     assert_eq!(h.roles[0].key, "lead-maintainer");
 
-    crate::forge::identity::resolve_contributor(&pool, ForgeProvider::GitHub, "github.com", "cy-example").await.unwrap();
+    crate::foundry::identity::resolve_contributor(&pool, FoundryProvider::GitHub, "github.com", "cy-example").await.unwrap();
     sqlx::query("UPDATE contributors SET total_merit_points = 160").execute(&pool).await.unwrap();
     let v = crate::cra::api::standing_get(&pool, &handle, &dir, "cy-example", today()).await.unwrap().unwrap();
     assert_eq!(v.vested_merit, 160);
@@ -1213,7 +1213,7 @@ async fn read_endpoints_need_hierarchy_read_and_reload_needs_an_owner() {
 
     let resp = atest::call_service(&app, get("/api/v1/hierarchy", &reader)).await;
     let j: serde_json::Value = atest::read_body_json(resp).await;
-    assert_eq!(j["hierarchy"]["mode"], "open");
+    assert_eq!(j["hierarchy"]["mode"], "source_available");
     assert_eq!(j["hierarchy"]["roles"][0]["key"], "lead-maintainer");
     let resp = atest::call_service(&app, get("/api/v1/hierarchy/members/ada-example", &reader)).await;
     let j: serde_json::Value = atest::read_body_json(resp).await;
@@ -1258,7 +1258,8 @@ async fn eustress_engine_story() {
 
     // 3. Ada tries to make Cy a Maintainer: her own rank. Approved by the Lead, still refused.
     let mut with_maintainer = with_reviewer.clone();
-    with_maintainer.members.push_str("\n[[member.grant]]\nrole = \"maintainer\"\ngranted_by = \"ada-example\"\nexpires = \"2027-06-30\"\n");
+    // Inside the 180-day source_available term, so the only fault is the rank.
+    with_maintainer.members.push_str("\n[[member.grant]]\nrole = \"maintainer\"\ngranted_by = \"ada-example\"\nexpires = \"2027-05-01\"\n");
     src.commit(&sha(4), Ok(with_maintainer), Ok(via_pr("ada-example", "ada-example", &["Simbuilder"])));
     let o = run(sha(4)).await;
     assert_eq!(rejected_codes(&o), vec!["InsufficientRank"], "{o:?}");

@@ -9,7 +9,7 @@
 //! With `include_private_names = false`, every repository that is not public in the
 //! registry collapses into one `private repositories` line and its name never appears.
 
-use crate::forge::{RepoRef, RepoRegistry};
+use crate::foundry::{RepoRef, RepoRegistry};
 use serde::Serialize;
 use sqlx::{Row, SqlitePool};
 use std::collections::BTreeMap;
@@ -278,9 +278,9 @@ pub async fn member_merit(pool: &SqlitePool, registry: &RepoRegistry, contributo
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::forge::gitlab::tests::mr_hook;
-    use crate::forge::identity::{find_contributor, link_forge_identity, LinkError};
-    use crate::forge::{github, gitlab, ForgeProcessor, ForgeProvider};
+    use crate::foundry::gitlab::tests::mr_hook;
+    use crate::foundry::identity::{find_contributor, link_foundry_identity, LinkError};
+    use crate::foundry::{github, gitlab, FoundryProcessor, FoundryProvider};
     use crate::github::webhook::GitHubWebhookPayload;
     use sqlx::sqlite::SqlitePoolOptions;
     use std::sync::Arc;
@@ -297,12 +297,12 @@ mod tests {
         RepoRegistry::from_spec(SPEC).unwrap()
     }
 
-    fn proc_(pool: &SqlitePool) -> ForgeProcessor {
-        ForgeProcessor::new(pool.clone()).with_registry(Arc::new(reg()))
+    fn proc_(pool: &SqlitePool) -> FoundryProcessor {
+        FoundryProcessor::new(pool.clone()).with_registry(Arc::new(reg()))
     }
 
     /// Open + merge a GitHub PR by `login` in `repo` (5 + 10 points).
-    async fn gh_pr(p: &ForgeProcessor, repo: &str, id: i64, login: &str) {
+    async fn gh_pr(p: &FoundryProcessor, repo: &str, id: i64, login: &str) {
         for (action, merged) in [("opened", false), ("closed", true)] {
             let payload: GitHubWebhookPayload = serde_json::from_value(serde_json::json!({
                 "action": action, "repository": {"full_name": repo},
@@ -316,7 +316,7 @@ mod tests {
     }
 
     /// Open + merge a GitLab MR by `login` in grp/proj (5 + 10 points).
-    async fn gl_mr(p: &ForgeProcessor, login: &str) {
+    async fn gl_mr(p: &FoundryProcessor, login: &str) {
         for action in ["open", "merge"] {
             let payload: gitlab::GitLabWebhookPayload =
                 serde_json::from_value(mr_hook(action, (77, login), 77, "grp/proj", "https://gitlab.com/grp/proj")).unwrap();
@@ -335,8 +335,8 @@ mod tests {
         let p = proc_(&pool);
         gh_pr(&p, "org/alpha", 1, "alice").await;
         gh_pr(&p, "org/beta", 2, "alice").await;
-        let alice = find_contributor(&pool, ForgeProvider::GitHub, "github.com", "alice").await.unwrap().unwrap();
-        link_forge_identity(&pool, alice.id, ForgeProvider::GitLab, "gitlab.com", "alice-gl").await.unwrap();
+        let alice = find_contributor(&pool, FoundryProvider::GitHub, "github.com", "alice").await.unwrap().unwrap();
+        link_foundry_identity(&pool, alice.id, FoundryProvider::GitLab, "gitlab.com", "alice-gl").await.unwrap();
         gl_mr(&p, "alice-gl").await;
 
         let m = member_merit(&pool, &reg(), alice.id, true).await.unwrap().unwrap();
@@ -376,7 +376,7 @@ mod tests {
         assert!(!json_rows.contains("secret-sauce"));
 
         // Asking for the private repository by name on a public query reveals nothing.
-        let q = LeaderboardQuery { repo: Some(RepoRef::new(ForgeProvider::GitHub, "github.com", "org/secret-sauce")), limit: 25, include_private_names: false };
+        let q = LeaderboardQuery { repo: Some(RepoRef::new(FoundryProvider::GitHub, "github.com", "org/secret-sauce")), limit: 25, include_private_names: false };
         assert!(leaderboard(&pool, &reg(), q).await.unwrap().is_empty());
 
         // An authorized caller sees the name.
@@ -398,12 +398,12 @@ mod tests {
         let all = leaderboard(&pool, &reg(), LeaderboardQuery { repo: None, limit: 25, include_private_names: false }).await.unwrap();
         assert_eq!(all.iter().map(|r| (r.github_username.as_str(), r.total_points)).collect::<Vec<_>>(), vec![("bob", 45), ("alice", 30)]);
 
-        let q = LeaderboardQuery { repo: Some(RepoRef::new(ForgeProvider::GitHub, "github.com", "Org/Alpha")), limit: 25, include_private_names: false };
+        let q = LeaderboardQuery { repo: Some(RepoRef::new(FoundryProvider::GitHub, "github.com", "Org/Alpha")), limit: 25, include_private_names: false };
         let alpha = leaderboard(&pool, &reg(), q).await.unwrap();
         assert_eq!(alpha.iter().map(|r| (r.rank, r.github_username.as_str(), r.total_points)).collect::<Vec<_>>(), vec![(1, "alice", 15)]);
         assert_eq!(sum(&alpha[0].by_repo), 15);
 
-        let q = LeaderboardQuery { repo: Some(RepoRef::new(ForgeProvider::GitHub, "github.com", "org/beta")), limit: 1, include_private_names: false };
+        let q = LeaderboardQuery { repo: Some(RepoRef::new(FoundryProvider::GitHub, "github.com", "org/beta")), limit: 1, include_private_names: false };
         let beta = leaderboard(&pool, &reg(), q).await.unwrap();
         assert_eq!(beta.iter().map(|r| (r.github_username.as_str(), r.total_points)).collect::<Vec<_>>(), vec![("bob", 45)]);
     }
@@ -414,23 +414,23 @@ mod tests {
         let p = proc_(&pool);
         gh_pr(&p, "org/alpha", 1, "alice").await;
         gl_mr(&p, "bob-gl").await;
-        let alice = find_contributor(&pool, ForgeProvider::GitHub, "github.com", "alice").await.unwrap().unwrap();
-        let bob = find_contributor(&pool, ForgeProvider::GitLab, "gitlab.com", "bob-gl").await.unwrap().unwrap();
+        let alice = find_contributor(&pool, FoundryProvider::GitHub, "github.com", "alice").await.unwrap().unwrap();
+        let bob = find_contributor(&pool, FoundryProvider::GitLab, "gitlab.com", "bob-gl").await.unwrap().unwrap();
 
-        // Owned through forge_identities
-        let e = link_forge_identity(&pool, alice.id, ForgeProvider::GitLab, "gitlab.com", "BOB-GL").await;
+        // Owned through foundry_identities
+        let e = link_foundry_identity(&pool, alice.id, FoundryProvider::GitLab, "gitlab.com", "BOB-GL").await;
         assert!(matches!(e, Err(LinkError::Conflict(_))), "{e:?}");
         // Owned through the legacy github_username key only (no identity row)
-        sqlx::query("DELETE FROM forge_identities WHERE login = 'alice'").execute(&pool).await.unwrap();
-        let e = link_forge_identity(&pool, bob.id, ForgeProvider::GitHub, "github.com", "alice").await;
+        sqlx::query("DELETE FROM foundry_identities WHERE login = 'alice'").execute(&pool).await.unwrap();
+        let e = link_foundry_identity(&pool, bob.id, FoundryProvider::GitHub, "github.com", "alice").await;
         assert!(matches!(e, Err(LinkError::Conflict(_))), "{e:?}");
         // Unknown contributor
-        let e = link_forge_identity(&pool, Uuid::new_v4(), ForgeProvider::GitHub, "github.com", "zed").await;
+        let e = link_foundry_identity(&pool, Uuid::new_v4(), FoundryProvider::GitHub, "github.com", "zed").await;
         assert!(matches!(e, Err(LinkError::UnknownContributor)), "{e:?}");
         // Same contributor again: idempotent
-        link_forge_identity(&pool, bob.id, ForgeProvider::GitLab, "gitlab.com", "bob-gl").await.unwrap();
+        link_foundry_identity(&pool, bob.id, FoundryProvider::GitLab, "gitlab.com", "bob-gl").await.unwrap();
         // Nothing moved
-        let still = find_contributor(&pool, ForgeProvider::GitLab, "gitlab.com", "bob-gl").await.unwrap().unwrap();
+        let still = find_contributor(&pool, FoundryProvider::GitLab, "gitlab.com", "bob-gl").await.unwrap().unwrap();
         assert_eq!(still.id, bob.id);
     }
 

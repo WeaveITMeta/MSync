@@ -107,6 +107,165 @@ fn mode_defaults_match_hierarchy_doc_table() {
     }
 }
 
+/// Contract 3.1.1, the `source_available` column, one row per policy field.
+const SOURCE_AVAILABLE_TABLE: &[(&str, &str)] = &[
+    ("visibility.roster", "members"),
+    ("visibility.leaderboard", "members"),
+    ("visibility.profile", "members"),
+    ("visibility.positions", "members"),
+    ("merit.external_contributions_earn", "true"),
+    ("merit.sources_enabled", "[*]"),
+    ("promotion.merit_rank_ceiling", "30"),
+    ("promotion.merit_may_confer_authority", "false"),
+    ("promotion.eligibility_nominations", "true"),
+    ("compartments.enabled", "true"),
+    ("probation.days", "30"),
+    ("payouts.eligible", "verified_members"),
+    ("payouts.hold_days", "7"),
+    ("payouts.two_person_min_cents", "25000"),
+    ("grants.two_person_min_rank", "50"),
+    ("grants.max_term_days", "180"),
+    ("audit.visibility", "officers"),
+    ("anomaly.profile_reads_per_hour", "120"),
+    ("anomaly.action_on_trip", "alert"),
+    ("consumers.subject_ids", "pairwise"),
+];
+
+#[test]
+fn source_available_defaults_match_the_contract_table_field_by_field() {
+    let p = mode_defaults(Mode::SourceAvailable);
+    let got = p.entries();
+    assert_eq!(SOURCE_AVAILABLE_TABLE.len(), POLICY_KEYS.len(), "the table covers every policy field");
+    assert_eq!(got.len(), SOURCE_AVAILABLE_TABLE.len());
+    for ((key, want), (got_key, got_val)) in SOURCE_AVAILABLE_TABLE.iter().zip(&got) {
+        assert_eq!(key, got_key, "field order");
+        assert_eq!(got_val, want, "source_available `{key}`");
+    }
+    // The one documented difference from hybrid.
+    let hybrid = mode_defaults(Mode::Hybrid);
+    assert_eq!(p.merit_external_contributions_earn, ExternalEarn::Yes);
+    assert_eq!(hybrid.merit_external_contributions_earn, ExternalEarn::PublicReposOnly);
+    let differs: Vec<&str> = p.entries().into_iter().zip(hybrid.entries()).filter(|(a, b)| a != b).map(|(a, _)| a.0).collect();
+    assert_eq!(differs, vec!["merit.external_contributions_earn"]);
+    assert_eq!((Mode::SourceAvailable.as_str(), Mode::SourceAvailable.label()), ("source_available", "Source available"));
+}
+
+/// Every mode's defaults against the 3.1.1 table as written in
+/// `docs/CRA_PLATFORM.md`, so the code and the contract cannot drift apart.
+#[test]
+fn every_mode_default_matches_the_table_in_the_platform_contract() {
+    let doc = std::fs::read_to_string(std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("docs").join("CRA_PLATFORM.md")).unwrap();
+    let start = doc.find("### 3.1.1 Modes").expect("contract section 3.1.1");
+    let rows: Vec<Vec<String>> = doc[start..]
+        .lines()
+        .skip_while(|l| !l.starts_with('|'))
+        .take_while(|l| l.starts_with('|'))
+        .map(|l| l.trim_matches('|').split('|').map(|c| c.trim().replace('`', "")).collect())
+        .collect();
+    let header = &rows[0];
+    let modes: Vec<Mode> = Mode::ALL.to_vec();
+    assert_eq!(header[1..].to_vec(), modes.iter().map(|m| m.as_str().to_string()).collect::<Vec<_>>());
+    let body: Vec<&Vec<String>> = rows[2..].iter().collect();
+    assert_eq!(body.len(), POLICY_KEYS.len(), "one table row per policy field");
+    for (col, mode) in modes.iter().enumerate() {
+        let entries = mode_defaults(*mode).entries();
+        for (row, (key, value)) in body.iter().zip(&entries) {
+            assert_eq!(&row[0], key, "row order");
+            let cell = &row[col + 1];
+            let want = match cell.as_str() {
+                "all" => "[*]".to_string(),
+                c if c.contains(" plus ") => format!("[{}]", c.split(" plus ").collect::<Vec<_>>().join(", ")),
+                c => c.to_string(),
+            };
+            assert_eq!(value, &want, "{} `{key}`", mode.as_str());
+        }
+    }
+}
+
+/// The base fixture switched to `source_available`, with the two-person
+/// grants moved inside its 180-day term limit.
+fn source_available(files: CraFiles) -> CraFiles {
+    let files = edit(files, F::Org, "mode = \"open\"", "mode = \"source_available\"");
+    within_180_days(files)
+}
+
+fn within_180_days(mut files: CraFiles) -> CraFiles {
+    files.members = files.members.replace("expires = \"2027-06-01\"", "expires = \"2027-05-01\"");
+    files
+}
+
+#[test]
+fn source_available_parses_from_org_toml() {
+    let s = load_ok(&source_available(base()));
+    assert_eq!(s.mode_label, Mode::SourceAvailable);
+    assert_eq!(s.policy, mode_defaults(Mode::SourceAvailable));
+    // Overrides apply on top of it like any other mode.
+    let files = edit(source_available(base()), F::Org, "[discord]", "[policy]\n\"payouts.hold_days\" = 9\n\n[discord]");
+    let files = edit(files, F::Payouts, "hold_days = 7", "hold_days = 9");
+    let s = load_ok(&files);
+    assert_eq!((s.policy.payouts_hold_days, s.policy.grants_two_person_min_rank), (9, 50));
+    // Its 180-day term limit applies: the base fixture's 2027-06-01 grants are too long.
+    let long = edit(base(), F::Org, "mode = \"open\"", "mode = \"source_available\"");
+    assert_refused(&long, ErrorCode::GrantTermTooLong);
+}
+
+#[test]
+fn unknown_modes_are_still_refused() {
+    for bad in ["secret", "sourceavailable", "source-available", "Source available", "SourceAvailable", "source_available "] {
+        let files = edit(base(), F::Org, "mode = \"open\"", &format!("mode = \"{bad}\""));
+        let codes = error_codes(&files);
+        assert!(codes.contains(&ErrorCode::Parse), "`{bad}`: expected Parse, got {codes:?}");
+    }
+}
+
+#[test]
+fn a_mode_change_to_or_from_source_available_is_two_person() {
+    let with_mode = |m: &str| within_180_days(edit(base(), F::Org, "mode = \"open\"", &format!("mode = \"{m}\"")));
+    for (from, to) in [
+        (Mode::Open, Mode::SourceAvailable),
+        (Mode::SourceAvailable, Mode::Open),
+        (Mode::SourceAvailable, Mode::Hybrid),
+        (Mode::Hybrid, Mode::SourceAvailable),
+    ] {
+        let old = load_ok(&with_mode(from.as_str()));
+        let new = with_mode(to.as_str());
+        let plan = plan_change(Some(&old), &load_ok(&new));
+        let m = plan.mode_change.as_ref().expect("mode change detected");
+        assert_eq!((m.old, m.new), (Some(from), to));
+        let item = format!("mode {} to {}", from.as_str(), to.as_str());
+
+        // A direct push by a Lead (80) is refused: no second person.
+        let r = auth(&old, &new, &push("lena-gh"));
+        assert_denied(&r, ViolationCode::DirectPushNeedsApproval);
+        let items: Vec<String> = r.unwrap_err().into_iter().filter(|v| v.code == ViolationCode::DirectPushNeedsApproval).map(|v| v.item).collect();
+        assert!(items.contains(&item), "{item} not in {items:?}");
+        // A pull request with the author as the only approver is refused too.
+        assert!(auth(&old, &new, &pr("lena-gh", "lena-gh", &["lena-gh"])).is_err(), "{item}");
+        // Approved by a second Lead, it is authorized.
+        assert_allowed(&auth(&old, &new, &pr("lena-gh", "lena-gh", &["lars-gh"])));
+    }
+}
+
+#[test]
+fn plan_change_previews_a_switch_to_source_available() {
+    let old = load_ok(&within_180_days(base()));
+    let new = load_ok(&source_available(base()));
+    let p = plan_change(Some(&old), &new);
+    let m = p.mode_change.as_ref().unwrap();
+    assert_eq!((m.old, m.new), (Some(Mode::Open), Mode::SourceAvailable));
+    let fields: Vec<&str> = p.policy_changes.iter().map(|c| c.path.as_str()).collect();
+    for f in ["visibility.roster", "visibility.leaderboard", "compartments.enabled", "grants.two_person_min_rank", "grants.max_term_days"] {
+        assert!(fields.contains(&f), "{f} missing from {fields:?}");
+    }
+    assert!(!fields.contains(&"merit.external_contributions_earn"), "open and source_available both earn: {fields:?}");
+    // Two-person at the lower threshold (50), org changes above the higher (60).
+    assert_eq!((p.two_person_min_rank, p.org_change_rank), (50, 60));
+    let md = p.render_markdown();
+    assert!(md.contains("`open` to `source_available`"), "{md}");
+    assert!(md.contains("grants.two_person_min_rank"), "{md}");
+    assert!(!md.contains('\u{2014}'), "no em dashes in the preview");
+}
+
 #[test]
 fn overrides_win_field_by_field_in_both_toml_forms() {
     let mut o = BTreeMap::new();

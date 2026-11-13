@@ -1,4 +1,4 @@
-//! Forge normalization (contract section 5): one event type from GitHub and GitLab
+//! Foundry API normalization (contract section 5): one event type from GitHub and GitLab
 //! feeds merit and payouts.
 
 pub mod github;
@@ -7,7 +7,7 @@ pub mod identity;
 pub mod processor;
 pub mod registry;
 
-pub use processor::{ForgeProcessor, ProcessOutcome};
+pub use processor::{FoundryProcessor, ProcessOutcome};
 pub use registry::{RepoDecision, RepoEntry, RepoRegistry};
 
 use serde::{Deserialize, Serialize};
@@ -15,43 +15,43 @@ use std::fmt;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
-pub enum ForgeProvider {
+pub enum FoundryProvider {
     GitHub,
     GitLab,
 }
 
-impl ForgeProvider {
+impl FoundryProvider {
     pub fn as_str(&self) -> &'static str {
         match self {
-            ForgeProvider::GitHub => "github",
-            ForgeProvider::GitLab => "gitlab",
+            FoundryProvider::GitHub => "github",
+            FoundryProvider::GitLab => "gitlab",
         }
     }
 
     pub fn parse(s: &str) -> Option<Self> {
         match s.trim().to_ascii_lowercase().as_str() {
-            "github" => Some(ForgeProvider::GitHub),
-            "gitlab" => Some(ForgeProvider::GitLab),
+            "github" => Some(FoundryProvider::GitHub),
+            "gitlab" => Some(FoundryProvider::GitLab),
             _ => None,
         }
     }
 
     pub fn default_host(&self) -> &'static str {
         match self {
-            ForgeProvider::GitHub => "github.com",
-            ForgeProvider::GitLab => "gitlab.com",
+            FoundryProvider::GitHub => "github.com",
+            FoundryProvider::GitLab => "gitlab.com",
         }
     }
 }
 
-impl fmt::Display for ForgeProvider {
+impl fmt::Display for FoundryProvider {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str(self.as_str())
     }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-pub enum ForgeEventKind {
+pub enum FoundryEventKind {
     PrOpened,
     PrMerged,
     ReviewApproved,
@@ -60,20 +60,20 @@ pub enum ForgeEventKind {
     Push,
 }
 
-/// Normalized forge event. Fields after `delivery_id` are additions to the contract
+/// Normalized Foundry API event. Fields after `delivery_id` are additions to the contract
 /// shape that the merit path needs (see the field docs).
 #[derive(Debug, Clone, PartialEq)]
-pub struct ForgeEvent {
-    pub provider: ForgeProvider,
+pub struct FoundryEvent {
+    pub provider: FoundryProvider,
     /// Lowercase host, e.g. `github.com`, `gitlab.example.org`.
     pub host: String,
-    /// Repository path as the forge reports it (`org/repo`, `group/sub/project`).
+    /// Repository path as GitHub or GitLab reports it (`org/repo`, `group/sub/project`).
     /// None when the payload carried no repository (legacy GitHub payloads).
     pub repo: Option<String>,
-    pub kind: ForgeEventKind,
+    pub kind: FoundryEventKind,
     /// Who performed the action (the reviewer for ReviewApproved).
     pub actor_login: String,
-    /// Forge-global id of the PR/MR (GitHub `pull_request.id`, GitLab `object_attributes.id`); 0 = unknown.
+    /// Global id of the PR/MR (GitHub `pull_request.id`, GitLab `object_attributes.id`); 0 = unknown.
     pub subject_id: i64,
     /// PR number / MR iid; 0 = unknown.
     pub subject_number: i64,
@@ -94,14 +94,14 @@ pub struct ForgeEvent {
 /// lowercased so `Org/Repo` and `org/repo` are the same subject.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct Subject {
-    pub provider: ForgeProvider,
+    pub provider: FoundryProvider,
     pub host: String,
     pub repo: String,
     pub subject_id: String,
 }
 
 impl Subject {
-    pub fn new(provider: ForgeProvider, host: &str, repo: &str, subject_id: &str) -> Self {
+    pub fn new(provider: FoundryProvider, host: &str, repo: &str, subject_id: &str) -> Self {
         Self {
             provider,
             host: host.trim().to_ascii_lowercase(),
@@ -120,7 +120,7 @@ pub struct RepoRef {
 }
 
 impl RepoRef {
-    pub fn new(provider: ForgeProvider, host: &str, repo: &str) -> Self {
+    pub fn new(provider: FoundryProvider, host: &str, repo: &str) -> Self {
         Self {
             provider: provider.as_str().to_string(),
             host: host.trim().to_ascii_lowercase(),
@@ -129,7 +129,7 @@ impl RepoRef {
     }
 }
 
-impl ForgeEvent {
+impl FoundryEvent {
     /// The scorable subject, when the repository and subject are known.
     pub fn subject(&self) -> Option<Subject> {
         let repo = self.repo.as_deref()?;
@@ -142,7 +142,7 @@ impl ForgeEvent {
     }
 }
 
-/// Subject id string: the forge-global id, or `n<number>` when the id is unknown.
+/// Subject id string: the global id, or `n<number>` when the id is unknown.
 pub fn subject_id_string(subject_id: i64, subject_number: i64) -> Option<String> {
     if subject_id != 0 {
         Some(subject_id.to_string())
@@ -155,23 +155,23 @@ pub fn subject_id_string(subject_id: i64, subject_number: i64) -> Option<String>
 
 /// Prefix an effect/delivery key for its provider. GitHub keys are unprefixed
 /// (their historical form); GitLab keys are `gitlab:<host>:<rest>`.
-pub fn provider_key(provider: ForgeProvider, host: &str, rest: &str) -> String {
+pub fn provider_key(provider: FoundryProvider, host: &str, rest: &str) -> String {
     match provider {
-        ForgeProvider::GitHub => rest.to_string(),
-        ForgeProvider::GitLab => format!("gitlab:{}:{}", host.to_ascii_lowercase(), rest),
+        FoundryProvider::GitHub => rest.to_string(),
+        FoundryProvider::GitLab => format!("gitlab:{}:{}", host.to_ascii_lowercase(), rest),
     }
 }
 
-/// Legacy `contributors.github_username` value for a forge login. GitHub on
+/// Legacy `contributors.github_username` value for a GitHub or GitLab login. GitHub on
 /// github.com is the bare login (today's form). Others carry a prefix with ':',
 /// which no GitHub login can contain.
-pub fn legacy_username(provider: ForgeProvider, host: &str, login: &str) -> String {
+pub fn legacy_username(provider: FoundryProvider, host: &str, login: &str) -> String {
     let host = host.to_ascii_lowercase();
     match provider {
-        ForgeProvider::GitHub if host == "github.com" => login.to_string(),
-        ForgeProvider::GitHub => format!("github:{}:{}", host, login),
-        ForgeProvider::GitLab if host == "gitlab.com" => format!("gitlab:{}", login),
-        ForgeProvider::GitLab => format!("gitlab:{}:{}", host, login),
+        FoundryProvider::GitHub if host == "github.com" => login.to_string(),
+        FoundryProvider::GitHub => format!("github:{}:{}", host, login),
+        FoundryProvider::GitLab if host == "gitlab.com" => format!("gitlab:{}", login),
+        FoundryProvider::GitLab => format!("gitlab:{}:{}", host, login),
     }
 }
 
@@ -195,9 +195,9 @@ mod tests {
 
     #[test]
     fn legacy_usernames() {
-        assert_eq!(legacy_username(ForgeProvider::GitHub, "github.com", "alice"), "alice");
-        assert_eq!(legacy_username(ForgeProvider::GitLab, "gitlab.com", "alice"), "gitlab:alice");
-        assert_eq!(legacy_username(ForgeProvider::GitLab, "GitLab.Example.org", "alice"), "gitlab:gitlab.example.org:alice");
+        assert_eq!(legacy_username(FoundryProvider::GitHub, "github.com", "alice"), "alice");
+        assert_eq!(legacy_username(FoundryProvider::GitLab, "gitlab.com", "alice"), "gitlab:alice");
+        assert_eq!(legacy_username(FoundryProvider::GitLab, "GitLab.Example.org", "alice"), "gitlab:gitlab.example.org:alice");
     }
 
     #[test]

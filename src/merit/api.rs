@@ -9,7 +9,7 @@ use super::leaderboard::{self, LeaderboardQuery, LeaderboardRow, MemberMerit};
 use super::rubric::{self, CriterionScore, CRITERIA, RUBRIC_ID, RUBRIC_SHA256};
 use super::scoring::{self, Assessment, MeritRules, ScoreAdjustment, ScoreError, ScoreRecord, Scorer, ScorerSource, Submission};
 use crate::auth::{authenticate, member_payee_keys, scopes, AuthError, Principal};
-use crate::forge::{ForgeProvider, RepoRef, RepoRegistry, Subject};
+use crate::foundry::{FoundryProvider, RepoRef, RepoRegistry, Subject};
 use crate::payments::api::auth_error;
 use actix_web::{get, post, web, HttpRequest, HttpResponse};
 use serde::{Deserialize, Serialize};
@@ -46,12 +46,12 @@ impl MeritSeams for FixedSeams {
     }
 }
 
-/// The production seams: `routes::forge_registry` and `routes::merit_rules` over the app state.
+/// The production seams: `routes::foundry_registry` and `routes::merit_rules` over the app state.
 pub struct AppStateSeams(pub web::Data<crate::AppState>);
 
 impl MeritSeams for AppStateSeams {
     fn registry(&self) -> Arc<RepoRegistry> {
-        crate::routes::forge_registry(&self.0)
+        crate::routes::foundry_registry(&self.0)
     }
     fn rules(&self) -> Arc<MeritRules> {
         crate::routes::merit_rules(&self.0)
@@ -145,11 +145,11 @@ pub struct SubjectInput {
     pub subject_id: SubjectIdInput,
 }
 
-fn parse_provider(p: &str) -> Result<ForgeProvider, MeritApiError> {
-    ForgeProvider::parse(p).ok_or_else(|| MeritApiError::Invalid(format!("unknown provider '{}' (github or gitlab)", p.trim())))
+fn parse_provider(p: &str) -> Result<FoundryProvider, MeritApiError> {
+    FoundryProvider::parse(p).ok_or_else(|| MeritApiError::Invalid(format!("unknown provider '{}' (github or gitlab)", p.trim())))
 }
 
-fn host_or_default(provider: ForgeProvider, host: Option<&str>) -> String {
+fn host_or_default(provider: FoundryProvider, host: Option<&str>) -> String {
     match host.map(str::trim).filter(|h| !h.is_empty()) {
         Some(h) => h.to_string(),
         None => provider.default_host().to_string(),
@@ -234,19 +234,19 @@ pub struct LeaderboardParams {
 
 // ------------------------------------------------------------------ scorer
 
-/// Forge logins derived from payee keys: a key starting `gitlab:` is a GitLab login, anything
+/// GitHub and GitLab logins derived from payee keys: a key starting `gitlab:` is a GitLab login, anything
 /// else a GitHub login. Host-qualified keys (`gitlab:<host>:<login>`, `github:<host>:<login>`,
 /// the `legacy_username` forms) yield the login after the last ':'.
-pub fn forge_logins_from_payee_keys(keys: &[String]) -> Vec<(ForgeProvider, String)> {
-    let mut out: Vec<(ForgeProvider, String)> = Vec::new();
+pub fn foundry_logins_from_payee_keys(keys: &[String]) -> Vec<(FoundryProvider, String)> {
+    let mut out: Vec<(FoundryProvider, String)> = Vec::new();
     for raw in keys {
         let k = raw.trim().to_ascii_lowercase();
         let (provider, rest) = if let Some(rest) = k.strip_prefix("gitlab:") {
-            (ForgeProvider::GitLab, rest)
+            (FoundryProvider::GitLab, rest)
         } else if let Some(rest) = k.strip_prefix("github:") {
-            (ForgeProvider::GitHub, rest)
+            (FoundryProvider::GitHub, rest)
         } else {
-            (ForgeProvider::GitHub, k.as_str())
+            (FoundryProvider::GitHub, k.as_str())
         };
         let login = rest.rsplit(':').next().unwrap_or("").trim().to_string();
         if login.is_empty() {
@@ -259,10 +259,10 @@ pub fn forge_logins_from_payee_keys(keys: &[String]) -> Vec<(ForgeProvider, Stri
     out
 }
 
-/// The scorer for a principal: id = member id, source = Agent, forge logins from the payee keys
+/// The scorer for a principal: id = member id, source = Agent, GitHub and GitLab logins from the payee keys
 /// of this token and of every other token the member holds.
 ///
-/// Known limit (round 2): a member whose tokens declare no payee keys has no forge logins and is
+/// Known limit (round 2): a member whose tokens declare no payee keys has no GitHub and GitLab logins and is
 /// not recognized as the author of their own work. The CRA supplies identities in a later round.
 pub async fn scorer_for(pool: &SqlitePool, principal: &Principal) -> Result<Scorer, MeritApiError> {
     let mut keys = principal.payee_keys.clone();
@@ -271,7 +271,7 @@ pub async fn scorer_for(pool: &SqlitePool, principal: &Principal) -> Result<Scor
             keys.push(k);
         }
     }
-    Ok(Scorer { id: principal.member_id.clone(), source: ScorerSource::Agent, forge_logins: forge_logins_from_payee_keys(&keys) })
+    Ok(Scorer { id: principal.member_id.clone(), source: ScorerSource::Agent, foundry_logins: foundry_logins_from_payee_keys(&keys) })
 }
 
 // ------------------------------------------------------------------ operations
@@ -548,20 +548,20 @@ mod tests {
     use super::*;
 
     #[test]
-    fn payee_keys_map_to_forge_logins() {
+    fn payee_keys_map_to_foundry_logins() {
         let keys: Vec<String> = ["Alice", "gitlab:Carol", "gitlab:git.example.org:dave", "github:ghe.example.org:erin", "  ", "gitlab:", "alice"]
             .iter()
             .map(|s| s.to_string())
             .collect();
         assert_eq!(
-            forge_logins_from_payee_keys(&keys),
+            foundry_logins_from_payee_keys(&keys),
             vec![
-                (ForgeProvider::GitHub, "alice".to_string()),
-                (ForgeProvider::GitLab, "carol".to_string()),
-                (ForgeProvider::GitLab, "dave".to_string()),
-                (ForgeProvider::GitHub, "erin".to_string()),
+                (FoundryProvider::GitHub, "alice".to_string()),
+                (FoundryProvider::GitLab, "carol".to_string()),
+                (FoundryProvider::GitLab, "dave".to_string()),
+                (FoundryProvider::GitHub, "erin".to_string()),
             ]
         );
-        assert!(forge_logins_from_payee_keys(&[]).is_empty());
+        assert!(foundry_logins_from_payee_keys(&[]).is_empty());
     }
 }

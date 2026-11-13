@@ -1,7 +1,8 @@
 schema = 1
 
-# Earned tiers (merit 0 to 500, ranks 0 to 30, the open-mode ceiling) and
-# appointed positions (Reviewer, Maintainer, Lead Maintainer).
+# Earned tiers (merit 0 to 500, ranks 0 to 30, the source_available merit
+# ceiling) and appointed positions (Reviewer, Maintainer, Lead Maintainer).
+# Positions at or above rank 50 are two-person and serve at most 180 days.
 
 [[role]]
 key = "newcomer"
@@ -54,7 +55,7 @@ rank = 60
 permissions = ["members.invite", "members.grant", "members.approve_grant", "members.revoke", "members.suspend", "payouts.read_all", "payouts.approve", "roster.read_full", "merit.award_manual"]
 discord_role = "100000000000000060"
 max_holders = 5
-term_days = 365
+term_days = 180
 merit_eligibility = 1000
 
 [[role]]
@@ -65,4 +66,4 @@ rank = 80
 permissions = ["members.invite", "members.grant", "members.approve_grant", "members.revoke", "members.suspend", "payouts.read_all", "payouts.approve", "roster.read_full", "merit.award_manual", "merit.clawback", "policy.propose_change", "policy.approve_change", "consumers.manage", "discord.reconcile", "audit.read_all"]
 discord_role = "100000000000000080"
 max_holders = 2
-term_days = 365
+term_days = 180

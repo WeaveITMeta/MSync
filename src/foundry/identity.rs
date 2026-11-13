@@ -1,11 +1,11 @@
 //! Contributors keyed by `(provider, host, login)` (contract 5 and 5.1).
 //!
-//! `forge_identities` maps each forge login to one contributor. The legacy
+//! `foundry_identities` maps each GitHub or GitLab login to one contributor. The legacy
 //! `contributors.github_username` column stays: a GitHub login on github.com is stored
 //! bare (as before); a GitLab-only contributor stores `gitlab:<login>` (or
 //! `gitlab:<host>:<login>` off gitlab.com), a value no GitHub login can equal.
 
-use super::{legacy_username, ForgeProvider};
+use super::{legacy_username, FoundryProvider};
 use crate::models::Contributor;
 use sqlx::SqlitePool;
 use uuid::Uuid;
@@ -27,10 +27,10 @@ fn norm(host: &str, login: &str) -> (String, String) {
 }
 
 /// Contributor that owns `(provider, host, login)`, if any.
-pub async fn find_contributor(pool: &SqlitePool, provider: ForgeProvider, host: &str, login: &str) -> Result<Option<Contributor>, sqlx::Error> {
+pub async fn find_contributor(pool: &SqlitePool, provider: FoundryProvider, host: &str, login: &str) -> Result<Option<Contributor>, sqlx::Error> {
     let (host, login_n) = norm(host, login);
     if let Some(c) = sqlx::query_as::<_, Contributor>(
-        "SELECT c.* FROM contributors c JOIN forge_identities f ON f.contributor_id = c.id
+        "SELECT c.* FROM contributors c JOIN foundry_identities f ON f.contributor_id = c.id
          WHERE f.provider = ? AND f.host = ? AND f.login = ?",
     )
     .bind(provider.as_str())
@@ -47,8 +47,8 @@ pub async fn find_contributor(pool: &SqlitePool, provider: ForgeProvider, host: 
         .await
 }
 
-/// Get or create the contributor for a forge login, and record the identity.
-pub async fn resolve_contributor(pool: &SqlitePool, provider: ForgeProvider, host: &str, login: &str) -> Result<Contributor, sqlx::Error> {
+/// Get or create the contributor for a GitHub or GitLab login, and record the identity.
+pub async fn resolve_contributor(pool: &SqlitePool, provider: FoundryProvider, host: &str, login: &str) -> Result<Contributor, sqlx::Error> {
     let contributor = match find_contributor(pool, provider, host, login).await? {
         Some(c) => c,
         None => {
@@ -72,7 +72,7 @@ pub async fn resolve_contributor(pool: &SqlitePool, provider: ForgeProvider, hos
     let (host_n, login_n) = norm(host, login);
     // Copies contributors.id as stored, so the join above matches its storage type.
     sqlx::query(
-        "INSERT OR IGNORE INTO forge_identities (provider, host, login, contributor_id)
+        "INSERT OR IGNORE INTO foundry_identities (provider, host, login, contributor_id)
          SELECT ?, ?, ?, id FROM contributors WHERE id = ?",
     )
     .bind(provider.as_str())
@@ -84,11 +84,11 @@ pub async fn resolve_contributor(pool: &SqlitePool, provider: ForgeProvider, hos
     Ok(contributor)
 }
 
-/// Attach another forge identity to an existing contributor, so XP from both adds up.
+/// Attach another GitHub or GitLab identity to an existing contributor, so XP from both adds up.
 /// Idempotent for the same contributor. Refuses (never merges) an identity that
-/// already belongs to a different contributor, through `forge_identities` or the
+/// already belongs to a different contributor, through `foundry_identities` or the
 /// legacy `github_username` key.
-pub async fn link_forge_identity(pool: &SqlitePool, contributor_id: Uuid, provider: ForgeProvider, host: &str, login: &str) -> Result<(), LinkError> {
+pub async fn link_foundry_identity(pool: &SqlitePool, contributor_id: Uuid, provider: FoundryProvider, host: &str, login: &str) -> Result<(), LinkError> {
     let (host_n, login_n) = norm(host, login);
     if login_n.is_empty() || host_n.is_empty() {
         return Err(LinkError::EmptyLogin);
@@ -103,7 +103,7 @@ pub async fn link_forge_identity(pool: &SqlitePool, contributor_id: Uuid, provid
     }
 
     let owner_is_target: Option<bool> = sqlx::query_scalar(
-        "SELECT contributor_id = ? FROM forge_identities WHERE provider = ? AND host = ? AND login = ?",
+        "SELECT contributor_id = ? FROM foundry_identities WHERE provider = ? AND host = ? AND login = ?",
     )
     .bind(contributor_id)
     .bind(provider.as_str())
@@ -127,7 +127,7 @@ pub async fn link_forge_identity(pool: &SqlitePool, contributor_id: Uuid, provid
     }
 
     let res = sqlx::query(
-        "INSERT OR IGNORE INTO forge_identities (provider, host, login, contributor_id)
+        "INSERT OR IGNORE INTO foundry_identities (provider, host, login, contributor_id)
          SELECT ?, ?, ?, id FROM contributors WHERE id = ?",
     )
     .bind(provider.as_str())

@@ -25,8 +25,8 @@ pub struct OrgFile {
     #[serde(default)]
     pub permissions_extra: Vec<ExtraPermission>,
     pub discord: Option<DiscordConfig>,
-    #[serde(default, rename = "forge")]
-    pub forges: Vec<ForgeRepo>,
+    #[serde(default, rename = "foundry")]
+    pub foundries: Vec<FoundryRepo>,
     #[serde(default, rename = "consumer")]
     pub consumers: Vec<Consumer>,
     /// Need-to-know compartments that roles may reference.
@@ -60,16 +60,16 @@ pub struct DiscordConfig {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
-pub enum ForgeProvider {
+pub enum FoundryProvider {
     Github,
     Gitlab,
 }
 
-impl ForgeProvider {
+impl FoundryProvider {
     pub fn as_str(self) -> &'static str {
         match self {
-            ForgeProvider::Github => "github",
-            ForgeProvider::Gitlab => "gitlab",
+            FoundryProvider::Github => "github",
+            FoundryProvider::Gitlab => "gitlab",
         }
     }
 }
@@ -83,8 +83,8 @@ pub enum RepoVisibility {
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub struct ForgeRepo {
-    pub provider: ForgeProvider,
+pub struct FoundryRepo {
+    pub provider: FoundryProvider,
     /// Optional; a self-managed GitLab host goes here.
     pub host: Option<String>,
     pub repo: String,
@@ -228,11 +228,11 @@ impl Identities {
         v
     }
 
-    /// The login for a forge provider, if set.
-    pub fn forge_login(&self, provider: ForgeProvider) -> Option<&str> {
+    /// The login for a provider (GitHub or GitLab), if set.
+    pub fn foundry_login(&self, provider: FoundryProvider) -> Option<&str> {
         match provider {
-            ForgeProvider::Github => self.github.as_deref(),
-            ForgeProvider::Gitlab => self.gitlab.as_deref(),
+            FoundryProvider::Github => self.github.as_deref(),
+            FoundryProvider::Gitlab => self.gitlab.as_deref(),
         }
     }
 }

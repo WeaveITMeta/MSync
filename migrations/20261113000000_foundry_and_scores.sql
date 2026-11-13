@@ -1,9 +1,9 @@
--- Forge normalization (GitHub + GitLab), rubric score submissions, multi-repository XP.
+-- Foundry API normalization (GitHub and GitLab), rubric score submissions, multi-repository XP.
 -- Additive only: no existing table or column is changed or dropped.
 
--- One contributor can hold several forge identities. Keyed by (provider, host, login).
+-- One contributor can hold several GitHub and GitLab identities. Keyed by (provider, host, login).
 -- contributor_id holds the same value (and storage type) as contributors.id.
-CREATE TABLE IF NOT EXISTS forge_identities (
+CREATE TABLE IF NOT EXISTS foundry_identities (
     provider TEXT NOT NULL,            -- github | gitlab
     host TEXT NOT NULL,                -- lowercase, e.g. github.com, gitlab.com
     login TEXT NOT NULL,
@@ -11,7 +11,7 @@ CREATE TABLE IF NOT EXISTS forge_identities (
     created_at TEXT NOT NULL DEFAULT (datetime('now')),
     UNIQUE (provider, host, login)
 );
-CREATE INDEX IF NOT EXISTS idx_forge_identities_contributor ON forge_identities(contributor_id);
+CREATE INDEX IF NOT EXISTS idx_foundry_identities_contributor ON foundry_identities(contributor_id);
 
 -- Contributions are found by subject, not by PR number alone (two repos can share a number).
 -- Legacy rows keep NULL here and are matched by github_pr_number as before.

@@ -3,7 +3,7 @@ use serde::{Deserialize, Serialize};
 use std::env;
 
 use crate::cra::source::CraRepo;
-use crate::forge::RepoRegistry;
+use crate::foundry::RepoRegistry;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Config {
@@ -12,9 +12,9 @@ pub struct Config {
     pub coderabbit: CodeRabbitConfig,
     #[serde(default)]
     pub gitlab: GitLabConfig,
-    /// Repositories whose events earn (`DSYNC_FORGE_REPOS`). Unset: GitHub as before, GitLab refused.
+    /// Repositories whose events earn (`DSYNC_FOUNDRY_REPOS`). Unset: GitHub as before, GitLab refused.
     #[serde(default)]
-    pub forge_repos: RepoRegistry,
+    pub foundry_repos: RepoRegistry,
     /// The CRA repository (`DSYNC_CRA_REPO`). Unset: no CRA loading; everything as before.
     #[serde(default)]
     pub cra: CraConfig,
@@ -128,7 +128,7 @@ impl Config {
             gitlab: GitLabConfig {
                 webhook_secret: non_empty_env("GITLAB_WEBHOOK_SECRET"),
             },
-            forge_repos: RepoRegistry::from_env().map_err(anyhow::Error::msg)?,
+            foundry_repos: RepoRegistry::from_env().map_err(anyhow::Error::msg)?,
             cra: CraConfig::from_env()?,
             database_url: env::var("DATABASE_URL")
                 .unwrap_or_else(|_| "sqlite://dsync.db".to_string()),

@@ -35,7 +35,7 @@ use super::catalog::{APPROVE_GRANT, APPROVE_POLICY, GRANT, INVITE, PROPOSE_POLIC
 use super::model::MemberStatus;
 use super::plan::{ChangePlan, MemberTarget};
 use super::standing::active_positions;
-use super::{ForgeIdentity, ForgeProvider, Snapshot};
+use super::{FoundryIdentity, FoundryProvider, Snapshot};
 
 /// The rank of an owner. Owners come from engine configuration only.
 pub const OWNER_RANK: u32 = 1000;
@@ -43,14 +43,14 @@ pub const OWNER_RANK: u32 = 1000;
 /// Who made the change and how it arrived.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ChangeContext {
-    /// The forge-authenticated identity that merged or pushed.
-    pub actor: ForgeIdentity,
+    /// The identity, authenticated by GitHub or GitLab, that merged or pushed.
+    pub actor: FoundryIdentity,
     /// True only for a merged pull or merge request.
     pub via_pull_request: bool,
     /// The pull request author. Required for a two-person change.
-    pub author: Option<ForgeIdentity>,
+    pub author: Option<FoundryIdentity>,
     /// Identities that left an approving review. Ignored on a direct push.
-    pub approvers: Vec<ForgeIdentity>,
+    pub approvers: Vec<FoundryIdentity>,
     /// The date authority is evaluated on: expired grants confer nothing.
     pub today: NaiveDate,
 }
@@ -222,19 +222,19 @@ fn plan_target(plan: &ChangePlan, id: &str) -> MemberTarget {
     if let Some(m) = plan.new.member(id) {
         name = m.name.clone();
         if let Some(l) = &m.identities.github {
-            ids.push(ForgeIdentity::github(l));
+            ids.push(FoundryIdentity::github(l));
         }
         if let Some(l) = &m.identities.gitlab {
-            ids.push(ForgeIdentity::gitlab(l));
+            ids.push(FoundryIdentity::gitlab(l));
         }
     }
-    MemberTarget { id: id.to_string(), name, rank: 0, forge_identities: ids }
+    MemberTarget { id: id.to_string(), name, rank: 0, foundry_identities: ids }
 }
 
 /// An actor or approver after resolution through the active snapshot.
 #[derive(Debug, Clone)]
 struct Principal {
-    identity: ForgeIdentity,
+    identity: FoundryIdentity,
     member_id: Option<String>,
     owner: bool,
     active: bool,
@@ -248,7 +248,7 @@ impl Principal {
     }
     fn is(&self, t: &MemberTarget) -> bool {
         self.member_id.as_deref() == Some(t.id.as_str())
-            || t.forge_identities.iter().any(|f| self.identity.matches(f.provider, &f.login))
+            || t.foundry_identities.iter().any(|f| self.identity.matches(f.provider, &f.login))
     }
     fn same_person(&self, other: &Principal) -> bool {
         self.identity.matches(other.identity.provider, &other.identity.login)
@@ -261,21 +261,21 @@ fn outranks(actor_rank: u32, required: u32) -> bool {
     actor_rank > required
 }
 
-/// Owner entries are either a member id (`mckale`) or a forge identity
-/// (`github:Simbuilder`, `gitlab:someone`). Only the forge form can load the
+/// Owner entries are either a member id (`mckale`) or a GitHub or GitLab identity
+/// (`github:Simbuilder`, `gitlab:someone`). Only the provider form can load the
 /// first snapshot, because a member id means nothing before one exists.
-fn owner_forge(entry: &str) -> Option<ForgeIdentity> {
+fn owner_foundry(entry: &str) -> Option<FoundryIdentity> {
     let (p, login) = entry.split_once(':')?;
     let provider = match p {
-        "github" => ForgeProvider::Github,
-        "gitlab" => ForgeProvider::Gitlab,
+        "github" => FoundryProvider::Github,
+        "gitlab" => FoundryProvider::Gitlab,
         _ => return None,
     };
-    Some(ForgeIdentity { provider, login: login.to_string() })
+    Some(FoundryIdentity { provider, login: login.to_string() })
 }
 
-fn is_owner_identity(who: &ForgeIdentity, owners: &[String]) -> bool {
-    owners.iter().filter_map(|o| owner_forge(o)).any(|o| who.matches(o.provider, &o.login))
+fn is_owner_identity(who: &FoundryIdentity, owners: &[String]) -> bool {
+    owners.iter().filter_map(|o| owner_foundry(o)).any(|o| who.matches(o.provider, &o.login))
 }
 
 fn is_owner_member(id: &str, owners: &[String]) -> bool {
@@ -283,12 +283,12 @@ fn is_owner_member(id: &str, owners: &[String]) -> bool {
 }
 
 fn target_is_owner(t: &MemberTarget, owners: &[String]) -> bool {
-    is_owner_member(&t.id, owners) || t.forge_identities.iter().any(|f| is_owner_identity(f, owners))
+    is_owner_member(&t.id, owners) || t.foundry_identities.iter().any(|f| is_owner_identity(f, owners))
 }
 
 /// Resolves an identity through the ACTIVE snapshot (`roster`).
-fn resolve(roster: &Snapshot, who: &ForgeIdentity, owners: &[String], today: NaiveDate) -> Option<Principal> {
-    let member = roster.member_by_forge(who);
+fn resolve(roster: &Snapshot, who: &FoundryIdentity, owners: &[String], today: NaiveDate) -> Option<Principal> {
+    let member = roster.member_by_foundry(who);
     let owner = is_owner_identity(who, owners) || member.map_or(false, |m| is_owner_member(&m.id, owners));
     if owner {
         return Some(Principal {
@@ -372,7 +372,7 @@ pub fn authorize(
         rank: 0,
         permissions: BTreeSet::new(),
     }));
-    let approvers: Vec<(ForgeIdentity, Option<Principal>)> = ctx
+    let approvers: Vec<(FoundryIdentity, Option<Principal>)> = ctx
         .approvers
         .iter()
         .map(|a| (a.clone(), resolve(roster, a, owners, ctx.today)))

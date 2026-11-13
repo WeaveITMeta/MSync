@@ -131,7 +131,7 @@ pub enum ErrorCode {
     PolicyOverride,
     /// A Discord id that is not a snowflake (17 to 20 digits).
     InvalidSnowflake,
-    DuplicateForge,
+    DuplicateFoundry,
     InvalidRepo,
     /// A non-canonical (mirror) repository lists payout branches.
     MirrorPaysOut,
@@ -187,7 +187,7 @@ pub enum ErrorCode {
     /// `limits.hold_days` below the policy's `payouts.hold_days`.
     HoldBelowPolicy,
     DuplicateRate,
-    /// A rate names a branch no canonical forge pays out on.
+    /// A rate names a branch no canonical repository pays out on.
     RateBranchNotPayable,
     /// `eligibility.roles` names a tier while the policy pays positions only.
     EligibilityConflictsPolicy,
@@ -213,27 +213,27 @@ impl CraError {
     }
 }
 
-/// A forge-authenticated identity: who pushed, merged, authored or approved.
+/// An identity authenticated by GitHub or GitLab: who pushed, merged, authored or approved.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
-pub struct ForgeIdentity {
-    pub provider: ForgeProvider,
+pub struct FoundryIdentity {
+    pub provider: FoundryProvider,
     pub login: String,
 }
 
-impl ForgeIdentity {
+impl FoundryIdentity {
     pub fn github(login: &str) -> Self {
-        ForgeIdentity { provider: ForgeProvider::Github, login: login.to_string() }
+        FoundryIdentity { provider: FoundryProvider::Github, login: login.to_string() }
     }
     pub fn gitlab(login: &str) -> Self {
-        ForgeIdentity { provider: ForgeProvider::Gitlab, login: login.to_string() }
+        FoundryIdentity { provider: FoundryProvider::Gitlab, login: login.to_string() }
     }
     /// GitHub and GitLab logins are case-insensitive.
-    pub fn matches(&self, provider: ForgeProvider, login: &str) -> bool {
+    pub fn matches(&self, provider: FoundryProvider, login: &str) -> bool {
         self.provider == provider && self.login.eq_ignore_ascii_case(login)
     }
 }
 
-impl fmt::Display for ForgeIdentity {
+impl fmt::Display for FoundryIdentity {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "{}:{}", self.provider.as_str(), self.login)
     }
@@ -368,11 +368,11 @@ impl Snapshot {
         self.members.members.iter().find(|m| m.id == id)
     }
 
-    /// The member whose identities list this forge identity.
-    pub fn member_by_forge(&self, who: &ForgeIdentity) -> Option<&Member> {
+    /// The member whose identities list this GitHub or GitLab identity.
+    pub fn member_by_foundry(&self, who: &FoundryIdentity) -> Option<&Member> {
         self.members.members.iter().find(|m| {
             m.identities
-                .forge_login(who.provider)
+                .foundry_login(who.provider)
                 .map(|l| who.matches(who.provider, l))
                 .unwrap_or(false)
         })

@@ -1,19 +1,19 @@
 //! Which repositories earn merit (contract 5 and 5.1).
 //!
-//! Round 1 source: `DSYNC_FORGE_REPOS`, a comma list of `provider:host:path[:flag[:flag]]`
+//! Round 1 source: `DSYNC_FOUNDRY_REPOS`, a comma list of `provider:host:path[:flag[:flag]]`
 //! with flags `mirror` (earns nothing) and `private` (never named publicly).
 //! Unset or empty: legacy mode. GitHub behaves as before (every repository earns and is
-//! public) and GitLab is refused. A later round builds this from the CRA `[[forge]]` list
+//! public) and GitLab is refused. A later round builds this from the CRA `[[foundry]]` list
 //! with [`RepoRegistry::from_entries`].
 
-use super::{ForgeProvider, RepoRef};
+use super::{FoundryProvider, RepoRef};
 use serde::{Deserialize, Serialize};
 
-pub const ENV_VAR: &str = "DSYNC_FORGE_REPOS";
+pub const ENV_VAR: &str = "DSYNC_FOUNDRY_REPOS";
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RepoEntry {
-    pub provider: ForgeProvider,
+    pub provider: FoundryProvider,
     /// Lowercase host.
     pub host: String,
     /// Lowercase repository path.
@@ -81,7 +81,7 @@ impl RepoRegistry {
             if parts.len() < 3 || parts.len() > 5 {
                 return Err(format!("{ENV_VAR}: '{item}' is not provider:host:path[:flag[:flag]]"));
             }
-            let provider = ForgeProvider::parse(parts[0])
+            let provider = FoundryProvider::parse(parts[0])
                 .ok_or_else(|| format!("{ENV_VAR}: unknown provider '{}' in '{item}'", parts[0]))?;
             let host = parts[1].to_ascii_lowercase();
             let path = parts[2].trim_matches('/').to_ascii_lowercase();
@@ -113,16 +113,16 @@ impl RepoRegistry {
         self.entries.as_deref().unwrap_or(&[])
     }
 
-    fn find(&self, provider: ForgeProvider, host: &str, repo: &str) -> Option<&RepoEntry> {
+    fn find(&self, provider: FoundryProvider, host: &str, repo: &str) -> Option<&RepoEntry> {
         let r = RepoRef::new(provider, host, repo);
         self.entries().iter().find(|e| e.repo_ref() == r)
     }
 
     /// May an event from this repository earn merit?
-    pub fn decide(&self, provider: ForgeProvider, host: &str, repo: Option<&str>) -> RepoDecision {
+    pub fn decide(&self, provider: FoundryProvider, host: &str, repo: Option<&str>) -> RepoDecision {
         if self.is_legacy() {
             return match provider {
-                ForgeProvider::GitHub => RepoDecision::Earn,
+                FoundryProvider::GitHub => RepoDecision::Earn,
                 _ => RepoDecision::ProviderRefused,
             };
         }
@@ -142,7 +142,7 @@ impl RepoRegistry {
         if self.is_legacy() {
             return true;
         }
-        let Some(provider) = ForgeProvider::parse(&r.provider) else { return false };
+        let Some(provider) = FoundryProvider::parse(&r.provider) else { return false };
         matches!(self.find(provider, &r.host, &r.repo), Some(e) if !e.private)
     }
 }
@@ -150,7 +150,7 @@ impl RepoRegistry {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use ForgeProvider::*;
+    use FoundryProvider::*;
 
     #[test]
     fn legacy_mode() {

@@ -430,11 +430,11 @@ fn subject_schema() -> Value {
         "description": "The change being scored.",
         "properties": {
             "provider": {"type": "string", "enum": ["github", "gitlab"]},
-            "host": {"type": "string", "description": "Forge host. Defaults to github.com or gitlab.com."},
+            "host": {"type": "string", "description": "GitHub or GitLab host. Defaults to github.com or gitlab.com."},
             "repo": {"type": "string", "description": "Repository path, for example org/repo or group/sub/project."},
             "subject_id": {
                 "type": ["string", "integer"],
-                "description": "The forge-global id of the pull or merge request (GitHub pull_request.id, GitLab object_attributes.id), not its number. 'n<number>' when the id was unknown at ingest."
+                "description": "The global id of the pull or merge request (GitHub pull_request.id, GitLab object_attributes.id), not its number. 'n<number>' when the id was unknown at ingest."
             }
         },
         "required": ["provider", "repo", "subject_id"],

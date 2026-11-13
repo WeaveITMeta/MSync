@@ -61,17 +61,17 @@ fn discord_ids_must_be_snowflakes() {
 }
 
 #[test]
-fn duplicate_forge_and_bad_repo_are_refused() {
-    let dup = "\n[[forge]]\nprovider = \"github\"\nrepo = \"Example/Test\"\nvisibility = \"public\"\ncanonical = true\n";
-    assert_refused(&append(base(), F::Org, dup), E::DuplicateForge);
-    let bad = "\n[[forge]]\nprovider = \"gitlab\"\nrepo = \"just-a-name\"\nvisibility = \"public\"\ncanonical = true\n";
+fn duplicate_foundry_and_bad_repo_are_refused() {
+    let dup = "\n[[foundry]]\nprovider = \"github\"\nrepo = \"Example/Test\"\nvisibility = \"public\"\ncanonical = true\n";
+    assert_refused(&append(base(), F::Org, dup), E::DuplicateFoundry);
+    let bad = "\n[[foundry]]\nprovider = \"gitlab\"\nrepo = \"just-a-name\"\nvisibility = \"public\"\ncanonical = true\n";
     assert_refused(&append(base(), F::Org, bad), E::InvalidRepo);
 }
 
 #[test]
 fn canonical_is_required_and_a_mirror_cannot_pay() {
     assert_refused(&edit(base(), F::Org, "canonical = true\n", ""), E::Parse);
-    let mirror = "\n[[forge]]\nprovider = \"gitlab\"\nrepo = \"example/test-mirror\"\nvisibility = \"public\"\ncanonical = false\npayout_branches = [\"main\"]\n";
+    let mirror = "\n[[foundry]]\nprovider = \"gitlab\"\nrepo = \"example/test-mirror\"\nvisibility = \"public\"\ncanonical = false\npayout_branches = [\"main\"]\n";
     assert_refused(&append(base(), F::Org, mirror), E::MirrorPaysOut);
 }
 

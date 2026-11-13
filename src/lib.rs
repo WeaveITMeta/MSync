@@ -2,7 +2,7 @@ pub mod auth;
 pub mod config;
 pub mod cra;
 pub mod discord;
-pub mod forge;
+pub mod foundry;
 pub mod github;
 pub mod mcp;
 pub mod merit;

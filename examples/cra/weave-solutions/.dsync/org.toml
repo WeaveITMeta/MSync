@@ -21,14 +21,14 @@ template = "closed-source"
 guild_id = "200000000000000000"
 alert_channel_id = "200000000000000009"
 
-[[forge]]
+[[foundry]]
 provider = "github"
 repo = "example-weave/weave-core"
 visibility = "private"
 canonical = true
 payout_branches = ["main"]
 
-[[forge]]
+[[foundry]]
 provider = "github"
 repo = "example-weave/weave-infra"
 visibility = "private"
