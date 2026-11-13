@@ -2,6 +2,7 @@ use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 use std::env;
 
+use crate::cra::source::CraRepo;
 use crate::forge::RepoRegistry;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -14,6 +15,9 @@ pub struct Config {
     /// Repositories whose events earn (`DSYNC_FORGE_REPOS`). Unset: GitHub as before, GitLab refused.
     #[serde(default)]
     pub forge_repos: RepoRegistry,
+    /// The CRA repository (`DSYNC_CRA_REPO`). Unset: no CRA loading; everything as before.
+    #[serde(default)]
+    pub cra: CraConfig,
     pub database_url: String,
     pub server: ServerConfig,
 }
@@ -43,6 +47,48 @@ pub struct CodeRabbitConfig {
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct GitLabConfig {
     pub webhook_secret: Option<String>,
+}
+
+/// CRA loading (contract section 4).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CraConfig {
+    /// `provider:host:path` of the CRA repository (`DSYNC_CRA_REPO`).
+    pub repo: Option<CraRepo>,
+    /// The branch whose pushes load the CRA (`DSYNC_CRA_BRANCH`, default `main`).
+    pub branch: String,
+    /// Read token for a GitLab CRA repository (`GITLAB_TOKEN`). GitHub uses `GITHUB_TOKEN`.
+    #[serde(skip_serializing)]
+    pub gitlab_token: Option<String>,
+    /// API base overrides (`DSYNC_CRA_GITHUB_API`, `DSYNC_CRA_GITLAB_API`), for GitHub
+    /// Enterprise or tests. Default: `https://api.github.com`, `https://<host>/api/v4`.
+    pub github_api_base: Option<String>,
+    pub gitlab_api_base: Option<String>,
+}
+
+impl Default for CraConfig {
+    fn default() -> Self {
+        CraConfig { repo: None, branch: "main".into(), gitlab_token: None, github_api_base: None, gitlab_api_base: None }
+    }
+}
+
+impl CraConfig {
+    pub fn from_env() -> Result<Self> {
+        let repo = match non_empty_env("DSYNC_CRA_REPO") {
+            Some(spec) => Some(CraRepo::parse(&spec).map_err(anyhow::Error::msg)?),
+            None => None,
+        };
+        let branch = non_empty_env("DSYNC_CRA_BRANCH").unwrap_or_else(|| "main".into());
+        if branch.contains(char::is_whitespace) || branch.starts_with("refs/") {
+            anyhow::bail!("DSYNC_CRA_BRANCH must be a bare branch name, e.g. main");
+        }
+        Ok(CraConfig {
+            repo,
+            branch,
+            gitlab_token: non_empty_env("GITLAB_TOKEN"),
+            github_api_base: non_empty_env("DSYNC_CRA_GITHUB_API"),
+            gitlab_api_base: non_empty_env("DSYNC_CRA_GITLAB_API"),
+        })
+    }
 }
 
 fn non_empty_env(key: &str) -> Option<String> {
@@ -83,6 +129,7 @@ impl Config {
                 webhook_secret: non_empty_env("GITLAB_WEBHOOK_SECRET"),
             },
             forge_repos: RepoRegistry::from_env().map_err(anyhow::Error::msg)?,
+            cra: CraConfig::from_env()?,
             database_url: env::var("DATABASE_URL")
                 .unwrap_or_else(|_| "sqlite://dsync.db".to_string()),
             server: ServerConfig {

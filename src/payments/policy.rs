@@ -301,7 +301,14 @@ pub enum PolicyError {
 }
 
 /// Load the effective policy. A stored policy that fails to parse or validate is an error.
+///
+/// While a CRA snapshot is active for `org`, the policy is its `payouts.toml` (the stored
+/// versions are not consulted, and a snapshot whose `payouts.toml` does not convert is
+/// `Corrupt`). With no active snapshot this is exactly the pre-CRA behaviour.
 pub async fn load_effective(pool: &SqlitePool, org: &str, cfg: &PaymentConfig) -> Result<EffectivePolicy, PolicyError> {
+    if let Some(eff) = crate::cra::loader::cra_payout_policy(pool, org).await? {
+        return Ok(eff);
+    }
     let row: Option<(i64, String, String, String)> = sqlx::query_as(
         "SELECT version, policy_json, updated_by, created_at FROM payout_policies WHERE org_id = ? ORDER BY version DESC LIMIT 1",
     )
@@ -347,6 +354,11 @@ pub async fn put_policy(
     expected_version: Option<Option<i64>>,
 ) -> Result<i64, PolicyError> {
     principal.require(scopes::PAYOUTS_POLICY)?;
+    // The CRA authors the policy while a snapshot is active. The HTTP route answers 409
+    // before reaching here (`cra::api`); this refuses any other caller.
+    if crate::cra::loader::cra_active(pool, &principal.org_id).await? {
+        return Err(PolicyError::Invalid(vec![crate::cra::loader::POLICY_AUTHORED_IN_CRA.to_string()]));
+    }
     let errs = policy.validate();
     if !errs.is_empty() {
         return Err(PolicyError::Invalid(errs));

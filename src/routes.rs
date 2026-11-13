@@ -1,3 +1,4 @@
+use crate::cra::loader::{CraContext, CraHandle, CraRuntimeError, LoadOutcome};
 use crate::forge::{self, ForgeProcessor, ProcessOutcome, RepoDecision, RepoRegistry};
 use crate::github::webhook::{GitHubWebhookHandler, GitHubWebhookPayload};
 use crate::merit::leaderboard::{self, LeaderboardQuery};
@@ -12,15 +13,38 @@ use sqlx::SqlitePool;
 use std::sync::Arc;
 use tracing::{error, info, warn};
 
-/// Merit rules in force. Round 1: contract 3.4 defaults. The CRA (`merit.toml`)
-/// supplies them in a later round; this is the one place to wire that in.
-pub fn merit_rules(_state: &AppState) -> Arc<MeritRules> {
-    Arc::new(MeritRules::default())
+/// Merit rules in force: the active CRA snapshot's `merit.toml`, or the contract 3.4
+/// defaults when no snapshot is active.
+pub fn merit_rules(state: &AppState) -> Arc<MeritRules> {
+    merit_rules_for(&state.cra.handle)
 }
 
-/// Repository registry in force (`DSYNC_FORGE_REPOS` today, the CRA later).
+pub fn merit_rules_for(handle: &CraHandle) -> Arc<MeritRules> {
+    match handle.active() {
+        Some(a) => Arc::new(crate::cra::loader::merit_rules_from_cra(&a.snapshot.merit)),
+        None => Arc::new(MeritRules::default()),
+    }
+}
+
+/// Repository registry in force: the active CRA snapshot's `org.toml` `[[forge]]`, or
+/// `DSYNC_FORGE_REPOS` when no snapshot is active.
 pub fn forge_registry(state: &AppState) -> Arc<RepoRegistry> {
-    Arc::new(state.config.forge_repos.clone())
+    forge_registry_for(&state.cra.handle, &state.config.forge_repos)
+}
+
+pub fn forge_registry_for(handle: &CraHandle, fallback: &RepoRegistry) -> Arc<RepoRegistry> {
+    match handle.active() {
+        Some(a) => Arc::new(crate::cra::loader::registry_from_cra(&a.snapshot.org)),
+        None => Arc::new(fallback.clone()),
+    }
+}
+
+/// The JSON a webhook response carries for a CRA load.
+fn cra_json(r: &Result<LoadOutcome, CraRuntimeError>) -> serde_json::Value {
+    match r {
+        Ok(o) => serde_json::to_value(o).unwrap_or(serde_json::Value::Null),
+        Err(e) => serde_json::json!({"outcome": "error", "message": e.to_string()}),
+    }
 }
 
 #[derive(Debug, Serialize)]
@@ -136,10 +160,42 @@ pub async fn github_webhook(
         .with_rules(merit_rules(&state));
 
     match handler.handle_webhook(event_type, payload).await {
-        Ok(_) => HttpResponse::Ok().json(serde_json::json!({
-            "status": "success",
-            "event": event_type
-        })),
+        Ok(_) => {
+            // CRA loading: only a push to the CRA repository's configured branch loads anything.
+            let cra = github_cra_push(&state.cra, event_type, &body, delivery_key.as_deref()).await;
+            match cra {
+                None => {
+                    state.cra.refresh_merits().await;
+                    HttpResponse::Ok().json(serde_json::json!({
+                        "status": "success",
+                        "event": event_type
+                    }))
+                }
+                Some(Err(e)) => {
+                    error!("CRA load failed: {}", e);
+                    if let Some(key) = &delivery_key {
+                        let _ = crate::github::dedupe::release(&state.db_pool, key).await;
+                    }
+                    HttpResponse::InternalServerError().json(serde_json::json!({
+                        "status": "error",
+                        "message": "CRA load failed",
+                    }))
+                }
+                Some(r) => {
+                    // A rejection caused by the forge API may be retried: let a redelivery through.
+                    if matches!(r, Ok(LoadOutcome::Rejected { retryable: true, .. })) {
+                        if let Some(key) = &delivery_key {
+                            let _ = crate::github::dedupe::release(&state.db_pool, key).await;
+                        }
+                    }
+                    HttpResponse::Ok().json(serde_json::json!({
+                        "status": "success",
+                        "event": event_type,
+                        "cra": cra_json(&r),
+                    }))
+                }
+            }
+        }
         Err(e) => {
             error!("Failed to handle webhook: {}", e);
             if let Some(key) = &delivery_key {
@@ -151,6 +207,29 @@ pub async fn github_webhook(
             }))
         }
     }
+}
+
+/// The CRA side of a verified GitHub webhook. `None` unless this is a branch push to
+/// the CRA repository's configured branch. The body is used only for the branch, the
+/// head SHA and the authenticated sender; the files are fetched from the API at the SHA.
+pub async fn github_cra_push(
+    cra: &CraContext,
+    event_type: &str,
+    body: &[u8],
+    delivery: Option<&str>,
+) -> Option<Result<LoadOutcome, CraRuntimeError>> {
+    if event_type != "push" {
+        return None;
+    }
+    let push: forge::github::GitHubPushPayload = match serde_json::from_slice(body) {
+        Ok(p) => p,
+        Err(e) => {
+            warn!("GitHub push payload did not parse: {}", e);
+            return None;
+        }
+    };
+    let ev = forge::github::normalize_push(&push, delivery)?;
+    cra.on_push(&ev, chrono::Utc::now().date_naive()).await
 }
 
 #[get("/api/contributor/stats")]
@@ -276,6 +355,23 @@ pub async fn process_gitlab_webhook(
     headers: &HeaderMap,
     body: &[u8],
 ) -> (StatusCode, serde_json::Value) {
+    process_gitlab_webhook_with_cra(pool, secret, registry, payments, rules, None, headers, body).await
+}
+
+/// [`process_gitlab_webhook`] plus CRA loading: a verified `Push Hook` to the CRA
+/// repository's configured branch runs the loader for the pushed head SHA. Every other
+/// hook takes exactly the merit path above.
+#[allow(clippy::too_many_arguments)]
+pub async fn process_gitlab_webhook_with_cra(
+    pool: &SqlitePool,
+    secret: Option<&str>,
+    registry: Arc<RepoRegistry>,
+    payments: Arc<PaymentConfig>,
+    rules: Arc<MeritRules>,
+    cra: Option<&CraContext>,
+    headers: &HeaderMap,
+    body: &[u8],
+) -> (StatusCode, serde_json::Value) {
     if !forge::gitlab::verify_token(secret, header(headers, "X-Gitlab-Token")) {
         error!("Rejected GitLab webhook: missing or invalid X-Gitlab-Token");
         return (StatusCode::UNAUTHORIZED, serde_json::json!({"status": "error", "message": "invalid token"}));
@@ -290,6 +386,19 @@ pub async fn process_gitlab_webhook(
         .or_else(|| header(headers, "Idempotency-Key"))
         .map(str::trim)
         .filter(|d| !d.is_empty());
+    if payload.object_kind == "push" {
+        if let Some(ctx) = cra {
+            if let Some(r) = gitlab_cra_push(ctx, body, delivery).await {
+                return match r {
+                    Ok(o) => (StatusCode::OK, serde_json::json!({"status": o.label(), "cra": cra_json(&Ok(o.clone()))})),
+                    Err(e) => {
+                        error!("CRA load failed: {}", e);
+                        (StatusCode::INTERNAL_SERVER_ERROR, serde_json::json!({"status": "error", "message": "CRA load failed"}))
+                    }
+                };
+            }
+        }
+    }
     let ev = match forge::gitlab::normalize(&payload, delivery) {
         Ok(Some(ev)) => ev,
         Ok(None) => return (StatusCode::OK, serde_json::json!({"status": "ignored", "reason": "not a merit event"})),
@@ -334,18 +443,41 @@ pub async fn process_gitlab_webhook(
     }
 }
 
+/// The CRA side of a verified GitLab push hook. `None` unless it is a branch push to
+/// the CRA repository's configured branch.
+pub async fn gitlab_cra_push(cra: &CraContext, body: &[u8], delivery: Option<&str>) -> Option<Result<LoadOutcome, CraRuntimeError>> {
+    let push: forge::gitlab::GitLabPushPayload = match serde_json::from_slice(body) {
+        Ok(p) => p,
+        Err(e) => {
+            warn!("GitLab push hook did not parse: {}", e);
+            return None;
+        }
+    };
+    let ev = match forge::gitlab::normalize_push(&push, delivery) {
+        Ok(Some(ev)) => ev,
+        Ok(None) => return None,
+        Err(e) => {
+            warn!("GitLab push hook refused: {}", e);
+            return None;
+        }
+    };
+    cra.on_push(&ev, chrono::Utc::now().date_naive()).await
+}
+
 #[post("/gitlab/webhook")]
 pub async fn gitlab_webhook(req: HttpRequest, body: web::Bytes, state: web::Data<AppState>) -> impl Responder {
-    let (status, json) = process_gitlab_webhook(
+    let (status, json) = process_gitlab_webhook_with_cra(
         &state.db_pool,
         state.config.gitlab.webhook_secret.as_deref(),
         forge_registry(&state),
         state.payments.clone(),
         merit_rules(&state),
+        Some(state.cra.as_ref()),
         req.headers(),
         &body,
     )
     .await;
+    state.cra.refresh_merits().await;
     HttpResponse::build(status).json(json)
 }
 

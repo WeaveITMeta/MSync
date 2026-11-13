@@ -1,7 +1,8 @@
 //! GitHub payload -> [`ForgeEvent`]. Dedupe keys keep their exact pre-normalization form.
 
 use super::{ForgeEvent, ForgeEventKind, ForgeProvider};
-use crate::github::webhook::{GitHubWebhookPayload, PullRequestPayload};
+use crate::github::webhook::{GitHubUser, GitHubWebhookPayload, PullRequestPayload, RepositoryPayload};
+use serde::Deserialize;
 
 /// Only github.com is supported by the GitHub webhook today.
 pub const HOST: &str = "github.com";
@@ -95,6 +96,51 @@ pub fn normalize(event_type: &str, payload: &GitHubWebhookPayload, delivery: Opt
     }
 }
 
+/// A GitHub `push` webhook, as far as CRA loading needs it. Parsed only after the
+/// signature check. The body names the pushed branch, the head commit and the
+/// authenticated sender; the CRA files themselves are never read from it.
+#[derive(Debug, Clone, Deserialize)]
+pub struct GitHubPushPayload {
+    #[serde(rename = "ref")]
+    pub ref_name: String,
+    pub after: String,
+    #[serde(default)]
+    pub deleted: bool,
+    #[serde(default)]
+    pub repository: Option<RepositoryPayload>,
+    #[serde(default)]
+    pub sender: Option<GitHubUser>,
+}
+
+/// Normalize a GitHub `push` to a [`ForgeEventKind::Push`] event: `base_branch` is the
+/// pushed branch, `merge_sha` the pushed head commit, `actor_login` the authenticated
+/// sender. Tags, branch deletions and pushes without a sender or repository are None.
+pub fn normalize_push(p: &GitHubPushPayload, delivery: Option<&str>) -> Option<ForgeEvent> {
+    let branch = p.ref_name.strip_prefix("refs/heads/")?.to_string();
+    let head = p.after.trim().to_ascii_lowercase();
+    if p.deleted || head.is_empty() || head.bytes().all(|b| b == b'0') {
+        return None;
+    }
+    let sender = p.sender.as_ref().map(|s| s.login.clone()).filter(|l| !l.is_empty())?;
+    let repo = p.repository.as_ref().map(|r| r.full_name.clone()).filter(|r| !r.is_empty())?;
+    Some(ForgeEvent {
+        provider: ForgeProvider::GitHub,
+        host: HOST.to_string(),
+        repo: Some(repo),
+        kind: ForgeEventKind::Push,
+        actor_login: sender,
+        subject_id: 0,
+        subject_number: 0,
+        title: String::new(),
+        merge_sha: Some(head.clone()),
+        base_branch: Some(branch),
+        delivery_id: delivery.map(str::to_string),
+        author_login: None,
+        body: None,
+        effect_key: format!("push:{}", head),
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -146,5 +192,35 @@ mod tests {
             "review": {"state": "commented", "body": null, "user": {"login": "bob"}}}));
         assert!(normalize("pull_request_review", &commented, None).is_none());
         assert!(normalize("push", &commented, None).is_none());
+    }
+
+    #[test]
+    fn push_normalization() {
+        let p: GitHubPushPayload = serde_json::from_value(serde_json::json!({
+            "ref": "refs/heads/main", "after": "ABCDEF0123456789abcdef0123456789abcdef01", "deleted": false,
+            "repository": {"full_name": "Org/CRA"}, "sender": {"login": "alice"}, "pusher": {"name": "alice"}
+        })).unwrap();
+        let ev = normalize_push(&p, Some("d-1")).unwrap();
+        assert_eq!(ev.kind, ForgeEventKind::Push);
+        assert_eq!(ev.base_branch.as_deref(), Some("main"));
+        assert_eq!(ev.merge_sha.as_deref(), Some("abcdef0123456789abcdef0123456789abcdef01"));
+        assert_eq!(ev.actor_login, "alice");
+        assert_eq!(ev.repo.as_deref(), Some("Org/CRA"));
+        // A push never feeds the merit path's own normalizer.
+        let as_merit: GitHubWebhookPayload = serde_json::from_value(serde_json::json!({"repository": {"full_name": "Org/CRA"}})).unwrap();
+        assert!(normalize("push", &as_merit, None).is_none());
+
+        let mut tag = p.clone();
+        tag.ref_name = "refs/tags/v1".into();
+        assert!(normalize_push(&tag, None).is_none());
+        let mut del = p.clone();
+        del.deleted = true;
+        assert!(normalize_push(&del, None).is_none());
+        let mut zero = p.clone();
+        zero.after = "0000000000000000000000000000000000000000".into();
+        assert!(normalize_push(&zero, None).is_none());
+        let mut anon = p;
+        anon.sender = None;
+        assert!(normalize_push(&anon, None).is_none());
     }
 }

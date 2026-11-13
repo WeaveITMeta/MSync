@@ -19,6 +19,7 @@ This document is the reference for the file formats, every validation rule, and 
 11. Who may change what
 12. Walkthrough: Voltec Industries
 13. Choices this implementation made
+14. Connecting a repository
 
 ## 1. Files and general rules
 
@@ -376,3 +377,91 @@ Where the contract left a point open, the code chose the following.
 - **`limits.hold_days`** must be at least the policy's `payouts.hold_days`.
 - **Rate branches** must be payout branches of a canonical forge.
 - **Probation** is not applied: the CRA does not record when a member joined or was granted a position.
+
+## 14. Connecting a repository
+
+This section is the engine side: how DSync finds the CRA repository, loads it on a push, and what changes while a snapshot is active. The code is `src/cra/{source,loader,store,api}.rs`.
+
+### 14.1 Environment
+
+| Variable | Meaning |
+|---|---|
+| `DSYNC_CRA_REPO` | The CRA repository as `provider:host:path`, for example `github:github.com:EustressEngine/dsync-cra` or `gitlab:gitlab.example.org:eustress/cra`. Unset: no CRA loading, and everything behaves as before. A malformed value stops the server at startup. |
+| `DSYNC_CRA_BRANCH` | The branch whose pushes load the CRA. Default `main`. A bare branch name, not `refs/heads/...`. |
+| `GITHUB_TOKEN` | Read access to a GitHub CRA repository (contents, pull requests, reviews). The token the service already uses. |
+| `GITLAB_TOKEN` | Read access to a GitLab CRA repository (`read_api`). Optional; needed when the project is private. |
+| `DSYNC_CRA_GITHUB_API`, `DSYNC_CRA_GITLAB_API` | API base overrides. Defaults: `https://api.github.com` for github.com, `https://<host>/api/v3` for GitHub Enterprise, `https://<host>/api/v4` for GitLab. |
+| `DSYNC_OWNER_MEMBER_IDS` | Owners (rank 1000), comma separated. An entry is a member id (`mckale`) or a forge identity (`github:Simbuilder`, `gitlab:someone`). Only the forge form can bootstrap the first snapshot. An entry with a `:` that is not `github:<login>` or `gitlab:<login>` is ignored. |
+| `GITHUB_WEBHOOK_SECRET`, `GITLAB_WEBHOOK_SECRET` | The existing webhook secrets. A push that fails the signature or token check is refused before anything is read. |
+
+If an active snapshot is stored but no longer reproduces its content hash, DSync refuses to start rather than fall back to another source of rank.
+
+### 14.2 The webhook
+
+The CRA uses the webhook endpoints that already exist. Add the push event on the CRA repository:
+
+- **GitHub**: repository Settings, Webhooks, Add webhook. Payload URL `https://<dsync host>/github/webhook`, content type `application/json`, secret `GITHUB_WEBHOOK_SECRET`. Events: `Pushes` (also `Pull requests` and `Pull request reviews` if the same repository should earn merit).
+- **GitLab**: project Settings, Webhooks. URL `https://<dsync host>/gitlab/webhook`, secret token `GITLAB_WEBHOOK_SECRET`. Trigger: `Push events`, with the CRA branch as the branch filter (also `Merge request events` if the project should earn merit).
+
+A push to any other repository or branch, a tag push, and a branch deletion load nothing. The merit and payout behaviour of both endpoints is unchanged.
+
+### 14.3 What happens on a push
+
+For a verified push to the CRA repository's branch, DSync takes the pushed head SHA and:
+
+1. Refuses anything that is not a full commit SHA. Files are only ever read at an exact commit.
+2. Does nothing if this commit already has a final outcome (accepted or rejected). A redelivered or replayed push cannot change a verdict or roll the hierarchy back.
+3. Fetches the five `.dsync/` files through the forge API at that SHA. The webhook body supplies only the branch, the SHA and the authenticated pusher; its content is never trusted.
+4. Builds the change context from the forge API: whether the commit is the merge commit of a merged pull or merge request, who merged it, who wrote it, and who approved it. A merged request whose merge commit is not this SHA does not count; the push is then a direct push by the webhook's pusher. An approval counts only if it is current. On GitHub, the reviewer's latest verdict is `APPROVED` and was given on the request's head commit. On GitLab, the user is still in the approvals list and their latest approval note is later than the request's last push. When the API cannot tell, the approval does not count.
+5. Parses and validates (sections 1 to 6), plans the change against the active snapshot (section 10), and authorizes it against the active snapshot (section 11).
+6. If everything passes, activates it in one transaction: the old active snapshot becomes `superseded`, the new one `active`. Then it links every member's forge identities (14.6) and swaps the engine's runtime state.
+7. If anything fails, records a `rejected` attempt with every violation. The active snapshot stays as it was.
+
+A commit that changes nothing in `.dsync/` (an empty plan) is a no-op and records nothing.
+
+`POST /api/v1/cra/reload` (scope `hierarchy.read` and rank 1000) runs the same steps on the branch head. A reload has no webhook pusher, so it can load a merged pull or merge request but not a direct push.
+
+### 14.4 Reading a rejection
+
+`GET /api/v1/cra/snapshots` (scope `hierarchy.read`) lists recent attempts, newest first, with `status`, `commit_sha`, `actor`, `author`, `approvers`, the change plan and `violations`. Each violation is `{code, item, message}`:
+
+- A file error (sections 1 to 6) carries its error code (`RankOutOfRange`, `UnknownRole`, ...) and the file name as `item`.
+- An authorization violation (section 11) carries its code (`InsufficientRank`, `DirectPushNeedsApproval`, `NoQualifiedApprover`, `NotBootstrapOwner`, ...) and the change as `item`, for example ``grant `maintainer` to `cy-example` ``.
+- `SourceError`: the forge API failed, or gave an answer that settles nothing (an HTTP error, two merged requests claiming the commit, a pusher who is not the merger, a direct push with no known pusher). These rejections are `retryable`: the same commit may be loaded again once the forge answers, by a redelivery or a reload.
+- `InvalidCommitSha`; `ActiveSnapshotUnusable` (the stored active snapshot no longer reproduces its content hash; retryable); `ActiveChanged` (another commit was activated while this one was checked; retryable).
+
+To fix a rejected change, push a new commit. A rejected commit keeps its verdict.
+
+### 14.5 Bootstrapping the first snapshot
+
+The first snapshot is accepted only when the actor is an owner from engine configuration in the forge form. A member id means nothing before a snapshot exists, and the new snapshot cannot vouch for itself.
+
+1. Put your forge identity in `DSYNC_OWNER_MEMBER_IDS` (for example `github:Simbuilder`) and set `DSYNC_CRA_REPO`. Restart DSync.
+2. Add the webhook (14.2).
+3. As that owner, push the five files to the CRA branch, or merge a pull request that adds them. `GET /api/v1/cra/snapshots` should then show an `active` row with you as `actor`.
+
+If the files landed before the webhook existed, merge them through a pull request and call `POST /api/v1/cra/reload` as an owner, or push a new commit.
+
+### 14.6 While a snapshot is active
+
+| Seam | With an active snapshot | With none |
+|---|---|---|
+| Ranks (payout approvers, eligibility, token management) | Owners from engine configuration stay 1000, whether the token names the owner entry or a member whose forge identity is an owner entry. Every other member has their standing rank (section 9), with all merit counted as vested. An id the snapshot does not list has no rank. | Owners 1000, everyone else none |
+| Payee identity | A ledger row paid to a member's attested GitHub or GitLab login belongs to that member, so they cannot approve it even if their token declares no payee key. | Token `payee_keys` only |
+| Roles (eligibility) | Active positions and the tier | None |
+| Repositories that earn | `org.toml` `[[forge]]`: `canonical = false` earns nothing and creates no payout row; `visibility = "private"` is never named publicly | `DSYNC_FORGE_REPOS` |
+| Merit rules | `merit.toml`: `pr_merged` and `review_approved` from their `[[event]]`; an event not listed earns nothing; opening a pull request earns nothing | Contract 3.4 defaults |
+| Payout policy | `payouts.toml`. `PUT /api/v1/payouts/policy` answers 409 because the policy is authored in the CRA. `GET` shows it with `updated_by = cra:<commit>`. | The stored policy, or the env default |
+
+On activation each member's forge identities are attached to one contributor, so XP earned under a GitHub login and a GitLab login adds up. A member with no contributor yet gets one. An identity that already belongs to a different contributor is reported as a `conflict` in the activation result and is never merged.
+
+Read endpoints:
+
+```
+GET  /api/v1/hierarchy                       hierarchy.read: roles, titles and ranks in rank order, and the org mode
+GET  /api/v1/hierarchy/members/{member_id}   hierarchy.read: that member's standing
+GET  /api/v1/cra/snapshots?limit=            hierarchy.read: recent attempts with status and violations
+POST /api/v1/cra/reload                      hierarchy.read and rank 1000: re-run the loader on the branch head
+```
+
+Not enforced yet: `weight`, `daily_cap`, `vesting_days` and `external_counts` in `merit.toml`; the Discord projection and consumer cache invalidation on activation (round 3). Ranks computed for the synchronous rank checks use a merit cache refreshed on activation, after each forge webhook and every 60 seconds.
