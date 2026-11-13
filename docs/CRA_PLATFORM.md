@@ -114,7 +114,7 @@ kind = "position"
 rank = 60
 permissions = ["members.grant", "members.revoke", "payouts.read_all"]
 max_holders = 5                 # position only, optional
-term_days = 365                 # position only, optional
+term_days = 180                 # position only, optional; at most grants.max_term_days
 merit_eligibility = 1000        # position only, optional: files a nomination
 compartments = []               # optional
 ```
@@ -139,7 +139,7 @@ discord = "111111111111111111"
 [[member.grant]]                # appointed positions only; tiers are computed
 role = "maintainer"
 granted_by = "founder-1"        # member id
-expires = "2027-11-01"          # required when role rank >= grants.two_person_min_rank
+expires = "2027-05-01"          # required when role rank >= grants.two_person_min_rank
 ```
 
 Rules: an identity value belongs to at most one member; `grant.role` must be a `position`; `granted_by` must exist; no member may be `granted_by` themselves; expiry rules follow the effective policy.
