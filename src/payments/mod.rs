@@ -4,6 +4,9 @@
 //! Invariant: money only moves in `ledger::claim_and_transfer` (reached through `ledger::approve`
 //! and `ledger::pay_guarded`), behind the atomic status claim and the `dsync-ledger-<id>`
 //! idempotency key. Callers: the admin-token approve route and payout runs.
+//!
+//! Payroll (contract 11): `payees`, `payorders`, `invoices` and `statement`. Pay orders and invoices
+//! only write ledger rows (`ledger::insert_source_row`); payout runs pay them like merit rows.
 
 pub mod api;
 pub mod approvals;

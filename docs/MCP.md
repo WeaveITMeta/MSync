@@ -111,6 +111,17 @@ Every successful result carries the same JSON twice: as `structuredContent` and 
 | `payouts_run_create` | `payouts.prepare` | Create a prepared run |
 | `payouts_run_approve` | `payouts.approve` | Approve every row of a run as the token's member, except the member's own rows |
 | `payouts_run_execute` | `payouts.execute` | Pay the payable rows of a run through Stripe. Off unless the operator enables it (section 5) |
+| `payees_list` | `payees.read` | Payees, optionally by status |
+| `payee_get` | `payees.read` | One payee |
+| `payorders_list` | `payorders.read` | Pay orders, optionally by status, with approvals and recent occurrences |
+| `payorder_preview` | `payorders.read` | What the next occurrences of a pay order would pay; persists nothing |
+| `payorder_create` | `payorders.manage` | Create a pay order as the token's member |
+| `payorder_approve` | `payorders.approve` | Approve the current revision of a pay order as the token's member |
+| `payorder_pause` | `payorders.manage` | Pause an active pay order |
+| `invoices_list` | `invoices.read` | Invoices, optionally by status and payee, with approvals and history |
+| `invoice_submit` | `invoices.submit` | Submit an invoice as the token's member |
+| `invoice_approve` | `invoices.approve` | Approve a submitted invoice as the token's member |
+| `payout_statement` | `payouts.read` | Everything paid or pending to one payee in a date range, by source |
 
 `standing_get` and `hierarchy_get` (contract section 7) are not offered yet. They depend on CRA loading.
 
@@ -293,6 +304,23 @@ Input: `{"run_id": "..."}`. Result:
 Pays, through the existing transfer path, every row of the run that is payable now under the policy in force now. Limits are re-checked inside the claim that marks the row. A row that is not payable yet is reported as `not_payable` with the reason. A paid row is never paid twice (`already_paid`), and Stripe gets the idempotency key `dsync-ledger-<id>`.
 
 REST: `POST /api/v1/payouts/runs/{id}/execute`.
+
+### Payroll tools (contract section 11)
+
+These mirror the payroll REST routes and call the same functions; `docs/PAYROLL.md` is the owner's guide. None of them moves money. Approving a pay order or an invoice only writes ledger rows; payout runs pay them, and `payouts_run_execute` keeps its guard.
+
+- `payees_list` `{"status"?}` returns `{"payees": [...]}`. `payee_get` `{"payee_id"}` returns `{"payee": {...}}`. A payee has no bank or card field.
+- `payorders_list` `{"status"?}` returns `{"payorders": [...]}`. Each order shows `approvals`, `approvals_counted`, `approvals_required`, `approved` and its recent `occurrences`.
+- `payorder_preview` `{"order_id", "periods"?}` (1 to 24, default 3) returns `{"preview": {"items": [{"period_key", "timing", "split", "waiting_for"}]}}`. Persists nothing.
+- `payorder_create` takes the body of `POST /api/v1/payorders`: `name`, `rule`, `schedule`, optional `currency`, `memo`, `draft`. Result `{"payorder": {...}}` with `created_by` set to the token's member. Refused when the caller is a payee of the order.
+- `payorder_approve` `{"order_id"}` returns `{"result": {"result": "recorded" | "already_approved", "approver_member_id", "revision", "order"}}`. Refused (as a tool error) for the creator, the author of the latest change and any payee of the order.
+- `payorder_pause` `{"order_id"}` returns `{"payorder": {...}}`. Resume and cancel are REST only.
+- `invoices_list` `{"status"?, "payee_id"?}` returns `{"invoices": [...]}`.
+- `invoice_submit` takes the body of `POST /api/v1/invoices`. The total must equal the lines plus tax. Result `{"invoice": {...}}` with `submitted_by` set to the token's member.
+- `invoice_approve` `{"invoice_id"}` returns `{"result": {"result", "approver_member_id", "invoice"}}`. Refused for the payee and the submitter. With enough approvals the invoice is `scheduled` with its `ledger_id`.
+- `payout_statement` `{"payee_id", "from", "to"}` (dates, inclusive) returns `{"statement": {"sources": [...], "paid_cents", "pending_cents"}}`.
+
+Compensation is confidential. Give an agent the payroll read scopes only when it needs them, and never `payorders.manage` together with `payorders.approve`, or `invoices.submit` together with `invoices.approve`, on one token.
 
 ## 5. The execute guard
 
