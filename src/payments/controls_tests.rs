@@ -913,7 +913,11 @@ fn evaluate_is_pure_over_facts() {
         decided_by: None,
         created_at: "2026-11-01 00:00:00".into(),
         updated_at: "2026-11-01 00:00:00".into(),
+        source_kind: "merit".into(),
+        source_ref: None,
+        payee_id: None,
+        pay_after: None,
     };
-    let facts = RowFacts { entry, approvers: vec![], blocked: false, verified_identity: false, payee_rank: None, payee_roles: vec![] };
+    let facts = RowFacts { entry, approvers: vec![], blocked: false, verified_identity: false, payee_rank: None, payee_roles: vec![], payee_inactive: None };
     assert_eq!(evaluate(&p, &facts, Utc::now(), &Usage::default()), vec![Blocker::Approvals { have: 0, need: 1 }]);
 }

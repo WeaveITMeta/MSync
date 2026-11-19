@@ -59,7 +59,20 @@ pub async fn principal_is_payee(
     if principal.payee_keys.iter().any(|k| k.to_lowercase() == key) {
         return Ok(true);
     }
+    if row_payee_member(pool, entry).await?.as_deref() == Some(principal.member_id.as_str()) {
+        return Ok(true);
+    }
     is_payee(pool, directory, &principal.member_id, &key).await
+}
+
+/// The CRA member id recorded on the payee record of a pay order or invoice row, if any.
+async fn row_payee_member(pool: &SqlitePool, entry: &LedgerEntry) -> Result<Option<String>, sqlx::Error> {
+    let Some(pid) = &entry.payee_id else { return Ok(None) };
+    let m: Option<Option<String>> = sqlx::query_scalar("SELECT member_id FROM payees WHERE id = ?")
+        .bind(pid)
+        .fetch_optional(pool)
+        .await?;
+    Ok(m.flatten())
 }
 
 /// Record the principal's approval of one ledger row (`payouts.approve`). The approver is the
@@ -159,6 +172,10 @@ pub struct RowFacts {
     pub verified_identity: bool,
     pub payee_rank: Option<i64>,
     pub payee_roles: Vec<String>,
+    /// Some(reason) when a payee record pays this row (by payee id, or by payee key for merit
+    /// rows) and it is paused or closed, or (pay order and invoice rows) its Stripe account
+    /// cannot receive transfers. None for merit rows with no payee record (contract 11.2).
+    pub payee_inactive: Option<String>,
 }
 
 /// Amounts already committed against the limits: per payee in the current period, and in this run.
@@ -191,6 +208,10 @@ pub enum Blocker {
     AboveMaxPerPayout { max: i64 },
     MemberPeriodLimit { used: i64, max: i64 },
     RunLimit { used: i64, max: i64 },
+    /// The row's pay_after time (occurrence date or invoice due date) has not come yet.
+    NotYet { until: String },
+    /// The payee record is paused or closed, or cannot receive transfers.
+    PayeeInactive { reason: String },
 }
 
 impl Blocker {
@@ -213,6 +234,8 @@ impl Blocker {
             Blocker::AboveMaxPerPayout { max } => format!("amount above max_per_payout_cents {max}"),
             Blocker::MemberPeriodLimit { used, max } => format!("payee period total {used} + amount exceeds max_per_member_per_period_cents {max}"),
             Blocker::RunLimit { used, max } => format!("run total {used} + amount exceeds max_per_run_cents {max}"),
+            Blocker::NotYet { until } => format!("not payable before {until}"),
+            Blocker::PayeeInactive { reason } => format!("payee {reason}"),
         }
     }
 }
@@ -266,8 +289,19 @@ pub fn evaluate(policy: &PayoutPolicy, facts: &RowFacts, now: DateTime<Utc>, usa
             None => out.push(Blocker::Hold { until: "unknown".into() }),
         }
     }
+    if let Some(after) = &e.pay_after {
+        match parse_db_time(after) {
+            Some(t) if now < t => out.push(Blocker::NotYet { until: after.clone() }),
+            Some(_) => {}
+            // Unreadable time: fail closed.
+            None => out.push(Blocker::NotYet { until: "unknown".into() }),
+        }
+    }
     if facts.blocked {
         out.push(Blocker::PayeeBlocked);
+    }
+    if let Some(reason) = &facts.payee_inactive {
+        out.push(Blocker::PayeeInactive { reason: reason.clone() });
     }
 
     let el = &policy.eligibility;
@@ -316,31 +350,75 @@ pub fn evaluate(policy: &PayoutPolicy, facts: &RowFacts, now: DateTime<Utc>, usa
 /// Load the facts the payable rule needs for one row.
 pub async fn load_facts(pool: &SqlitePool, directory: &dyn Directory, entry: LedgerEntry) -> Result<RowFacts, sqlx::Error> {
     let key = payee_key(&entry);
+    let payee_member = row_payee_member(pool, &entry).await?;
     let mut approvers = Vec::new();
     for a in approvals_for(pool, &entry.id).await? {
-        let payee = is_payee(pool, directory, &a.approver_member_id, &key).await?;
+        let payee = payee_member.as_deref() == Some(a.approver_member_id.as_str())
+            || is_payee(pool, directory, &a.approver_member_id, &key).await?;
         approvers.push(ApproverFact {
             rank: directory.rank_of(&a.approver_member_id),
             member_id: a.approver_member_id,
             is_payee: payee,
         });
     }
-    let blocked = is_blocked(pool, &key).await?;
+    let mut blocked = is_blocked(pool, &key).await?;
+    if let Some(pid) = &entry.payee_id {
+        // A block on any of the payee's keys blocks its pay order and invoice rows too.
+        let hit: Option<i64> = sqlx::query_scalar(
+            "SELECT 1 FROM payout_blocks b JOIN payee_keys k ON k.payee_key = b.payee_key WHERE k.payee_id = ? LIMIT 1",
+        )
+        .bind(pid)
+        .fetch_optional(pool)
+        .await?;
+        blocked = blocked || hit.is_some();
+    }
+    let payee_inactive = payee_inactive_reason(pool, &entry).await?;
     let verified: Option<i64> = sqlx::query_scalar(
         "SELECT 1 FROM contributors WHERE lower(github_username) = ? AND discord_user_id IS NOT NULL",
     )
     .bind(&key)
     .fetch_optional(pool)
     .await?;
-    let payee_member = directory.member_for_payee(&key);
+    let payee_member = directory.member_for_payee(&key).or(payee_member);
     Ok(RowFacts {
         approvers,
         blocked,
         verified_identity: verified.is_some(),
         payee_rank: payee_member.as_deref().and_then(|m| directory.rank_of(m)),
         payee_roles: payee_member.as_deref().map(|m| directory.roles_of(m)).unwrap_or_default(),
+        payee_inactive,
         entry,
     })
+}
+
+/// Why the payee record behind a row cannot be paid now, if it cannot.
+async fn payee_inactive_reason(pool: &SqlitePool, entry: &LedgerEntry) -> Result<Option<String>, sqlx::Error> {
+    let status: Option<String> = sqlx::query_scalar(
+        "SELECT p.status FROM payees p WHERE p.status <> 'active' AND (p.id = ? OR p.id IN
+         (SELECT k.payee_id FROM payee_keys k WHERE k.payee_key = lower(?))) LIMIT 1",
+    )
+    .bind(&entry.payee_id)
+    .bind(&entry.github_username)
+    .fetch_optional(pool)
+    .await?;
+    if let Some(st) = status {
+        return Ok(Some(format!("is {st}")));
+    }
+    if let Some(pid) = &entry.payee_id {
+        let acct: Option<(Option<String>, i64)> =
+            sqlx::query_as("SELECT stripe_account_id, stripe_payouts_enabled FROM payees WHERE id = ?")
+                .bind(pid)
+                .fetch_optional(pool)
+                .await?;
+        return Ok(match acct {
+            None => Some("record not found".into()),
+            Some((None, _)) => Some("has no Stripe account".into()),
+            Some((Some(a), _)) if a.is_empty() => Some("has no Stripe account".into()),
+            Some((Some(_), 0)) => Some("Stripe account cannot receive transfers yet".into()),
+            Some(_) => None,
+        });
+    }
+    Ok(None)
 }
 
 /// Sum of this payee's approved/paid rows whose updated_at falls in [start, end).

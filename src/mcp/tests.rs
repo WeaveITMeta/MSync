@@ -252,6 +252,17 @@ const ALL_TOOL_NAMES: &[&str] = &[
     "payouts_run_create",
     "payouts_run_approve",
     "payouts_run_execute",
+    "payees_list",
+    "payee_get",
+    "payorders_list",
+    "payorder_preview",
+    "payorder_create",
+    "payorder_approve",
+    "payorder_pause",
+    "invoices_list",
+    "invoice_submit",
+    "invoice_approve",
+    "payout_statement",
 ];
 
 // ------------------------------------------------------------------ auth
@@ -786,4 +797,102 @@ fn execute_flag_defaults_off() {
     assert!(!parse_allow_execute(Some("false")));
     assert!(parse_allow_execute(Some("true")));
     assert!(parse_allow_execute(Some(" TRUE ")));
+}
+
+// ------------------------------------------------------------------ payroll
+
+#[actix_web::test]
+async fn payroll_tools_act_as_the_token_member_and_refuse_actor_fields() {
+    let pool = pool().await;
+    let stripe = Arc::new(MockStripe::default());
+    let app = app!(ctx(&pool, stripe.clone(), true));
+    let staff_p = crate::auth::Principal {
+        token_id: "t".into(), org_id: "default".into(), member_id: "staff".into(),
+        scopes: vec![scopes::PAYEES_MANAGE.into()], payee_keys: vec![],
+    };
+    let payee = crate::payments::payees::create(
+        &pool,
+        &EnvDirectory::default(),
+        &staff_p,
+        serde_json::from_value(json!({"display_name": "Alice", "kind": "individual", "payee_keys": ["alice"], "stripe_account_id": "acct_alice"})).unwrap(),
+        Utc::now(),
+    )
+    .await
+    .unwrap()
+    .row
+    .id;
+    ledger::update_account_status(&pool, "acct_alice", true).await.unwrap();
+    let staff = token(&pool, "staff", scopes::ALL, &[]).await;
+    let bob = token(&pool, "bob", scopes::ALL, &[]).await;
+    let alice = token(&pool, "alice", scopes::ALL, &["alice"]).await;
+
+    let order_args = json!({"name": "Salary", "rule": {"kind": "fixed", "payee_id": payee, "amount_cents": 1500},
+        "schedule": {"kind": "once", "date": "2026-01-01"}});
+    // Actor fields are protocol errors, nothing is written.
+    for (name, args) in [
+        ("payorder_create", { let mut a = order_args.clone(); a["created_by"] = json!("mallory"); a }),
+        ("payorder_approve", json!({"order_id": "x", "approver_member_id": "mallory"})),
+        ("payorder_pause", json!({"order_id": "x", "actor": "mallory"})),
+        ("invoice_submit", json!({"payee_id": payee, "number": "1", "issue_date": "2026-01-01", "due_date": "2026-01-02",
+            "lines": [{"description": "work", "quantity": 1, "unit_amount_cents": 100}], "total_cents": 100, "submitted_by": "mallory"})),
+        ("invoice_approve", json!({"invoice_id": "x", "approver_member_id": "mallory"})),
+        ("payout_statement", json!({"payee_id": payee, "from": "2026-01-01", "to": "2026-12-31", "member_id": "mallory"})),
+    ] {
+        let (s, v) = rpc!(app, &staff, "tools/call", json!({"name": name, "arguments": args}));
+        assert_eq!(s, StatusCode::OK);
+        assert_eq!(v["error"]["code"], -32602, "{name}: {v}");
+        assert!(v["error"]["message"].as_str().unwrap().contains("unknown field"), "{v}");
+    }
+    assert_eq!(count(&pool, "pay_orders").await, 0);
+    assert_eq!(count(&pool, "invoices").await, 0);
+
+    // The payee cannot create an order that pays them.
+    let v = tool!(app, &alice, "payorder_create", order_args.clone());
+    assert!(is_error(&v), "{v}");
+    assert!(text(&v).contains("payee"), "{v}");
+
+    let v = tool!(app, &staff, "payorder_create", order_args);
+    assert!(!is_error(&v), "{v}");
+    assert_eq!(structured(&v)["payorder"]["created_by"], "staff");
+    let order_id = structured(&v)["payorder"]["id"].as_str().unwrap().to_string();
+    let v = tool!(app, &staff, "payorder_approve", json!({"order_id": order_id}));
+    assert!(is_error(&v) && text(&v).contains("creator"), "{v}");
+    let v = tool!(app, &alice, "payorder_approve", json!({"order_id": order_id}));
+    assert!(is_error(&v) && text(&v).contains("payee"), "{v}");
+    let v = tool!(app, &bob, "payorder_approve", json!({"order_id": order_id}));
+    assert!(!is_error(&v), "{v}");
+    assert_eq!(structured(&v)["result"]["approver_member_id"], "bob");
+    assert_eq!(structured(&v)["result"]["order"]["approved"], true);
+    let v = tool!(app, &bob, "payorder_preview", json!({"order_id": order_id, "periods": 2}));
+    assert!(!is_error(&v), "{v}");
+
+    let inv = json!({"payee_id": payee, "number": "INV-1", "issue_date": "2026-01-01", "due_date": "2026-01-15",
+        "lines": [{"description": "work", "quantity": 2, "unit_amount_cents": 500}], "tax_cents": 50, "total_cents": 1050});
+    let v = tool!(app, &alice, "invoice_submit", inv);
+    assert!(!is_error(&v), "{v}");
+    assert_eq!(structured(&v)["invoice"]["submitted_by"], "alice");
+    let inv_id = structured(&v)["invoice"]["id"].as_str().unwrap().to_string();
+    let v = tool!(app, &alice, "invoice_approve", json!({"invoice_id": inv_id}));
+    assert!(is_error(&v) && text(&v).contains("payee"), "{v}");
+    let v = tool!(app, &bob, "invoice_approve", json!({"invoice_id": inv_id}));
+    assert!(!is_error(&v), "{v}");
+    assert_eq!(structured(&v)["result"]["invoice"]["status"], "scheduled");
+
+    for (name, args) in [
+        ("payees_list", json!({})),
+        ("payee_get", json!({"payee_id": payee})),
+        ("payorders_list", json!({"status": "active"})),
+        ("invoices_list", json!({"status": "scheduled"})),
+        ("payout_statement", json!({"payee_id": payee, "from": "2020-01-01", "to": "2030-01-01"})),
+    ] {
+        let v = tool!(app, &bob, name, args);
+        assert!(!is_error(&v), "{name}: {v}");
+    }
+    let v = tool!(app, &bob, "payout_statement", json!({"payee_id": payee, "from": "2020-01-01", "to": "2030-01-01"}));
+    assert_eq!(structured(&v)["statement"]["pending_cents"], 1050);
+    let v = tool!(app, &bob, "payorder_pause", json!({"order_id": order_id}));
+    assert!(!is_error(&v), "{v}");
+    assert_eq!(structured(&v)["payorder"]["status"], "paused");
+    // No payroll tool moved money.
+    assert_eq!(stripe.transfers.lock().unwrap().len(), 0);
 }

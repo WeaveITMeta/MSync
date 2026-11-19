@@ -12,6 +12,11 @@ pub const PAID: &str = "paid";
 pub const FAILED: &str = "failed";
 pub const REJECTED: &str = "rejected";
 
+/// Ledger sources (contract 11.5). Existing rows are `merit`.
+pub const SOURCE_MERIT: &str = "merit";
+pub const SOURCE_PAY_ORDER: &str = "pay_order";
+pub const SOURCE_INVOICE: &str = "invoice";
+
 #[derive(Debug, Clone, Serialize, sqlx::FromRow)]
 pub struct LedgerEntry {
     pub id: String,
@@ -33,6 +38,15 @@ pub struct LedgerEntry {
     pub decided_by: Option<String>,
     pub created_at: String,
     pub updated_at: String,
+    /// merit | pay_order | invoice
+    pub source_kind: String,
+    /// The pay order occurrence id or the invoice id (None for merit rows).
+    pub source_ref: Option<String>,
+    /// payees.id for pay_order and invoice rows.
+    pub payee_id: Option<String>,
+    /// Not payable before this time (`YYYY-MM-DD HH:MM:SS` UTC): an occurrence date or an
+    /// invoice due date. None for merit rows.
+    pub pay_after: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -211,25 +225,67 @@ async fn claim_and_transfer(
         return Err(LedgerError::NotPayable("amount is zero".into()));
     }
 
-    let account: Option<(Option<String>, i64)> = sqlx::query_as(
-        "SELECT stripe_account_id, stripe_payouts_enabled FROM contributors WHERE github_username = ?",
+    // Conditions that hold for every source and every caller, guarded or not (contract 11.5):
+    // a row is never paid before its pay_after time, and a payee that is paused or closed is
+    // never paid. Both are re-checked inside the claim below.
+    let now_s = guard
+        .and_then(|g| g.now.clone())
+        .unwrap_or_else(|| crate::auth::tokens::format_db_time(chrono::Utc::now()));
+    if let Some(after) = &entry.pay_after {
+        if after.as_str() > now_s.as_str() {
+            return Err(LedgerError::NotPayable(format!("not payable before {after}")));
+        }
+    }
+    let inactive: Option<String> = sqlx::query_scalar(
+        "SELECT p.status FROM payees p WHERE p.status <> 'active' AND (p.id = ? OR p.id IN
+         (SELECT k.payee_id FROM payee_keys k WHERE k.payee_key = lower(?))) LIMIT 1",
     )
+    .bind(&entry.payee_id)
     .bind(&entry.github_username)
     .fetch_optional(pool)
     .await?;
-    let destination = match account {
-        Some((Some(acct), enabled)) if !acct.is_empty() => {
-            if enabled == 0 {
-                return Err(LedgerError::NotPayable(format!(
-                    "{} has not finished Stripe onboarding", entry.github_username
-                )));
+    if let Some(st) = inactive {
+        return Err(LedgerError::NotPayable(format!("payee is {st}")));
+    }
+
+    let destination = if let Some(payee_id) = &entry.payee_id {
+        // Pay order and invoice rows are paid to the payee's own Stripe Connect account.
+        let acct: Option<(Option<String>, i64)> =
+            sqlx::query_as("SELECT stripe_account_id, stripe_payouts_enabled FROM payees WHERE id = ?")
+                .bind(payee_id)
+                .fetch_optional(pool)
+                .await?;
+        match acct {
+            Some((Some(a), enabled)) if !a.is_empty() => {
+                if enabled == 0 {
+                    return Err(LedgerError::NotPayable("payee's Stripe account cannot receive transfers yet".into()));
+                }
+                a
             }
-            acct
+            Some(_) => return Err(LedgerError::NotPayable("payee has no Stripe account".into())),
+            None => return Err(LedgerError::NotPayable("payee not found".into())),
         }
-        _ => {
-            return Err(LedgerError::NotPayable(format!(
-                "{} has no Stripe account; onboard via /api/payouts/onboard", entry.github_username
-            )))
+    } else {
+        let account: Option<(Option<String>, i64)> = sqlx::query_as(
+            "SELECT stripe_account_id, stripe_payouts_enabled FROM contributors WHERE github_username = ?",
+        )
+        .bind(&entry.github_username)
+        .fetch_optional(pool)
+        .await?;
+        match account {
+            Some((Some(acct), enabled)) if !acct.is_empty() => {
+                if enabled == 0 {
+                    return Err(LedgerError::NotPayable(format!(
+                        "{} has not finished Stripe onboarding", entry.github_username
+                    )));
+                }
+                acct
+            }
+            _ => {
+                return Err(LedgerError::NotPayable(format!(
+                    "{} has no Stripe account; onboard via /api/payouts/onboard", entry.github_username
+                )))
+            }
         }
     };
 
@@ -237,6 +293,16 @@ async fn claim_and_transfer(
     // are part of the same UPDATE, so a limit cannot be raced between check and claim.
     let mut sql = String::from(
         "UPDATE payout_ledger SET status = ?, decided_by = ?, updated_at = COALESCE(?, datetime('now')) WHERE id = ? AND status = ?",
+    );
+    // Always on (no-ops for merit rows with no payee record: pay_after and payee_id are NULL).
+    sql.push_str(" AND (payout_ledger.pay_after IS NULL OR payout_ledger.pay_after <= ?)");
+    sql.push_str(
+        " AND NOT EXISTS (SELECT 1 FROM payees py WHERE py.status <> 'active' AND (py.id = payout_ledger.payee_id \
+         OR py.id IN (SELECT k.payee_id FROM payee_keys k WHERE k.payee_key = lower(payout_ledger.github_username))))",
+    );
+    sql.push_str(
+        " AND (payout_ledger.payee_id IS NULL OR EXISTS (SELECT 1 FROM payees py WHERE py.id = payout_ledger.payee_id \
+         AND py.status = 'active' AND py.stripe_payouts_enabled = 1 AND py.stripe_account_id = ?))",
     );
     if let Some(g) = guard {
         if g.min_cents.is_some() {
@@ -246,7 +312,10 @@ async fn claim_and_transfer(
             sql.push_str(" AND amount_cents <= ?");
         }
         if g.check_blocks {
-            sql.push_str(" AND NOT EXISTS (SELECT 1 FROM payout_blocks b WHERE b.payee_key = lower(payout_ledger.github_username))");
+            sql.push_str(
+                " AND NOT EXISTS (SELECT 1 FROM payout_blocks b WHERE b.payee_key = lower(payout_ledger.github_username) \
+                 OR b.payee_key IN (SELECT k.payee_key FROM payee_keys k WHERE k.payee_id = payout_ledger.payee_id))",
+            );
         }
         if g.member_period.is_some() {
             sql.push_str(&format!(
@@ -268,7 +337,9 @@ async fn claim_and_transfer(
         .bind(by)
         .bind(guard.and_then(|g| g.now.clone()))
         .bind(id)
-        .bind(&entry.status);
+        .bind(&entry.status)
+        .bind(&now_s)
+        .bind(&destination);
     if let Some(g) = guard {
         if let Some(min) = g.min_cents {
             q = q.bind(min);
@@ -286,8 +357,12 @@ async fn claim_and_transfer(
     let claimed = q.execute(pool).await?;
     if claimed.rows_affected() == 0 {
         let current = get(pool, id).await?.map(|e| e.status).unwrap_or_default();
-        if guard.is_some() && current == entry.status {
-            return Err(LedgerError::NotPayable("a limit or block refused the claim".into()));
+        if current == entry.status {
+            return Err(LedgerError::NotPayable(if guard.is_some() {
+                "a limit, block, payee status or pay_after time refused the claim".into()
+            } else {
+                "the payee status or pay_after time refused the claim".into()
+            }));
         }
         return Err(LedgerError::InvalidState(current, "approved"));
     }
@@ -333,6 +408,16 @@ pub async fn set_stripe_account(pool: &SqlitePool, github_username: &str, accoun
         .bind(github_username)
         .execute(pool)
         .await?;
+    // A payee linked by this payee key and without an account of its own takes the same
+    // account, not yet enabled (only the Stripe webhook enables it).
+    sqlx::query(
+        "UPDATE payees SET stripe_account_id = ?, stripe_payouts_enabled = 0, updated_at = datetime('now')
+         WHERE stripe_account_id IS NULL AND id IN (SELECT payee_id FROM payee_keys WHERE payee_key = lower(?))",
+    )
+    .bind(account_id)
+    .bind(github_username)
+    .execute(pool)
+    .await?;
     Ok(())
 }
 
@@ -343,5 +428,73 @@ pub async fn update_account_status(pool: &SqlitePool, account_id: &str, payouts_
         .bind(account_id)
         .execute(pool)
         .await?;
+    // Payees paid to the same Connect account follow the same state (contract 11.2).
+    sqlx::query("UPDATE payees SET stripe_payouts_enabled = ?, updated_at = datetime('now') WHERE stripe_account_id = ?")
+        .bind(payouts_enabled as i64)
+        .bind(account_id)
+        .execute(pool)
+        .await?;
     Ok(res.rows_affected())
+}
+
+/// A non-merit ledger row (contract 11.5). The only way pay orders and invoices write the
+/// ledger. Never moves money.
+#[derive(Debug, Clone)]
+pub struct SourceRow {
+    /// SOURCE_PAY_ORDER or SOURCE_INVOICE.
+    pub source_kind: &'static str,
+    /// Occurrence id or invoice id.
+    pub source_ref: String,
+    pub payee_id: String,
+    /// The payee key written to github_username: the payee's first key, or `payee:<id>`.
+    pub payee_key: String,
+    pub contributor_id: Option<String>,
+    pub title: String,
+    pub amount_cents: i64,
+    pub currency: String,
+    pub pay_after: Option<String>,
+    pub created_at: String,
+}
+
+/// The legacy NOT NULL columns of a non-merit row, chosen so they can never collide with a real
+/// merge under UNIQUE (pr_id, merge_sha): pr_id is negative (real ids are positive) and the
+/// merge_sha contains ':' (a real merge sha is hexadecimal). Returns (pr_id, merge_sha).
+pub fn legacy_columns(source_kind: &str, source_ref: &str, payee_id: &str) -> (i64, String) {
+    match source_kind {
+        SOURCE_INVOICE => (-2, format!("invoice:{source_ref}")),
+        _ => (-1, format!("pay_order:{source_ref}:{payee_id}")),
+    }
+}
+
+/// Insert a non-merit row inside the caller's transaction. Returns None when the row for this
+/// (source_kind, source_ref, payee_id) already exists (it is never written twice).
+pub async fn insert_source_row(conn: &mut sqlx::SqliteConnection, row: &SourceRow) -> Result<Option<String>, sqlx::Error> {
+    let id = Uuid::new_v4().to_string();
+    let (pr_id, merge_sha) = legacy_columns(row.source_kind, &row.source_ref, &row.payee_id);
+    let res = sqlx::query(
+        "INSERT INTO payout_ledger (id, pr_id, pr_number, merge_sha, repo, title, github_username,
+         contributor_id, branch, base_amount_cents, merit_points, amount_cents, currency, status,
+         created_at, updated_at, source_kind, source_ref, payee_id, pay_after)
+         VALUES (?, ?, 0, ?, NULL, ?, ?, ?, ?, ?, 0, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT DO NOTHING",
+    )
+    .bind(&id)
+    .bind(pr_id)
+    .bind(&merge_sha)
+    .bind(&row.title)
+    .bind(&row.payee_key)
+    .bind(&row.contributor_id)
+    .bind(row.source_kind)
+    .bind(row.amount_cents)
+    .bind(row.amount_cents)
+    .bind(&row.currency)
+    .bind(PENDING)
+    .bind(&row.created_at)
+    .bind(&row.created_at)
+    .bind(row.source_kind)
+    .bind(&row.source_ref)
+    .bind(&row.payee_id)
+    .bind(&row.pay_after)
+    .execute(&mut *conn)
+    .await?;
+    Ok(if res.rows_affected() == 0 { None } else { Some(id) })
 }

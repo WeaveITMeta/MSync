@@ -63,6 +63,7 @@ pub fn payout_error(e: PayoutError) -> HttpResponse {
         PayoutError::NotFound(_) => err(S::NOT_FOUND, e.to_string()),
         PayoutError::InvalidState(_) => err(S::CONFLICT, e.to_string()),
         PayoutError::PayeeCannotApprove => err(S::FORBIDDEN, e.to_string()),
+        PayoutError::Forbidden(_) => err(S::FORBIDDEN, e.to_string()),
         PayoutError::PolicyDisabled => err(S::CONFLICT, e.to_string()),
         PayoutError::Invalid(_) => err(S::BAD_REQUEST, e.to_string()),
         PayoutError::Policy(p) => policy_error(p),
@@ -280,5 +281,6 @@ pub fn configure(cfg: &mut web::ServiceConfig) {
         .service(execute_run)
         .service(cancel_run)
         .service(block_payee)
-        .service(unblock_payee);
+        .service(unblock_payee)
+        .configure(super::payroll_api::configure);
 }

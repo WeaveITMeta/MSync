@@ -24,6 +24,15 @@ pub mod scopes {
     pub const PAYOUTS_EXECUTE: &str = "payouts.execute";
     pub const PAYOUTS_POLICY: &str = "payouts.policy";
     pub const TOKENS_MANAGE: &str = "tokens.manage";
+    // Payroll control (contract section 11.6).
+    pub const PAYEES_READ: &str = "payees.read";
+    pub const PAYEES_MANAGE: &str = "payees.manage";
+    pub const PAYORDERS_READ: &str = "payorders.read";
+    pub const PAYORDERS_MANAGE: &str = "payorders.manage";
+    pub const PAYORDERS_APPROVE: &str = "payorders.approve";
+    pub const INVOICES_SUBMIT: &str = "invoices.submit";
+    pub const INVOICES_READ: &str = "invoices.read";
+    pub const INVOICES_APPROVE: &str = "invoices.approve";
 
     pub const ALL: &[&str] = &[
         HIERARCHY_READ,
@@ -35,6 +44,14 @@ pub mod scopes {
         PAYOUTS_EXECUTE,
         PAYOUTS_POLICY,
         TOKENS_MANAGE,
+        PAYEES_READ,
+        PAYEES_MANAGE,
+        PAYORDERS_READ,
+        PAYORDERS_MANAGE,
+        PAYORDERS_APPROVE,
+        INVOICES_SUBMIT,
+        INVOICES_READ,
+        INVOICES_APPROVE,
     ];
 }
 

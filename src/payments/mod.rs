@@ -9,19 +9,26 @@ pub mod api;
 pub mod approvals;
 pub mod config;
 pub mod error;
+pub mod invoices;
 pub mod ledger;
 pub mod onboarding;
+pub mod payees;
+pub mod payorders;
+pub mod payroll_api;
 pub mod policy;
 pub mod routes;
 pub mod runs;
 pub mod schedule;
 pub mod signature;
+pub mod statement;
 pub mod stripe;
 
 #[cfg(test)]
 mod tests;
 #[cfg(test)]
 mod controls_tests;
+#[cfg(test)]
+mod payroll_tests;
 
 pub use config::PaymentConfig;
 pub use error::PayoutError;

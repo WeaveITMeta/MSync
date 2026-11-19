@@ -15,6 +15,11 @@ pub enum PayoutError {
     /// A payee can never approve their own payout. Not configurable.
     #[error("a payee cannot approve their own payout")]
     PayeeCannotApprove,
+    /// A two-person or payee rule refused the action (payroll, contract 11.5): the creator or
+    /// last editor approving their own order, a payee creating, editing or approving what pays
+    /// them, the submitter approving their own invoice. Not configurable.
+    #[error("{0}")]
+    Forbidden(String),
     /// policy.enabled = false: nothing is prepared or paid.
     #[error("payouts are disabled by policy")]
     PolicyDisabled,

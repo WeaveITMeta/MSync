@@ -2,7 +2,9 @@
 //! caller's scopes allow, and `tools/call` checks the scope again before doing anything.
 //!
 //! Every tool is an adapter over a function the REST API also calls: `merit::api::*` for merit,
-//! `payments::{policy, runs}` for payouts. There is no other path to a transfer.
+//! `payments::{policy, runs}` for payouts, `payments::{payees, payorders, invoices, statement}`
+//! for payroll. There is no other path to a transfer: payroll tools only write ledger rows (by
+//! approval), and paying them goes through payout runs and the execute guard.
 
 use super::jsonrpc::RpcError;
 use super::McpContext;
@@ -13,6 +15,7 @@ use crate::payments::error::PayoutError;
 use crate::payments::ledger::LedgerError;
 use crate::payments::policy::{self, PolicyError};
 use crate::payments::runs::{self, CreateRunResult};
+use crate::payments::{invoices, payees, payorders, statement};
 use chrono::Utc;
 use serde::de::DeserializeOwned;
 use serde::Deserialize;
@@ -153,6 +156,122 @@ pub const TOOLS: &[ToolDef] = &[
         read_only: false,
         destructive: true,
     },
+    ToolDef {
+        name: "payees_list",
+        title: "List payees",
+        scope: Some(scopes::PAYEES_READ),
+        description: "Lists the people and companies that can be paid (payees), optionally by status (active, paused, closed), \
+            with their payee keys, Stripe Connect account state and tax form status. DSync stores no bank or card numbers. \
+            Compensation data is confidential; never repeat it in a public place.",
+        input_schema: status_schema,
+        read_only: true,
+        destructive: false,
+    },
+    ToolDef {
+        name: "payee_get",
+        title: "Get one payee",
+        scope: Some(scopes::PAYEES_READ),
+        description: "Returns one payee by id: names, kind, email, CRA member id, payee keys, Stripe Connect account and \
+            whether it can receive transfers, tax form status, status and notes. Confidential.",
+        input_schema: payee_id_schema,
+        read_only: true,
+        destructive: false,
+    },
+    ToolDef {
+        name: "payorders_list",
+        title: "List pay orders",
+        scope: Some(scopes::PAYORDERS_READ),
+        description: "Lists pay orders (salaries, bonuses, pools, commissions), optionally by status (draft, active, paused, \
+            ended, cancelled), each with its amount rule, schedule, approvals of the current revision and recent occurrences.",
+        input_schema: status_schema,
+        read_only: true,
+        destructive: false,
+    },
+    ToolDef {
+        name: "payorder_preview",
+        title: "Preview a pay order",
+        scope: Some(scopes::PAYORDERS_READ),
+        description: "Shows what the next occurrences of a pay order would pay (default 3, at most 24): each payee's cents, \
+            the leftover that is not paid, and what each occurrence still waits for. Persists nothing and moves no money.",
+        input_schema: preview_schema,
+        read_only: true,
+        destructive: false,
+    },
+    ToolDef {
+        name: "payorder_create",
+        title: "Create a pay order",
+        scope: Some(scopes::PAYORDERS_MANAGE),
+        description: "Creates a pay order with an amount rule (fixed, pool_percent, pool_by_xp, percent_of_amount) and a \
+            schedule (once on a date, or repeat weekly, biweekly, monthly or quarterly). Money is integer cents; percentages \
+            are basis points (10000 = 100%). You are the creator (the token's member) and can never approve it; it pays \
+            nothing until other members approve it. You cannot create an order that pays you.",
+        input_schema: order_create_schema,
+        read_only: false,
+        destructive: false,
+    },
+    ToolDef {
+        name: "payorder_approve",
+        title: "Approve a pay order",
+        scope: Some(scopes::PAYORDERS_APPROVE),
+        description: "Records your approval (the token's member) of the current revision of a pay order. Refused when you \
+            created it, made its latest change, or are paid by it. Once it has the policy's required approvals its due \
+            occurrences become ledger rows; approving moves no money. Payout runs pay the rows.",
+        input_schema: order_id_schema,
+        read_only: false,
+        destructive: false,
+    },
+    ToolDef {
+        name: "payorder_pause",
+        title: "Pause a pay order",
+        scope: Some(scopes::PAYORDERS_MANAGE),
+        description: "Pauses an active pay order. Occurrences that fall while it is paused are skipped and never paid later. \
+            Resume and cancel are REST calls. You cannot pause an order that pays you.",
+        input_schema: order_id_schema,
+        read_only: false,
+        destructive: false,
+    },
+    ToolDef {
+        name: "invoices_list",
+        title: "List invoices",
+        scope: Some(scopes::INVOICES_READ),
+        description: "Lists invoices, optionally by status (submitted, approved, rejected, scheduled, paid, void) and payee id, \
+            each with its lines, totals, approvals and the history of who changed it and when.",
+        input_schema: invoice_filter_schema,
+        read_only: true,
+        destructive: false,
+    },
+    ToolDef {
+        name: "invoice_submit",
+        title: "Submit an invoice",
+        scope: Some(scopes::INVOICES_SUBMIT),
+        description: "Submits an invoice for a payee: number (unique per payee), issue and due dates, line items (description, \
+            whole quantity, unit amount in cents), optional tax, and the total, which must equal the lines plus tax. You are \
+            the submitter (the token's member). A payee may submit their own invoice; nobody approves their own.",
+        input_schema: invoice_submit_schema,
+        read_only: false,
+        destructive: false,
+    },
+    ToolDef {
+        name: "invoice_approve",
+        title: "Approve an invoice",
+        scope: Some(scopes::INVOICES_APPROVE),
+        description: "Records your approval (the token's member) of a submitted invoice. Refused for the payee and the \
+            submitter. With the policy's required approvals the invoice becomes one ledger row, payable on its due date \
+            through a payout run. Approving moves no money.",
+        input_schema: invoice_id_schema,
+        read_only: false,
+        destructive: false,
+    },
+    ToolDef {
+        name: "payout_statement",
+        title: "Get a payee statement",
+        scope: Some(scopes::PAYOUTS_READ),
+        description: "Everything paid or pending to one payee between two dates (inclusive), grouped by source (merit, \
+            pay_order, invoice), with paid and pending totals. Rejected rows are listed but not counted. Confidential.",
+        input_schema: statement_schema,
+        read_only: true,
+        destructive: false,
+    },
 ];
 
 pub fn find(name: &str) -> Option<&'static ToolDef> {
@@ -178,7 +297,11 @@ fn tool_json(t: &ToolDef) -> Value {
             "title": t.title,
             "readOnlyHint": t.read_only,
             "destructiveHint": t.destructive,
-            "idempotentHint": t.read_only || t.name == EXECUTE_TOOL || t.name == "payouts_run_approve",
+            "idempotentHint": t.read_only
+                || t.name == EXECUTE_TOOL
+                || t.name == "payouts_run_approve"
+                || t.name == "payorder_approve"
+                || t.name == "invoice_approve",
             "openWorldHint": t.name == EXECUTE_TOOL,
         },
         "_meta": {"dsync/scope": t.scope},
@@ -251,6 +374,7 @@ fn payout_msg(e: PayoutError) -> String {
         PayoutError::NotFound(_)
         | PayoutError::InvalidState(_)
         | PayoutError::PayeeCannotApprove
+        | PayoutError::Forbidden(_)
         | PayoutError::PolicyDisabled
         | PayoutError::Invalid(_) => msg,
         PayoutError::Policy(p) => policy_msg(p),
@@ -299,6 +423,47 @@ struct LedgerArgs {
 #[serde(deny_unknown_fields)]
 struct RunIdArgs {
     run_id: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct StatusArgs {
+    #[serde(default)]
+    status: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct PayeeIdArgs {
+    payee_id: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct OrderIdArgs {
+    order_id: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct PreviewArgs {
+    order_id: String,
+    #[serde(default)]
+    periods: Option<u32>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct InvoiceIdArgs {
+    invoice_id: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct StatementArgs {
+    payee_id: String,
+    from: String,
+    to: String,
 }
 
 fn parse_args<T: DeserializeOwned>(tool: &str, args: Value) -> Result<T, RpcError> {
@@ -404,6 +569,84 @@ pub async fn call(ctx: &McpContext, p: &Principal, name: &str, args: Option<Valu
             let input: RunIdArgs = parse_args(name, args)?;
             match runs::execute_run(&api.pool, api.stripe.as_ref(), &api.payments, api.directory.as_ref(), p, &input.run_id, Utc::now()).await {
                 Ok(r) => Ok(json!({ "report": r })),
+                Err(e) => Err(payout_msg(e)),
+            }
+        }
+        "payees_list" => {
+            let input: StatusArgs = parse_args(name, args)?;
+            match payees::list(&api.pool, p, input.status.as_deref()).await {
+                Ok(v) => Ok(json!({ "payees": v })),
+                Err(e) => Err(payout_msg(e)),
+            }
+        }
+        "payee_get" => {
+            let input: PayeeIdArgs = parse_args(name, args)?;
+            match payees::get(&api.pool, p, &input.payee_id).await {
+                Ok(v) => Ok(json!({ "payee": v })),
+                Err(e) => Err(payout_msg(e)),
+            }
+        }
+        "payorders_list" => {
+            let input: StatusArgs = parse_args(name, args)?;
+            match payorders::list(&api.pool, &api.payments, api.directory.as_ref(), p, input.status.as_deref()).await {
+                Ok(v) => Ok(json!({ "payorders": v })),
+                Err(e) => Err(payout_msg(e)),
+            }
+        }
+        "payorder_preview" => {
+            let input: PreviewArgs = parse_args(name, args)?;
+            let periods = input.periods.unwrap_or(3);
+            match payorders::preview(&api.pool, &api.payments, api.directory.as_ref(), p, &input.order_id, periods, Utc::now()).await {
+                Ok(v) => Ok(json!({ "preview": v })),
+                Err(e) => Err(payout_msg(e)),
+            }
+        }
+        "payorder_create" => {
+            let input: payorders::NewOrder = parse_args(name, args)?;
+            match payorders::create(&api.pool, &api.payments, api.directory.as_ref(), p, input, Utc::now()).await {
+                Ok(v) => Ok(json!({ "payorder": v })),
+                Err(e) => Err(payout_msg(e)),
+            }
+        }
+        "payorder_approve" => {
+            let input: OrderIdArgs = parse_args(name, args)?;
+            match payorders::approve(&api.pool, &api.payments, api.directory.as_ref(), p, &input.order_id, Utc::now()).await {
+                Ok(v) => Ok(json!({ "result": v })),
+                Err(e) => Err(payout_msg(e)),
+            }
+        }
+        "payorder_pause" => {
+            let input: OrderIdArgs = parse_args(name, args)?;
+            match payorders::transition(&api.pool, &api.payments, api.directory.as_ref(), p, &input.order_id, payorders::Transition::Pause, Utc::now()).await {
+                Ok(v) => Ok(json!({ "payorder": v })),
+                Err(e) => Err(payout_msg(e)),
+            }
+        }
+        "invoices_list" => {
+            let input: invoices::InvoiceFilter = parse_args(name, args)?;
+            match invoices::list(&api.pool, &api.payments, api.directory.as_ref(), p, &input, Utc::now()).await {
+                Ok(v) => Ok(json!({ "invoices": v })),
+                Err(e) => Err(payout_msg(e)),
+            }
+        }
+        "invoice_submit" => {
+            let input: invoices::NewInvoice = parse_args(name, args)?;
+            match invoices::submit(&api.pool, &api.payments, api.directory.as_ref(), p, input, Utc::now()).await {
+                Ok(v) => Ok(json!({ "invoice": v })),
+                Err(e) => Err(payout_msg(e)),
+            }
+        }
+        "invoice_approve" => {
+            let input: InvoiceIdArgs = parse_args(name, args)?;
+            match invoices::approve(&api.pool, &api.payments, api.directory.as_ref(), p, &input.invoice_id, Utc::now()).await {
+                Ok(v) => Ok(json!({ "result": v })),
+                Err(e) => Err(payout_msg(e)),
+            }
+        }
+        "payout_statement" => {
+            let input: StatementArgs = parse_args(name, args)?;
+            match statement::statement(&api.pool, p, &input.payee_id, &input.from, &input.to).await {
+                Ok(v) => Ok(json!({ "statement": v })),
                 Err(e) => Err(payout_msg(e)),
             }
         }
@@ -515,6 +758,147 @@ fn run_id_schema() -> Value {
         "type": "object",
         "properties": {"run_id": {"type": "string", "description": "The run id from payouts_run_create."}},
         "required": ["run_id"],
+        "additionalProperties": false
+    })
+}
+
+// ------------------------------------------------------------------ payroll schemas
+
+fn status_schema() -> Value {
+    json!({
+        "type": "object",
+        "properties": {"status": {"type": "string", "description": "Only rows with this status."}},
+        "additionalProperties": false
+    })
+}
+
+fn payee_id_schema() -> Value {
+    json!({
+        "type": "object",
+        "properties": {"payee_id": {"type": "string", "description": "The payee id from payees_list."}},
+        "required": ["payee_id"],
+        "additionalProperties": false
+    })
+}
+
+fn order_id_schema() -> Value {
+    json!({
+        "type": "object",
+        "properties": {"order_id": {"type": "string", "description": "The pay order id from payorders_list."}},
+        "required": ["order_id"],
+        "additionalProperties": false
+    })
+}
+
+fn invoice_id_schema() -> Value {
+    json!({
+        "type": "object",
+        "properties": {"invoice_id": {"type": "string", "description": "The invoice id from invoices_list."}},
+        "required": ["invoice_id"],
+        "additionalProperties": false
+    })
+}
+
+fn preview_schema() -> Value {
+    json!({
+        "type": "object",
+        "properties": {
+            "order_id": {"type": "string"},
+            "periods": {"type": "integer", "minimum": 1, "maximum": payorders::MAX_PREVIEW_PERIODS, "default": 3}
+        },
+        "required": ["order_id"],
+        "additionalProperties": false
+    })
+}
+
+fn invoice_filter_schema() -> Value {
+    json!({
+        "type": "object",
+        "properties": {
+            "status": {"type": "string", "enum": ["submitted", "approved", "rejected", "scheduled", "paid", "void"]},
+            "payee_id": {"type": "string"}
+        },
+        "additionalProperties": false
+    })
+}
+
+fn statement_schema() -> Value {
+    json!({
+        "type": "object",
+        "properties": {
+            "payee_id": {"type": "string"},
+            "from": {"type": "string", "format": "date", "description": "YYYY-MM-DD, inclusive."},
+            "to": {"type": "string", "format": "date", "description": "YYYY-MM-DD, inclusive."}
+        },
+        "required": ["payee_id", "from", "to"],
+        "additionalProperties": false
+    })
+}
+
+fn order_create_schema() -> Value {
+    let cents = json!({"type": "integer", "minimum": 0, "maximum": payorders::MAX_CENTS});
+    let bps = json!({"type": "integer", "minimum": 0, "maximum": payorders::BPS_FULL, "description": "Basis points: 100 = 1%, 10000 = 100%."});
+    let date = json!({"type": "string", "format": "date"});
+    json!({
+        "type": "object",
+        "properties": {
+            "name": {"type": "string", "maxLength": 200},
+            "currency": {"type": "string", "description": "Defaults to the payout policy currency; must equal it."},
+            "memo": {"type": "string"},
+            "draft": {"type": "boolean", "description": "true: never materializes until resumed."},
+            "rule": {"oneOf": [
+                {"type": "object", "properties": {"kind": {"const": "fixed"}, "payee_id": {"type": "string"}, "amount_cents": cents},
+                 "required": ["kind", "payee_id", "amount_cents"], "additionalProperties": false},
+                {"type": "object", "properties": {"kind": {"const": "pool_percent"}, "pool_cents": cents,
+                    "shares": {"type": "array", "items": {"type": "object", "properties": {"payee_id": {"type": "string"}, "bps": bps},
+                        "required": ["payee_id", "bps"], "additionalProperties": false}}},
+                 "required": ["kind", "pool_cents", "shares"], "additionalProperties": false,
+                 "description": "Each payee gets floor(pool * bps / 10000). Shares sum to at most 10000; the rest is not paid."},
+                {"type": "object", "properties": {"kind": {"const": "pool_by_xp"}, "pool_cents": cents,
+                    "repos": {"type": "array", "items": {"type": "object", "properties": {"provider": {"enum": ["github", "gitlab"]}, "host": {"type": "string"}, "repo": {"type": "string"}},
+                        "required": ["provider", "repo"], "additionalProperties": false}},
+                    "roles": {"type": "array", "items": {"type": "string"}},
+                    "payee_ids": {"type": "array", "items": {"type": "string"}},
+                    "min_xp": {"type": "integer", "minimum": 0},
+                    "max_share_bps": bps},
+                 "required": ["kind", "pool_cents"], "additionalProperties": false,
+                 "description": "Split in proportion to XP earned in each period."},
+                {"type": "object", "properties": {"kind": {"const": "percent_of_amount"}, "payee_id": {"type": "string"}, "bps": bps,
+                    "base_cents": cents, "bases": {"type": "object", "additionalProperties": cents, "description": "Base per occurrence date (YYYY-MM-DD)."}},
+                 "required": ["kind", "payee_id", "bps"], "additionalProperties": false}
+            ]},
+            "schedule": {"oneOf": [
+                {"type": "object", "properties": {"kind": {"const": "once"}, "date": date}, "required": ["kind", "date"], "additionalProperties": false},
+                {"type": "object", "properties": {"kind": {"const": "repeat"}, "cadence": {"enum": ["weekly", "biweekly", "monthly", "quarterly"]},
+                    "start": date, "end": date, "count": {"type": "integer", "minimum": 1, "maximum": payorders::MAX_OCCURRENCES}},
+                 "required": ["kind", "cadence", "start"], "additionalProperties": false}
+            ]}
+        },
+        "required": ["name", "rule", "schedule"],
+        "additionalProperties": false
+    })
+}
+
+fn invoice_submit_schema() -> Value {
+    json!({
+        "type": "object",
+        "properties": {
+            "payee_id": {"type": "string"},
+            "number": {"type": "string", "maxLength": 64, "description": "Unique per payee."},
+            "issue_date": {"type": "string", "format": "date"},
+            "due_date": {"type": "string", "format": "date", "description": "The invoice is payable from this date."},
+            "currency": {"type": "string"},
+            "lines": {"type": "array", "minItems": 1, "items": {"type": "object", "properties": {
+                "description": {"type": "string"},
+                "quantity": {"type": "integer", "minimum": 1},
+                "unit_amount_cents": {"type": "integer", "minimum": 0}
+            }, "required": ["description", "quantity", "unit_amount_cents"], "additionalProperties": false}},
+            "tax_cents": {"type": "integer", "minimum": 0, "default": 0},
+            "total_cents": {"type": "integer", "minimum": 1, "description": "Must equal the sum of quantity * unit_amount_cents plus tax_cents."},
+            "memo": {"type": "string"},
+            "attachment_ref": {"type": "string", "description": "A reference to a document kept elsewhere."}
+        },
+        "required": ["payee_id", "number", "issue_date", "due_date", "lines", "total_cents"],
         "additionalProperties": false
     })
 }

@@ -130,7 +130,18 @@ pub enum TickOutcome {
 }
 
 /// One scheduler step at time `now`. Safe to call any number of times per period.
+///
+/// First it materializes the due occurrences of active, approved pay orders into ledger rows
+/// (contract 11.3; never a transfer) and marks invoices whose ledger row was paid. A failure
+/// there is logged and does not stop the payout run below. Then, as before, it creates the
+/// period's scheduled run when one is due.
 pub async fn scheduler_tick(ctx: &ApiContext, now: DateTime<Utc>) -> Result<TickOutcome, super::error::PayoutError> {
+    if let Err(e) = super::payorders::materialize_due(ctx, now).await {
+        error!("pay order materialization failed: {}", e);
+    }
+    if let Err(e) = super::invoices::sync_paid(&ctx.pool, now).await {
+        error!("invoice paid sync failed: {}", e);
+    }
     let org = crate::auth::DEFAULT_ORG;
     let eff = super::policy::load_effective(&ctx.pool, org, &ctx.payments).await?;
     let last: Option<String> = sqlx::query_scalar(
@@ -150,6 +161,9 @@ pub async fn scheduler_tick(ctx: &ApiContext, now: DateTime<Utc>) -> Result<Tick
     if eff.policy.schedule.mode == ScheduleMode::Auto {
         runs::execute_run(&ctx.pool, ctx.stripe.as_ref(), &ctx.payments, ctx.directory.as_ref(), &system, &run_id, now).await?;
         executed = true;
+        if let Err(e) = super::invoices::sync_paid(&ctx.pool, now).await {
+            error!("invoice paid sync failed: {}", e);
+        }
     }
     info!("Scheduled payout run {} created for {} (executed: {})", run_id, key, executed);
     Ok(TickOutcome::Created { run_id, period_key: key, executed })
