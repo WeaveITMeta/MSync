@@ -322,3 +322,74 @@ MCP (`POST /mcp`, JSON-RPC 2.0, same tokens and scopes): `rubric_get`, `merit_sc
 | 2 | CRA loading on push; ranks, payee identities, repositories, merit rules and payout policy from the CRA | built and tested (merged, 2026-11-13) |
 | 3 | Discord projection and reconciliation from the CRA; consumer sync API (HMAC) | not started |
 | 4 | Root accounts, OAuth linking, sessions, audit log | not started |
+
+## 11. Payroll control (owner direction, 2026-11-19)
+
+The business owner controls what gets paid, to whom, how much and when. Merit-based payouts (section 8) become one source among several. Every source ends in the same ledger, so the single transfer path, the approvals, the limits, the hold and the kill switch apply to all of them.
+
+### 11.1 Where it lives
+
+Compensation is confidential, so it is engine data behind scoped tokens, not CRA repository content. The CRA still decides who may act: ranks, approver rules and payee identities come from it.
+
+### 11.2 Payees
+
+A payee is a person or company that can be paid.
+
+- Fields: id, display name, legal name, kind (`individual` | `company`), email, optional CRA member id, payee keys (the GitHub or GitLab logins they are paid under), Stripe Connect account id and its payout-enabled state, tax form status (`none` | `requested` | `on_file`), status (`active` | `paused` | `closed`), notes.
+- DSync never stores a bank account or card number. The payout account is the payee's Stripe Connect account; the business's funding source is its own Stripe balance.
+- A payee that is `paused` or `closed`, or whose Stripe account cannot receive transfers, is never paid.
+
+### 11.3 Pay orders
+
+A pay order is an instruction to pay. It has an amount rule and a schedule.
+
+Amount rules:
+
+| Rule | Meaning |
+|---|---|
+| `fixed` | A set amount in cents to one payee (salary, stipend, retainer, bonus). |
+| `pool_percent` | A pool amount for the period, split by fixed percentages across named payees. The percentages must sum to at most 100. Any remainder is not paid. |
+| `pool_by_xp` | A pool amount for the period, split in proportion to XP earned in that period, optionally limited to listed repositories, roles or payees, with an optional minimum XP to qualify and a maximum share per payee. |
+| `percent_of_amount` | A percentage of a stated base amount (a revenue figure, a contract value) to one payee. The base is entered with the order or with each occurrence. |
+
+Money is integer cents. Percentages are basis points (1 = 0.01%). Splits round down per payee; the leftover cents stay unpaid and are reported, never given to an arbitrary payee.
+
+Schedules:
+
+- `once`: one occurrence on a date.
+- `repeat`: `weekly`, `biweekly`, `monthly` or `quarterly`, with a start date, and an optional end date or occurrence count.
+- An order can be `draft`, `active`, `paused`, `ended` or `cancelled`. Pausing skips occurrences; it does not queue them up.
+
+Each occurrence is materialized exactly once (`UNIQUE (order_id, period_key)`) into one ledger row per payee, so a restart or a double tick can never pay twice.
+
+### 11.4 Invoices
+
+A payee, or staff on their behalf, submits an invoice: number (unique per payee), issue date, due date, currency, line items (description, quantity, unit amount in cents), optional tax amount, total, memo, and an optional attachment reference.
+
+- States: `submitted`, `approved`, `rejected`, `scheduled`, `paid`, `void`.
+- The total must equal the sum of the lines plus tax, or the invoice is refused.
+- Approval follows the same rule as any payout: distinct approvers at or above the minimum rank, never the payee. An approved invoice becomes one ledger row, payable on its due date or at once.
+- A duplicate invoice number for the same payee is refused. A paid invoice can never be paid again.
+- Every state change records who did it and when.
+
+### 11.5 Ledger sources
+
+The ledger gains a source for every row: `merit` (a merged change, today's rows), `pay_order` or `invoice`, with a reference to the order occurrence or the invoice, and the payee id. Existing rows are `merit`. The existing unique key and transfer idempotency key are unchanged.
+
+Creating or changing a pay order, and approving an invoice, are two-person actions when the policy's `approvals_required` is above one: the creator is never an approver of their own order, and an order pays nothing until approved. A payee can never create, approve or edit an order or an invoice that pays themselves, except submitting their own invoice.
+
+### 11.6 Scopes, REST and MCP
+
+New scopes: `payees.read`, `payees.manage`, `payorders.read`, `payorders.manage`, `payorders.approve`, `invoices.submit`, `invoices.read`, `invoices.approve`.
+
+```
+GET/POST   /api/v1/payees            GET/PATCH /api/v1/payees/{id}
+GET/POST   /api/v1/payorders         GET/PATCH /api/v1/payorders/{id}
+POST       /api/v1/payorders/{id}/approve | pause | resume | cancel
+GET        /api/v1/payorders/{id}/preview?periods=3     what the next occurrences would pay, nothing persisted
+GET/POST   /api/v1/invoices          GET /api/v1/invoices/{id}
+POST       /api/v1/invoices/{id}/approve | reject | void
+GET        /api/v1/payouts/statement?payee=&from=&to=   everything paid or pending to a payee, by source
+```
+
+MCP tools mirror these: `payees_list`, `payee_get`, `payorders_list`, `payorder_preview`, `payorder_create`, `payorder_approve`, `payorder_pause`, `invoices_list`, `invoice_submit`, `invoice_approve`, `payout_statement`. Tools that move toward money (`payorder_approve`, `invoice_approve`) follow the same rules as REST; execution still goes through payout runs and the MCP execute guard.
