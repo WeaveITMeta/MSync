@@ -833,7 +833,7 @@ async fn every_auth_failure_is_the_same_401_and_missing_scope_is_403() {
     let (_, revoked_token) = member(&pool, "carol", &[scopes::PAYOUTS_READ], &[]).await;
     sqlx::query("UPDATE api_tokens SET revoked_at = datetime('now') WHERE member_id = 'carol'").execute(&pool).await.unwrap();
     let (id, _) = crate::auth::tokens::parse_token(&read_token).unwrap();
-    let wrong_secret = format!("dsync_{id}_{}", "f".repeat(64));
+    let wrong_secret = format!("msync_{id}_{}", "f".repeat(64));
     let app = app!(ctx_with(&pool, Arc::new(MockStripe::default())));
 
     let mut bodies = Vec::new();
@@ -879,7 +879,7 @@ async fn tokens_endpoint_accepts_bootstrap_admin_token_only_as_bootstrap() {
     assert_eq!(resp.status(), 201);
     let v: serde_json::Value = atest::read_body_json(resp).await;
     let token = v["token"]["token"].as_str().unwrap().to_string();
-    assert!(token.starts_with("dsync_"));
+    assert!(token.starts_with("msync_"));
 
     // The legacy admin token is NOT accepted on the payouts API.
     let req = atest::TestRequest::get().uri("/api/v1/payouts/ledger").insert_header(("Authorization", "Bearer legacy-admin-secret")).to_request();

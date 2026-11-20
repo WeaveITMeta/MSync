@@ -39,7 +39,7 @@ key = "cell-eng"
 label = "Cell Engineering"
 classification = "confidential"
 
-# Voltec's rule: DSync standing reaches community features only. It never
+# Voltec's rule: MSync standing reaches community features only. It never
 # reaches manufacturer data, messages, user management, roles or super admin.
 # The scopes below are community.* only, and Voltec enforces the same
 # allowlist in its own code.

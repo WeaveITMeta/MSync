@@ -35,11 +35,11 @@ impl StripeApi for MockStripe {
 
 pub(super) fn cfg() -> PaymentConfig {
     PaymentConfig::from_lookup(|k| match k {
-        "DSYNC_PAY_BRANCHES" => Some("main, upcoming".into()),
-        "DSYNC_PAY_BASE_CENTS_MAIN" => Some("2000".into()),
-        "DSYNC_PAY_BASE_CENTS_UPCOMING" => Some("1000".into()),
-        "DSYNC_PAY_MERIT_MULTIPLIER" => Some("0.01".into()),
-        "DSYNC_PAY_MAX_CENTS" => Some("5000".into()),
+        "MSYNC_PAY_BRANCHES" => Some("main, upcoming".into()),
+        "MSYNC_PAY_BASE_CENTS_MAIN" => Some("2000".into()),
+        "MSYNC_PAY_BASE_CENTS_UPCOMING" => Some("1000".into()),
+        "MSYNC_PAY_MERIT_MULTIPLIER" => Some("0.01".into()),
+        "MSYNC_PAY_MAX_CENTS" => Some("5000".into()),
         _ => None,
     })
 }
@@ -84,6 +84,43 @@ fn amount_uses_branch_base_multiplier_and_cap() {
     assert_eq!(c.amount_for("upcoming", 0), Some((1000, 1000)));
     assert_eq!(c.amount_for("main", 1000), Some((2000, 5000))); // capped
     assert_eq!(c.amount_for("feature/x", 50), None);
+}
+
+/// Contract 12.1: a deployment still on the old `DSYNC_*` names keeps its payment
+/// settings, including the per-branch base keys; an `MSYNC_*` name wins over its twin.
+#[test]
+fn payment_config_falls_back_to_dsync_names_and_msync_wins() {
+    let old_only = PaymentConfig::from_lookup(|k| match k {
+        "DSYNC_PAY_BRANCHES" => Some("main".into()),
+        "DSYNC_PAY_BASE_CENTS_MAIN" => Some("2000".into()),
+        "DSYNC_PAY_MAX_CENTS" => Some("5000".into()),
+        _ => None,
+    });
+    assert_eq!(old_only.branches, vec!["main".to_string()]);
+    assert_eq!(old_only.amount_for("main", 0), Some((2000, 2000)));
+    assert_eq!(old_only.max_cents, 5000);
+
+    let both = PaymentConfig::from_lookup(|k| match k {
+        "MSYNC_PAY_BRANCHES" => Some("main".into()),
+        "MSYNC_PAY_BASE_CENTS_MAIN" => Some("3000".into()),
+        "DSYNC_PAY_BASE_CENTS_MAIN" => Some("2000".into()),
+        _ => None,
+    });
+    assert_eq!(both.amount_for("main", 0), Some((3000, 3000)));
+
+    let neither = PaymentConfig::from_lookup(|_| None);
+    assert_eq!(neither.max_cents, 10_000);
+    assert_eq!(neither.amount_for("main", 0), Some((super::config::DEFAULT_BASE_CENTS, super::config::DEFAULT_BASE_CENTS)));
+}
+
+/// Pinned (contract 12.1): the Stripe idempotency key keeps its pre-rename prefix. A payout
+/// approved before the rename and retried after it must present the same key, or Stripe
+/// could pay twice.
+#[test]
+fn stripe_idempotency_key_keeps_its_old_name() {
+    assert_eq!(ledger::stripe_idempotency_key("0f3a"), "dsync-ledger-0f3a");
+    // Same reasoning for the Express account creation key.
+    assert_eq!(super::stripe::account_idempotency_key("alice"), "dsync-account-alice");
 }
 
 #[tokio::test]
@@ -229,7 +266,7 @@ async fn onboarding_creates_account_once_and_requires_linked_discord() {
     let stripe = MockStripe::default();
     let mut c = cfg();
     c.admin_token = Some("admin-secret".into());
-    c.public_url = "https://dsync.example".into();
+    c.public_url = "https://msync.example".into();
 
     assert!(matches!(
         onboarding::onboarding_link_for_github(&pool, &stripe, &c, "ghost").await,
@@ -255,8 +292,8 @@ async fn onboarding_creates_account_once_and_requires_linked_discord() {
 fn refresh_links_are_signed() {
     use super::onboarding::{refresh_url, verify_refresh_sig, refresh_sig};
     let mut c = cfg();
-    c.public_url = "https://dsync.example".into();
-    assert_eq!(refresh_url(&c, "acct_1"), "https://dsync.example/payouts/refresh"); // no key -> unsigned
+    c.public_url = "https://msync.example".into();
+    assert_eq!(refresh_url(&c, "acct_1"), "https://msync.example/payouts/refresh"); // no key -> unsigned
     assert!(!verify_refresh_sig(&c, "acct_1", "anything"));
 
     c.admin_token = Some("admin-secret".into());

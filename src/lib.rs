@@ -25,7 +25,7 @@ pub struct AppState {
     pub discord_http: Arc<serenity::http::Http>,
     pub payments: Arc<PaymentConfig>,
     pub stripe: Arc<dyn StripeApi>,
-    /// Rank seam (round 1: owners from DSYNC_OWNER_MEMBER_IDS). The CRA plugs in here later.
+    /// Rank seam (round 1: owners from MSYNC_OWNER_MEMBER_IDS). The CRA plugs in here later.
     pub directory: Arc<dyn auth::Directory>,
     /// CRA loading and the active snapshot (`cra.handle.active()`). With no snapshot
     /// active every seam behaves as before CRA loading.

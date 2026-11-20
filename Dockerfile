@@ -8,7 +8,7 @@ RUN apt-get update && apt-get install -y \
     && rm -rf /var/lib/apt/lists/*
 
 # Create app directory
-WORKDIR /usr/src/dsync
+WORKDIR /usr/src/msync
 
 # Copy manifests
 COPY Cargo.toml Cargo.lock ./
@@ -36,22 +36,22 @@ RUN apt-get update && apt-get install -y \
     && rm -rf /var/lib/apt/lists/*
 
 # Create non-root user
-RUN useradd -m -u 1000 dsync
+RUN useradd -m -u 1000 msync
 
 # Copy binary from builder
-COPY --from=builder /usr/src/dsync/target/release/dsync /usr/local/bin/dsync
+COPY --from=builder /usr/src/msync/target/release/msync /usr/local/bin/msync
 
 # Copy migrations
-COPY --from=builder /usr/src/dsync/migrations /app/migrations
+COPY --from=builder /usr/src/msync/migrations /app/migrations
 
 # Set working directory
 WORKDIR /app
 
 # Change ownership
-RUN chown -R dsync:dsync /app
+RUN chown -R msync:msync /app
 
 # Switch to non-root user
-USER dsync
+USER msync
 
 # Expose port
 EXPOSE 8080
@@ -61,4 +61,4 @@ HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
     CMD curl -f http://localhost:8080/health || exit 1
 
 # Run the binary
-CMD ["dsync"]
+CMD ["msync"]

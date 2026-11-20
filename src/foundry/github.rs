@@ -7,7 +7,8 @@ use serde::Deserialize;
 /// Only github.com is supported by the GitHub webhook today.
 pub const HOST: &str = "github.com";
 
-/// `delivery:<X-GitHub-Delivery>` (unchanged).
+/// `delivery:<X-GitHub-Delivery>` (unchanged). Dedupe keys keep their exact bytes through the
+/// MSync rename (contract 12.1): a redelivery is recognized only if the stored key matches.
 pub fn delivery_key(delivery_id: &str) -> String {
     format!("delivery:{}", delivery_id)
 }

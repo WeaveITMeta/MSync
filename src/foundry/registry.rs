@@ -1,6 +1,6 @@
 //! Which repositories earn merit (contract 5 and 5.1).
 //!
-//! Round 1 source: `DSYNC_FOUNDRY_REPOS`, a comma list of `provider:host:path[:flag[:flag]]`
+//! Round 1 source: `MSYNC_FOUNDRY_REPOS`, a comma list of `provider:host:path[:flag[:flag]]`
 //! with flags `mirror` (earns nothing) and `private` (never named publicly).
 //! Unset or empty: legacy mode. GitHub behaves as before (every repository earns and is
 //! public) and GitLab is refused. A later round builds this from the CRA `[[foundry]]` list
@@ -9,7 +9,7 @@
 use super::{FoundryProvider, RepoRef};
 use serde::{Deserialize, Serialize};
 
-pub const ENV_VAR: &str = "DSYNC_FOUNDRY_REPOS";
+pub const ENV_VAR: &str = "MSYNC_FOUNDRY_REPOS";
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RepoEntry {
@@ -59,9 +59,9 @@ impl RepoRegistry {
     }
 
     pub fn from_env() -> Result<Self, String> {
-        match std::env::var(ENV_VAR) {
-            Ok(v) => Self::from_spec(&v),
-            Err(_) => Ok(Self::legacy()),
+        match crate::config::env_var(ENV_VAR) {
+            Some(v) => Self::from_spec(&v),
+            None => Ok(Self::legacy()),
         }
     }
 

@@ -1,6 +1,6 @@
 //! Payees (contract 11.2): the people and companies that can be paid.
 //!
-//! DSync never stores a bank account or card number. There is no field for one: the payout
+//! MSync never stores a bank account or card number. There is no field for one: the payout
 //! account is the payee's Stripe Connect account, and the business pays from its own Stripe
 //! balance. A payee that is `paused` or `closed`, or whose Stripe account cannot receive
 //! transfers, is never paid (checked in `approvals::evaluate` and inside the ledger claim).

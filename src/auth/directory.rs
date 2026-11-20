@@ -1,4 +1,4 @@
-//! The rank seam. Owners from engine configuration (`DSYNC_OWNER_MEMBER_IDS`) have rank
+//! The rank seam. Owners from engine configuration (`MSYNC_OWNER_MEMBER_IDS`) have rank
 //! 1000. With no active CRA snapshot everyone else has no rank ([`EnvDirectory`]). With
 //! one, ranks, roles and payee identities come from the snapshot ([`CraDirectory`]).
 
@@ -46,7 +46,7 @@ fn owner_foundry(entry: &str) -> Option<FoundryIdentity> {
     }
 }
 
-/// Round-1 directory: owners listed in `DSYNC_OWNER_MEMBER_IDS` (comma separated) have rank 1000.
+/// Round-1 directory: owners listed in `MSYNC_OWNER_MEMBER_IDS` (comma separated) have rank 1000.
 ///
 /// An entry is a member id (`mckale`) or a GitHub or GitLab identity (`github:Simbuilder`,
 /// `gitlab:someone`). Only the provider form can bootstrap the first CRA snapshot. An entry
@@ -59,7 +59,7 @@ pub struct EnvDirectory {
 
 impl EnvDirectory {
     pub fn from_env() -> Self {
-        Self::from_owner_list(&std::env::var("DSYNC_OWNER_MEMBER_IDS").unwrap_or_default())
+        Self::from_owner_list(&crate::config::env_var("MSYNC_OWNER_MEMBER_IDS").unwrap_or_default())
     }
 
     pub fn from_owner_list(list: &str) -> Self {
@@ -76,7 +76,7 @@ impl EnvDirectory {
                         ids.insert(o);
                         foundry.push(f);
                     }
-                    None => tracing::warn!("DSYNC_OWNER_MEMBER_IDS: ignoring malformed entry '{}'", o),
+                    None => tracing::warn!("MSYNC_OWNER_MEMBER_IDS: ignoring malformed entry '{}'", o),
                 }
             } else {
                 ids.insert(o);

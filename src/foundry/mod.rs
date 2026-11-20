@@ -154,7 +154,9 @@ pub fn subject_id_string(subject_id: i64, subject_number: i64) -> Option<String>
 }
 
 /// Prefix an effect/delivery key for its provider. GitHub keys are unprefixed
-/// (their historical form); GitLab keys are `gitlab:<host>:<rest>`.
+/// (their historical form); GitLab keys are `gitlab:<host>:<rest>`. These dedupe keys are
+/// stored in `processed_webhook_events` and keep their exact bytes through the MSync rename
+/// (contract 12.1), so events processed before it are still recognized.
 pub fn provider_key(provider: FoundryProvider, host: &str, rest: &str) -> String {
     match provider {
         FoundryProvider::GitHub => rest.to_string(),
@@ -192,6 +194,20 @@ pub fn host_from_url(url: &str) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Pinned (contract 12.1): the webhook dedupe keys stored in `processed_webhook_events`
+    /// keep their exact pre-rename bytes, so a redelivery of an event processed before the
+    /// MSync rename is still recognized as a duplicate.
+    #[test]
+    fn webhook_dedupe_keys_survive_the_rename() {
+        assert_eq!(github::delivery_key("72d3162e-cc78-11e3-81ab-4c9367dc0958"), "delivery:72d3162e-cc78-11e3-81ab-4c9367dc0958");
+        assert_eq!(gitlab::delivery_key("GitLab.com", "u-1"), "gitlab:gitlab.com:delivery:u-1");
+        assert_eq!(provider_key(FoundryProvider::GitHub, "github.com", "pr_merged:id9:abc"), "pr_merged:id9:abc");
+        assert_eq!(
+            provider_key(FoundryProvider::GitLab, "Git.Example.org", "review_approved:id5:maint"),
+            "gitlab:git.example.org:review_approved:id5:maint"
+        );
+    }
 
     #[test]
     fn legacy_usernames() {

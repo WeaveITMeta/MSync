@@ -1,6 +1,6 @@
 //! Central Rank Authority (CRA): parse, validate, plan and authorize.
 //!
-//! The CRA is a set of TOML files in `.dsync/` of an organization's
+//! The CRA is a set of TOML files in `.msync/` of an organization's
 //! repository (contract `docs/CRA_PLATFORM.md` sections 3 and 4). This module
 //! is pure: no database, no network, no clock, no environment. Time is always
 //! passed in.
@@ -50,7 +50,7 @@ pub use source::{CraRepo, CraSource, GitHubSource, GitLabSource, SourceError};
 pub const SCHEMA_VERSION: i64 = 1;
 
 /// The rubric ids the engine knows.
-pub const KNOWN_RUBRICS: &[&str] = &["dsync-rubric-v1"];
+pub const KNOWN_RUBRICS: &[&str] = &["msync-rubric-v1"];
 
 /// The raw contents of the five CRA files, as fetched at one commit.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]

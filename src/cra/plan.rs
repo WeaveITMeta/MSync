@@ -550,7 +550,7 @@ impl ChangePlan {
     /// needs.
     pub fn render_markdown(&self) -> String {
         let mut out = String::new();
-        let _ = writeln!(out, "## DSync CRA change preview: `{}`\n", self.org_slug);
+        let _ = writeln!(out, "## MSync CRA change preview: `{}`\n", self.org_slug);
         match &self.old_hash {
             Some(h) => {
                 let _ = writeln!(out, "- Active snapshot: `{h}`");

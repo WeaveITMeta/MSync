@@ -172,7 +172,7 @@ discord = "900000000000000201"
 "#;
 
 pub(super) const MERIT: &str = r#"schema = 1
-rubric = "dsync-rubric-v1"
+rubric = "msync-rubric-v1"
 scorers = ["agent"]
 min_scorers = 1
 score_window_days = 7
@@ -342,7 +342,7 @@ pub(super) fn assert_allowed(r: &Result<(), Vec<Violation>>) {
 }
 
 pub(super) fn example(slug: &str) -> CraFiles {
-    let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("examples/cra").join(slug).join(".dsync");
+    let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("examples/cra").join(slug).join(".msync");
     let read = |name: &str| std::fs::read_to_string(dir.join(name)).unwrap_or_else(|e| panic!("{slug}/{name}: {e}"));
     CraFiles {
         org: read("org.toml"),

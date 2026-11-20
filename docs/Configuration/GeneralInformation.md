@@ -1,6 +1,6 @@
 # Discord Bot Setup Guide
 
-This guide walks you through setting up your Discord application for the DSync bot.
+This guide walks you through setting up your Discord application for the MSync (MeritSync) bot.
 
 ## 🔧 Discord Application Configuration
 
@@ -8,7 +8,7 @@ This guide walks you through setting up your Discord application for the DSync b
 
 1. Go to [Discord Developer Portal](https://discord.com/developers/applications)
 2. Click **"New Application"**
-3. Enter your application name (e.g., "DSync Bot")
+3. Enter your application name (e.g., "MSync Bot")
 4. Click **"Create"**
 
 ### Step 2: General Information Setup
@@ -41,17 +41,17 @@ This guide walks you through setting up your Discord application for the DSync b
 
 | Setting | Recommended Value | Purpose |
 |---------|------------------|---------|
-| **Username** | `DSync` | Your bot's display name |
+| **Username** | `MSync` | Your bot's display name |
 | **Avatar** | Upload a logo | Visual identification |
 | **Public Bot** | `Disabled` | Keep private during development |
 
 #### **Privileged Gateway Intents**
 
-Enable these intents for DSync to function properly:
+Enable these intents for MSync to function properly:
 
 - ✅ **Server Members Intent** - Required for role management
 - ✅ **Message Content Intent** - Required for message handling
-- ❌ **Presence Intent** - Not needed for DSync
+- ❌ **Presence Intent** - Not needed for MSync
 
 #### **Bot Token**
 
@@ -134,4 +134,4 @@ DISCORD_APPLICATION_ID=your_application_id_here
 
 ---
 
-🎉 **Your Discord bot is now ready for DSync integration!**
+🎉 **Your Discord bot is now ready for MSync integration!**

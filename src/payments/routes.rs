@@ -9,10 +9,10 @@ use serde::Deserialize;
 use serde_json::json;
 use tracing::{error, info, warn};
 
-/// Require `Authorization: Bearer <DSYNC_ADMIN_TOKEN>`. Disabled (503) if the token is unset.
+/// Require `Authorization: Bearer <MSYNC_ADMIN_TOKEN>`. Disabled (503) if the token is unset.
 fn require_admin(req: &HttpRequest, state: &AppState) -> Result<(), HttpResponse> {
     let Some(expected) = state.payments.admin_token.as_deref() else {
-        return Err(HttpResponse::ServiceUnavailable().json(json!({"status": "error", "message": "admin API disabled (DSYNC_ADMIN_TOKEN not set)"})));
+        return Err(HttpResponse::ServiceUnavailable().json(json!({"status": "error", "message": "admin API disabled (MSYNC_ADMIN_TOKEN not set)"})));
     };
     let provided = req
         .headers()

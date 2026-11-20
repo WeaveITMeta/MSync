@@ -91,7 +91,7 @@ impl DiscordBot {
 #[async_trait]
 impl EventHandler for DiscordBot {
     async fn ready(&self, ctx: Context, ready: Ready) {
-        info!("DSync bot connected as {}", ready.user.name);
+        info!("MSync bot connected as {}", ready.user.name);
         match std::env::var("DISCORD_GUILD_ID").ok().and_then(|v| v.trim().parse::<u64>().ok()) {
             Some(gid) => {
                 if let Err(e) = crate::discord::framework::register_slash_commands(&ctx, GuildId::new(gid)).await {
@@ -161,7 +161,7 @@ impl EventHandler for DiscordBot {
         // Monitor for help requests or community engagement
         if msg.content.contains("!help") && !msg.author.bot {
             if let Err(why) = msg.channel_id.say(&ctx.http, 
-                "👋 Welcome to DSync! Use `/link` to connect your GitHub account, \
+                "👋 Welcome to MSync! Use `/link` to connect your GitHub account, \
                 `/stats` to see your contributions, and `/leaderboard` to view top contributors!"
             ).await {
                 error!("Error sending help message: {:?}", why);

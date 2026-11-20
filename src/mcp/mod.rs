@@ -20,12 +20,12 @@ use serde_json::{json, Value};
 use tracing::warn;
 
 /// Env flag that enables `payouts_run_execute`. Anything but `true` leaves it off.
-pub const ALLOW_EXECUTE_ENV: &str = "DSYNC_MCP_ALLOW_EXECUTE";
+pub const ALLOW_EXECUTE_ENV: &str = "MSYNC_MCP_ALLOW_EXECUTE";
 
 /// Protocol versions this server speaks, newest first.
 pub const SUPPORTED_PROTOCOL_VERSIONS: &[&str] = &["2025-06-18", "2025-03-26", "2024-11-05"];
 
-pub const SERVER_NAME: &str = "dsync";
+pub const SERVER_NAME: &str = "msync";
 
 #[derive(Clone)]
 pub struct McpContext {
@@ -40,9 +40,9 @@ impl McpContext {
         Self { api, merit, allow_execute }
     }
 
-    /// `DSYNC_MCP_ALLOW_EXECUTE=true` (exactly, case-insensitive) enables execute. Default off.
+    /// `MSYNC_MCP_ALLOW_EXECUTE=true` (exactly, case-insensitive) enables execute. Default off.
     pub fn allow_execute_from_env() -> bool {
-        parse_allow_execute(std::env::var(ALLOW_EXECUTE_ENV).ok().as_deref())
+        parse_allow_execute(crate::config::env_var(ALLOW_EXECUTE_ENV).as_deref())
     }
 }
 
@@ -74,8 +74,8 @@ fn initialize(params: Option<Value>) -> Result<Value, RpcError> {
     Ok(json!({
         "protocolVersion": version,
         "capabilities": {"tools": {"listChanged": false}},
-        "serverInfo": {"name": SERVER_NAME, "title": "DSync merit and payouts", "version": env!("CARGO_PKG_VERSION")},
-        "instructions": "DSync scores work against a fixed rubric and runs payouts. Call rubric_get first. \
+        "serverInfo": {"name": SERVER_NAME, "title": "MSync merit and payouts", "version": env!("CARGO_PKG_VERSION")},
+        "instructions": "MSync scores work against a fixed rubric and runs payouts. Call rubric_get first. \
             Every write is recorded as the member that owns this token. Tools you cannot use are not listed.",
     }))
 }

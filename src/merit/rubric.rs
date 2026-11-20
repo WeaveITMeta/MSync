@@ -1,17 +1,17 @@
-//! `dsync-rubric-v1`: the fixed merit rubric (contract section 6).
+//! `msync-rubric-v1`: the fixed merit rubric (contract section 6).
 //!
 //! The rubric is a constant. Its canonical JSON is pinned by SHA-256 in
 //! [`RUBRIC_SHA256`]; changing a weight or an anchor changes the hash and fails
-//! `rubric_hash_is_pinned`. A change means publishing `dsync-rubric-v2`, never
+//! `rubric_hash_is_pinned`. A change means publishing `msync-rubric-v2`, never
 //! editing v1.
 
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
-pub const RUBRIC_ID: &str = "dsync-rubric-v1";
+pub const RUBRIC_ID: &str = "msync-rubric-v1";
 
 /// SHA-256 (lowercase hex) of [`canonical_json`]. Pinned; see the module docs.
-pub const RUBRIC_SHA256: &str = "b0e7b801aaf29a4c7b2cb4ac216673040af893bc538309dbc565f2a1bc4faa78";
+pub const RUBRIC_SHA256: &str = "25108d2fb76f007c70115a0479e399f78e47b97d3b27963e54d8517bd8d605a0";
 
 pub const MIN_LEVEL: u8 = 0;
 pub const MAX_LEVEL: u8 = 4;
@@ -281,7 +281,7 @@ mod tests {
             vec![("impact", 30), ("correctness", 20), ("difficulty", 15), ("quality", 15), ("risk", 10), ("communication", 10)]
         );
         assert_eq!(CRITERIA.iter().map(|c| c.weight).sum::<u32>(), 100);
-        assert_eq!(RUBRIC_ID, "dsync-rubric-v1");
+        assert_eq!(RUBRIC_ID, "msync-rubric-v1");
     }
 
     #[test]
@@ -330,7 +330,7 @@ mod tests {
         l[5].criterion = "vibes".into();
         assert!(matches!(score_levels(&l), Err(RubricError::UnknownCriterion(..))));
         assert!(validate_header(RUBRIC_ID, RUBRIC_SHA256).is_ok());
-        assert_eq!(validate_header("dsync-rubric-v2", RUBRIC_SHA256), Err(RubricError::UnknownRubric("dsync-rubric-v2".into())));
+        assert_eq!(validate_header("msync-rubric-v2", RUBRIC_SHA256), Err(RubricError::UnknownRubric("msync-rubric-v2".into())));
         assert_eq!(validate_header(RUBRIC_ID, "00"), Err(RubricError::HashMismatch));
         assert!(validate_total(101.0, "evidence that is long enough").is_err());
         assert!(validate_total(f32::NAN, "evidence that is long enough").is_err());

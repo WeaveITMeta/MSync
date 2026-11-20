@@ -1,4 +1,4 @@
-//! API tokens: `dsync_<id>_<secret>`, stored as SHA-256 hex, bound to a member, scoped.
+//! API tokens: `msync_<id>_<secret>`, stored as SHA-256 hex, bound to a member, scoped.
 
 use super::directory::Directory;
 use super::scopes;
@@ -11,12 +11,12 @@ use subtle::ConstantTimeEq;
 
 /// Org id used until multi-org lands (decision D2: an org id on every new table).
 pub const DEFAULT_ORG: &str = "default";
-/// The principal the legacy `DSYNC_ADMIN_TOKEN` acts as.
+/// The principal the legacy `MSYNC_ADMIN_TOKEN` acts as.
 pub const LEGACY_ADMIN_MEMBER: &str = "admin-token";
 /// Prefix reserved for engine-internal principals (the scheduler).
 pub const SYSTEM_MEMBER_PREFIX: &str = "system:";
 
-const TOKEN_PREFIX: &str = "dsync_";
+const TOKEN_PREFIX: &str = "msync_";
 const ID_BYTES: usize = 8; // 16 hex chars
 const SECRET_BYTES: usize = 32; // 64 hex chars
 const DB_TIME_FMT: &str = "%Y-%m-%d %H:%M:%S";
@@ -45,7 +45,7 @@ impl Principal {
         }
     }
 
-    /// The legacy `DSYNC_ADMIN_TOKEN` as a principal (`admin-token`). Never a payee.
+    /// The legacy `MSYNC_ADMIN_TOKEN` as a principal (`admin-token`). Never a payee.
     pub fn legacy_admin() -> Self {
         Self {
             token_id: "legacy-admin-token".into(),
@@ -116,7 +116,7 @@ fn is_lower_hex(s: &str, len: usize) -> bool {
     s.len() == len && s.bytes().all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
 }
 
-/// Split `dsync_<id>_<secret>` into (id, secret); None if the shape is wrong.
+/// Split `msync_<id>_<secret>` into (id, secret); None if the shape is wrong.
 pub fn parse_token(token: &str) -> Option<(&str, &str)> {
     let rest = token.strip_prefix(TOKEN_PREFIX)?;
     let (id, secret) = rest.split_once('_')?;
@@ -178,7 +178,7 @@ pub async fn authenticate_token(pool: &SqlitePool, token: &str, now: DateTime<Ut
     let presented = hash_token(token);
     let Some(row) = row else {
         // Same work as a known id so timing does not reveal which ids exist.
-        let _ = presented.as_bytes().ct_eq(hash_token("dsync_unknown").as_bytes());
+        let _ = presented.as_bytes().ct_eq(hash_token("msync_unknown").as_bytes());
         return Err(AuthError::UnknownToken);
     };
     if !bool::from(presented.as_bytes().ct_eq(row.token_hash.as_bytes())) {
@@ -212,7 +212,7 @@ pub async fn authenticate_token(pool: &SqlitePool, token: &str, now: DateTime<Ut
 
 /// Who is creating a token.
 pub enum TokenCreator<'a> {
-    /// The legacy `DSYNC_ADMIN_TOKEN` (bootstrap): may create any token.
+    /// The legacy `MSYNC_ADMIN_TOKEN` (bootstrap): may create any token.
     Bootstrap,
     /// A token holder with `tokens.manage`.
     Principal(&'a Principal),

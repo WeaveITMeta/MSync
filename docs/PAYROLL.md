@@ -1,6 +1,6 @@
-# Payroll in DSync: a guide for the business owner
+# Payroll in MSync (MeritSync): a guide for the business owner
 
-DSync can pay the people and companies who work for you: salaries, stipends, bonuses, shared pools, commissions and contractor invoices. It also pays contributors for merged work (merit payouts) as before. Every payment, whatever its source, lands in one ledger and leaves through one path: a payout run that sends a Stripe transfer. The same approvals, limits, hold, blocks and kill switch apply to all of it.
+MSync can pay the people and companies who work for you: salaries, stipends, bonuses, shared pools, commissions and contractor invoices. It also pays contributors for merged work (merit payouts) as before. Every payment, whatever its source, lands in one ledger and leaves through one path: a payout run that sends a Stripe transfer. The same approvals, limits, hold, blocks and kill switch apply to all of it.
 
 This guide shows each task with its REST call (`/api/v1`, bearer token) and its MCP tool (`POST /mcp`). The contract behind it is section 11 of `docs/CRA_PLATFORM.md`.
 
@@ -10,7 +10,7 @@ This guide shows each task with its REST call (`/api/v1`, bearer token) and its 
 - **Percentages are basis points.** 1% is `100`, 12.5% is `1250`, 100% is `10000`.
 - **Dates are `YYYY-MM-DD`.** Times are UTC. A payment dated a day becomes payable at 00:00 UTC that day.
 - **You act through a token.** Every write is recorded as the token's member. No request can name a different actor; a body with a field like `created_by` or `approver_member_id` is refused.
-- **Compensation is confidential.** It is stored in DSync, behind scoped tokens, never in the CRA repository. The CRA still decides who may act: ranks, approver rules and payee identities come from it.
+- **Compensation is confidential.** It is stored in MSync, behind scoped tokens, never in the CRA repository. The CRA still decides who may act: ranks, approver rules and payee identities come from it.
 
 ### Scopes
 
@@ -32,7 +32,7 @@ Paying still needs `payouts.prepare`, `payouts.approve` and `payouts.execute`, e
 
 A payee is a person or a company you pay. It has a display name, an optional legal name, a kind (`individual` or `company`), an optional email, an optional CRA member id, its payee keys (the GitHub or GitLab logins it is paid under), its Stripe Connect account, its tax form status (`none`, `requested`, `on_file`) and notes.
 
-DSync never stores a bank account or card number. There is no field for one, and a request that sends one is refused. The payee is paid into their Stripe Connect account; you pay from your own Stripe balance.
+MSync never stores a bank account or card number. There is no field for one, and a request that sends one is refused. The payee is paid into their Stripe Connect account; you pay from your own Stripe balance.
 
 ```
 POST /api/v1/payees                    payees.manage
@@ -105,7 +105,7 @@ POST /api/v1/payorders                 payorders.manage
  "schedule": {"kind": "repeat", "cadence": "monthly", "start": "2027-01-01"}}
 ```
 
-- For each date, DSync adds up the XP each person earned in the period since the previous date (the first period is one cadence step before the start). XP earned exactly on the payment date belongs to the next period.
+- For each date, MSync adds up the XP each person earned in the period since the previous date (the first period is one cadence step before the start). XP earned exactly on the payment date belongs to the next period.
 - `repos` limits the XP to those repositories. `roles` limits it to people holding one of those merit roles or CRA roles. `payee_ids` limits it to those payees. Leave a list empty for no limit.
 - `min_xp` is the XP needed to share at all. `max_share_bps` caps any one person's share; the cut part is not paid to anyone else.
 - Each person gets the pool times their share of the XP, rounded down. Someone with XP but no payee record is counted, and their share is not paid. If nobody qualifies, nothing is paid and the occurrence records why.

@@ -1,8 +1,8 @@
-# DSync Bot Dashboard Export Specification
+# MSync (MeritSync) Bot Dashboard Export Specification
 
 ## 🎯 Project Overview
 
-**DSync** is a Rust-based Discord bot that implements merit-based open source community management. It automatically synchronizes Discord roles based on GitHub contributions and code quality assessments from CodeRabbit AI.
+**MSync** is a Rust-based Discord bot that implements merit-based open source community management. It automatically synchronizes Discord roles based on GitHub contributions and code quality assessments from CodeRabbit AI.
 
 ### Core Purpose
 - **Merit-Based Role Management**: Automatically assign Discord roles based on contribution quality
@@ -37,8 +37,8 @@
 
 ## 📁 Phoenix Application Structure
 ```
-📁 dsync_dashboard/
-├── 📁 lib/dsync_web/
+📁 msync_dashboard/
+├── 📁 lib/msync_web/
 │   ├── 📁 live/
 │   │   ├── dashboard_live.ex          # Main admin dashboard
 │   │   ├── analytics_live.ex          # Real-time analytics
@@ -53,7 +53,7 @@
 │   ├── 📁 controllers/
 │   │   ├── auth_controller.ex          # OAuth handling
 │   │   └── api_controller.ex           # REST API endpoints
-├── 📁 lib/dsync/
+├── 📁 lib/msync/
 │   ├── analytics.ex                   # Analytics calculations
 │   ├── bot_client.ex                  # Rust bot integration
 │   ├── github_integration.ex          # GitHub webhook handling
@@ -190,16 +190,16 @@ ALTER PUBLICATION supabase_realtime ADD TABLE merit_activities;
 
 #### **Overview Page (`DashboardLive`)**
 ```elixir
-defmodule DsyncWeb.DashboardLive do
-  use DsyncWeb, :live_view
+defmodule MsyncWeb.DashboardLive do
+  use MsyncWeb, :live_view
 
   def mount(_params, _session, socket) do
     if connected?(socket) do
       # Subscribe to Phoenix PubSub
-      Phoenix.PubSub.subscribe(Dsync.PubSub, "dashboard_updates")
+      Phoenix.PubSub.subscribe(Msync.PubSub, "dashboard_updates")
       
       # Subscribe to Supabase Realtime
-      Dsync.Supabase.subscribe_to_contributors()
+      Msync.Supabase.subscribe_to_contributors()
     end
     
     {:ok, assign_dashboard_stats(socket)}
@@ -220,8 +220,8 @@ end
 
 - **Activity Timeline (Live Component)**
   ```elixir
-  defmodule DsyncWeb.ActivityTimelineComponent do
-    use DsyncWeb, :live_component
+  defmodule MsyncWeb.ActivityTimelineComponent do
+    use MsyncWeb, :live_component
     
     def handle_info({:new_activity, activity}, socket) do
       activities = [activity | socket.assigns.activities] |> Enum.take(10)
@@ -237,14 +237,14 @@ end
 
 #### **Contributors Management (`ContributorLive`)**
 ```elixir
-defmodule DsyncWeb.ContributorLive do
-  use DsyncWeb, :live_view
+defmodule MsyncWeb.ContributorLive do
+  use MsyncWeb, :live_view
   
   def handle_event("adjust_merit", %{"points" => points, "contributor_id" => id}, socket) do
     case Merit.adjust_points(id, points) do
       {:ok, contributor} ->
         # Broadcast update to all connected dashboards
-        Phoenix.PubSub.broadcast(Dsync.PubSub, "merit_updates", 
+        Phoenix.PubSub.broadcast(Msync.PubSub, "merit_updates", 
           {:merit_adjusted, contributor})
         {:noreply, socket}
       {:error, reason} ->
@@ -266,14 +266,14 @@ end
 
 #### **Merit System Configuration (`ConfigurationLive`)**
 ```elixir
-defmodule DsyncWeb.ConfigurationLive do
-  use DsyncWeb, :live_view
+defmodule MsyncWeb.ConfigurationLive do
+  use MsyncWeb, :live_view
   
   def handle_event("update_role_threshold", params, socket) do
     case MeritRoles.update_threshold(params) do
       {:ok, role} ->
         # Broadcast to trigger role recalculations
-        Phoenix.PubSub.broadcast(Dsync.PubSub, "role_updates", 
+        Phoenix.PubSub.broadcast(Msync.PubSub, "role_updates", 
           {:threshold_updated, role})
         {:noreply, socket}
     end
@@ -285,16 +285,16 @@ end
 
 #### **Real-time Charts and Graphs**
 ```elixir
-defmodule DsyncWeb.AnalyticsLive do
-  use DsyncWeb, :live_view
+defmodule MsyncWeb.AnalyticsLive do
+  use MsyncWeb, :live_view
   
   def mount(_params, _session, socket) do
     if connected?(socket) do
       # Subscribe to Phoenix PubSub
-      Phoenix.PubSub.subscribe(Dsync.PubSub, "contributions")
+      Phoenix.PubSub.subscribe(Msync.PubSub, "contributions")
       
       # Subscribe to Supabase Realtime
-      Dsync.Supabase.subscribe_to_contributions()
+      Msync.Supabase.subscribe_to_contributions()
     end
     
     {:ok, assign_analytics_data(socket)}
@@ -316,8 +316,8 @@ end
 
 #### **Live Leaderboard Views**
 ```elixir
-defmodule DsyncWeb.LeaderboardLive do
-  use DsyncWeb, :live_view
+defmodule MsyncWeb.LeaderboardLive do
+  use MsyncWeb, :live_view
   
   def handle_info({:leaderboard_updated, period}, socket) do
     if socket.assigns.current_period == period do
@@ -334,16 +334,16 @@ end
 
 #### **Personal Dashboard (`ProfileLive`)**
 ```elixir
-defmodule DsyncWeb.ProfileLive do
-  use DsyncWeb, :live_view
+defmodule MsyncWeb.ProfileLive do
+  use MsyncWeb, :live_view
   
   def mount(%{"id" => contributor_id}, _session, socket) do
     if connected?(socket) do
       # Subscribe to Phoenix PubSub
-      Phoenix.PubSub.subscribe(Dsync.PubSub, "contributor:#{contributor_id}")
+      Phoenix.PubSub.subscribe(Msync.PubSub, "contributor:#{contributor_id}")
       
       # Subscribe to Supabase Realtime
-      Dsync.Supabase.subscribe_to_contributor(contributor_id)
+      Msync.Supabase.subscribe_to_contributor(contributor_id)
     end
     
     {:ok, assign_profile_data(socket, contributor_id)}
@@ -365,8 +365,8 @@ end
 
 ### **Bot Client Module**
 ```elixir
-defmodule Dsync.BotClient do
-  @bot_api_url Application.get_env(:dsync, :bot_api_url)
+defmodule Msync.BotClient do
+  @bot_api_url Application.get_env(:msync, :bot_api_url)
   
   def sync_roles(contributor_id) do
     HTTPoison.post("#{@bot_api_url}/api/sync-roles", 
@@ -389,17 +389,17 @@ end
 
 ### **Real-time Integration**
 ```elixir
-defmodule Dsync.RealTime do
+defmodule Msync.RealTime do
   def broadcast_merit_update(contributor) do
-    Phoenix.PubSub.broadcast(Dsync.PubSub, "merit_updates", 
+    Phoenix.PubSub.broadcast(Msync.PubSub, "merit_updates", 
       {:merit_updated, contributor})
     
-    Phoenix.PubSub.broadcast(Dsync.PubSub, "contributor:#{contributor.id}", 
+    Phoenix.PubSub.broadcast(Msync.PubSub, "contributor:#{contributor.id}", 
       {:merit_awarded, contributor.total_merit_points, "GitHub contribution"})
   end
   
   def broadcast_role_promotion(contributor, old_role, new_role) do
-    Phoenix.PubSub.broadcast(Dsync.PubSub, "role_updates", 
+    Phoenix.PubSub.broadcast(Msync.PubSub, "role_updates", 
       {:role_promoted, contributor, old_role, new_role})
   end
 end
@@ -407,7 +407,7 @@ end
 
 ### **GitHub Webhook Handler**
 ```elixir
-defmodule Dsync.GitHubWebhook do
+defmodule Msync.GitHubWebhook do
   def handle_webhook(payload) do
     case process_contribution(payload) do
       {:ok, contribution} ->
@@ -415,7 +415,7 @@ defmodule Dsync.GitHubWebhook do
         {:ok, contributor} = Merit.award_points(contribution)
         
         # Broadcast to all live dashboards
-        Dsync.RealTime.broadcast_merit_update(contributor)
+        Msync.RealTime.broadcast_merit_update(contributor)
         
         # Check for role promotion
         check_role_promotion(contributor)
@@ -443,8 +443,8 @@ end
 
 #### **Merit Point Display Component**
 ```elixir
-defmodule DsyncWeb.MeritDisplayComponent do
-  use DsyncWeb, :live_component
+defmodule MsyncWeb.MeritDisplayComponent do
+  use MsyncWeb, :live_component
 
   def render(assigns) do
     ~H"""
@@ -472,8 +472,8 @@ end
 
 #### **Live Contribution Card**
 ```elixir
-defmodule DsyncWeb.ContributionCardComponent do
-  use DsyncWeb, :live_component
+defmodule MsyncWeb.ContributionCardComponent do
+  use MsyncWeb, :live_component
 
   def render(assigns) do
     ~H"""
@@ -520,8 +520,8 @@ end
 
 ### **Phoenix Authentication**
 ```elixir
-defmodule DsyncWeb.AuthController do
-  use DsyncWeb, :controller
+defmodule MsyncWeb.AuthController do
+  use MsyncWeb, :controller
   
   def discord_callback(conn, %{"code" => code}) do
     with {:ok, discord_token} <- Discord.OAuth.exchange_code(code),
@@ -553,7 +553,7 @@ end
 
 ### **Live View Authentication**
 ```elixir
-defmodule DsyncWeb.AuthLive do
+defmodule MsyncWeb.AuthLive do
   import Phoenix.LiveView
   
   def on_mount(:ensure_authenticated, _params, session, socket) do
@@ -587,9 +587,9 @@ SUPABASE_JWT_SECRET=your-supabase-jwt-secret
 # Database (Supabase PostgreSQL)
 DATABASE_URL=postgresql://postgres:[YOUR-PASSWORD]@db.your-project.supabase.co:5432/postgres
 
-# DSync Bot Integration
-DSYNC_BOT_API_URL=https://your-bot-domain.com/api
-DSYNC_BOT_WEBSOCKET_URL=wss://your-bot-domain.com/ws
+# MSync Bot Integration
+MSYNC_BOT_API_URL=https://your-bot-domain.com/api
+MSYNC_BOT_WEBSOCKET_URL=wss://your-bot-domain.com/ws
 
 # OAuth Configuration (can use Supabase Auth providers)
 DISCORD_CLIENT_ID=your-discord-client-id
@@ -608,7 +608,7 @@ CORS_ORIGINS=https://your-dashboard-domain.com
 ### **Phoenix + Supabase Production Setup**
 ```elixir
 # config/prod.exs
-config :dsync, DsyncWeb.Endpoint,
+config :msync, MsyncWeb.Endpoint,
   url: [host: System.get_env("PHX_HOST"), port: 443, scheme: "https"],
   check_origin: [
     "https://your-dashboard-domain.com",
@@ -618,23 +618,23 @@ config :dsync, DsyncWeb.Endpoint,
   cache_static_manifest: "priv/static/cache_manifest.json"
 
 # Enable real-time features
-config :dsync, DsyncWeb.Endpoint,
+config :msync, MsyncWeb.Endpoint,
   live_view: [signing_salt: System.get_env("LIVE_VIEW_SALT")]
 
 # PubSub for real-time updates
-config :dsync, Dsync.PubSub,
-  name: Dsync.PubSub,
+config :msync, Msync.PubSub,
+  name: Msync.PubSub,
   adapter: Phoenix.PubSub.PG2
 
 # Supabase configuration
-config :dsync, :supabase,
+config :msync, :supabase,
   url: System.get_env("SUPABASE_URL"),
   anon_key: System.get_env("SUPABASE_ANON_KEY"),
   service_key: System.get_env("SUPABASE_SERVICE_KEY"),
   jwt_secret: System.get_env("SUPABASE_JWT_SECRET")
 
 # Database configuration for Supabase
-config :dsync, Dsync.Repo,
+config :msync, Msync.Repo,
   url: System.get_env("DATABASE_URL"),
   pool_size: 10,
   tls: true,

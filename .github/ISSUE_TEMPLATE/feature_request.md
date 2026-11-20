@@ -1,6 +1,6 @@
 ---
 name: Feature request
-about: Suggest an idea for DSync
+about: Suggest an idea for MSync
 title: '[FEATURE] '
 labels: 'enhancement'
 assignees: ''

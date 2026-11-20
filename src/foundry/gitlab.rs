@@ -19,7 +19,8 @@ pub fn verify_token(secret: Option<&str>, header: Option<&str>) -> bool {
     a.as_slice().ct_eq(b.as_slice()).into()
 }
 
-/// `gitlab:<host>:delivery:<X-Gitlab-Event-UUID or Idempotency-Key>`.
+/// `gitlab:<host>:delivery:<X-Gitlab-Event-UUID or Idempotency-Key>`. Unchanged by the MSync
+/// rename (contract 12.1): a redelivery is recognized only if the stored key matches.
 pub fn delivery_key(host: &str, delivery_id: &str) -> String {
     provider_key(FoundryProvider::GitLab, host, &format!("delivery:{}", delivery_id))
 }
@@ -236,7 +237,7 @@ pub(crate) mod tests {
             "before": "1111111111111111111111111111111111111111", "after": after, "checkout_sha": after,
             "user_username": user, "user_name": "Some User",
             "project": {"path_with_namespace": path, "web_url": web_url, "default_branch": "main"},
-            "commits": [{"id": after, "modified": [".dsync/members.toml"]}]
+            "commits": [{"id": after, "modified": [".msync/members.toml"]}]
         })
     }
 

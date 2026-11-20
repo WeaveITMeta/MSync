@@ -314,7 +314,7 @@ fn resolve(roster: &Snapshot, who: &FoundryIdentity, owners: &[String], today: N
 
 /// Checks `plan` against the active snapshot `old`. Returns every violation.
 ///
-/// `owners` is engine configuration (`DSYNC_OWNER_MEMBER_IDS`): member ids
+/// `owners` is engine configuration (`MSYNC_OWNER_MEMBER_IDS`): member ids
 /// and/or `provider:login` entries. The first snapshot needs an owner in the
 /// `provider:login` form.
 pub fn authorize(

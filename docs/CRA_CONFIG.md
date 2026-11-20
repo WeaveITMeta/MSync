@@ -1,6 +1,6 @@
 # CRA configuration reference
 
-The Central Rank Authority (CRA) is a set of five TOML files in `.dsync/` on the default branch of an organization's repository. It defines roles, job titles, ranks, permissions, members, merit rules and payout policy. A change to the hierarchy is a commit, reviewed like code. DSync parses the files, validates them, shows the change plan, and decides whether the person who made the change was allowed to.
+The Central Rank Authority (CRA) is a set of five TOML files in `.msync/` on the default branch of an organization's repository. It defines roles, job titles, ranks, permissions, members, merit rules and payout policy. A change to the hierarchy is a commit, reviewed like code. MSync (MeritSync) parses the files, validates them, shows the change plan, and decides whether the person who made the change was allowed to.
 
 This document is the reference for the file formats, every validation rule, and the change-authority rules. The build contract is `docs/CRA_PLATFORM.md` (sections 3 and 4). The code is `src/cra/`. Three complete examples live in `examples/cra/`.
 
@@ -39,7 +39,7 @@ This document is the reference for the file formats, every validation rule, and 
 - Dates are `YYYY-MM-DD`, either quoted (`"2027-11-01"`) or as a TOML date (`2027-11-01`).
 - The snapshot's content hash is SHA-256 over the five files in the order org, roles, members, merit, payouts. Each file is framed as its file name, a newline, its byte length, a newline, its bytes and a newline, so bytes cannot move from one file to the next without changing the hash.
 
-Owners (rank 1000) are engine configuration (`DSYNC_OWNER_MEMBER_IDS`), never CRA content. A compromised repository cannot mint an owner.
+Owners (rank 1000) are engine configuration (`MSYNC_OWNER_MEMBER_IDS`), never CRA content. A compromised repository cannot mint an owner.
 
 ## 2. `org.toml`
 
@@ -170,7 +170,7 @@ An identity listed here is proven by the administration. A contributor who is no
 
 ```toml
 schema = 1
-rubric = "dsync-rubric-v1"     # the engine refuses an id it does not know
+rubric = "msync-rubric-v1"     # the engine refuses an id it does not know
 scorers = ["agent"]            # agent | coderabbit. Empty = base points only.
 min_scorers = 1
 score_window_days = 7
@@ -187,7 +187,7 @@ external_counts = true         # do non-members earn it
 
 Validation rules:
 
-- `rubric` is known to the engine (`dsync-rubric-v1`).
+- `rubric` is known to the engine (`msync-rubric-v1`).
 - Each scorer is listed once. When scorers are listed, `min_scorers` is between 1 and the number of scorers.
 - Each event key is declared once. `base_points` does not exceed `max_points`. `weight` is a finite number of at least 0.
 - When the effective policy sets `merit.external_contributions_earn = false`, no event may set `external_counts = true`.
@@ -349,13 +349,13 @@ Every violation is returned, not just the first.
 
 ## 12. Walkthrough: Voltec Industries
 
-`examples/cra/voltec-industries/.dsync/` is a hybrid organization. All names except McKale Olson, every repository path and every Discord id are placeholders.
+`examples/cra/voltec-industries/.msync/` is a hybrid organization. All names except McKale Olson, every repository path and every Discord id are placeholders.
 
 1. **Mode.** `org.toml` sets `mode = "hybrid"`. The effective policy is the hybrid column of section 7: the merit rank ceiling is 30, two-person changes start at rank 50, grants at or above 50 expire within 180 days, compartments are on, and payouts hold for 7 days.
 2. **Repositories.** One public GitHub repository, where external contributors earn merit, and one private GitLab repository on `gitlab.com`, for staff. Both are canonical and pay out on `main`.
 3. **Roles.** Three earned tiers (Newcomer 0, Contributor 10, Core Contributor 30; none above the ceiling and none with an authority permission) and four job titles: Engineer 20, Senior Engineer 40, Head of Cell Engineering 60 (one holder, 180-day term, compartment `cell-eng`) and Director 70.
 4. **Members.** Gus Example is Director until 2027-04-30. Hana Example, a GitLab-only member, is Head of Cell Engineering until 2027-05-01. McKale Olson is an Engineer. Ivo Example is a Senior Engineer.
-5. **Portal.** The `voltec-portal` consumer reads `community.*` only. DSync standing never reaches Voltec's manufacturer data, messages, user management, roles or super admin, and Voltec enforces the same allowlist in its own code.
+5. **Portal.** The `voltec-portal` consumer reads `community.*` only. MSync standing never reaches Voltec's manufacturer data, messages, user management, roles or super admin, and Voltec enforces the same allowlist in its own code.
 6. **Bootstrap.** The owner, configured as `github:example-founder`, pushes the first snapshot. Nobody else can.
 7. **A routine change.** Hana adds a new GitLab-only engineer and grants Engineer (20). She holds `members.invite` and `members.grant`, and 60 is above 20, so a direct push is enough.
 8. **A refused change.** Hana tries to appoint a Director (70). 60 is not above 70, so it is refused even with the owner's approval.
@@ -382,44 +382,44 @@ Where the contract left a point open, the code chose the following.
 
 ## 14. Connecting a repository
 
-This section is the engine side: how DSync finds the CRA repository, loads it on a push, and what changes while a snapshot is active. The code is `src/cra/{source,loader,store,api}.rs`.
+This section is the engine side: how MSync finds the CRA repository, loads it on a push, and what changes while a snapshot is active. The code is `src/cra/{source,loader,store,api}.rs`.
 
 ### 14.1 Environment
 
 | Variable | Meaning |
 |---|---|
-| `DSYNC_CRA_REPO` | The CRA repository as `provider:host:path`, for example `github:github.com:EustressEngine/dsync-cra` or `gitlab:gitlab.example.org:eustress/cra`. Unset: no CRA loading, and everything behaves as before. A malformed value stops the server at startup. |
-| `DSYNC_CRA_BRANCH` | The branch whose pushes load the CRA. Default `main`. A bare branch name, not `refs/heads/...`. |
+| `MSYNC_CRA_REPO` | The CRA repository as `provider:host:path`, for example `github:github.com:EustressEngine/msync-cra` or `gitlab:gitlab.example.org:eustress/cra`. Unset: no CRA loading, and everything behaves as before. A malformed value stops the server at startup. |
+| `MSYNC_CRA_BRANCH` | The branch whose pushes load the CRA. Default `main`. A bare branch name, not `refs/heads/...`. |
 | `GITHUB_TOKEN` | Read access to a GitHub CRA repository (contents, pull requests, reviews). The token the service already uses. |
 | `GITLAB_TOKEN` | Read access to a GitLab CRA repository (`read_api`). Optional; needed when the project is private. |
-| `DSYNC_CRA_GITHUB_API`, `DSYNC_CRA_GITLAB_API` | API base overrides. Defaults: `https://api.github.com` for github.com, `https://<host>/api/v3` for GitHub Enterprise, `https://<host>/api/v4` for GitLab. |
-| `DSYNC_OWNER_MEMBER_IDS` | Owners (rank 1000), comma separated. An entry is a member id (`mckale`) or a GitHub or GitLab identity (`github:Simbuilder`, `gitlab:someone`). Only the provider form can bootstrap the first snapshot. An entry with a `:` that is not `github:<login>` or `gitlab:<login>` is ignored. |
+| `MSYNC_CRA_GITHUB_API`, `MSYNC_CRA_GITLAB_API` | API base overrides. Defaults: `https://api.github.com` for github.com, `https://<host>/api/v3` for GitHub Enterprise, `https://<host>/api/v4` for GitLab. |
+| `MSYNC_OWNER_MEMBER_IDS` | Owners (rank 1000), comma separated. An entry is a member id (`mckale`) or a GitHub or GitLab identity (`github:Simbuilder`, `gitlab:someone`). Only the provider form can bootstrap the first snapshot. An entry with a `:` that is not `github:<login>` or `gitlab:<login>` is ignored. |
 | `GITHUB_WEBHOOK_SECRET`, `GITLAB_WEBHOOK_SECRET` | The existing webhook secrets. A push that fails the signature or token check is refused before anything is read. |
 
-If an active snapshot is stored but no longer reproduces its content hash, DSync refuses to start rather than fall back to another source of rank.
+If an active snapshot is stored but no longer reproduces its content hash, MSync refuses to start rather than fall back to another source of rank.
 
 ### 14.2 The webhook
 
 The CRA uses the webhook endpoints that already exist. Add the push event on the CRA repository:
 
-- **GitHub**: repository Settings, Webhooks, Add webhook. Payload URL `https://<dsync host>/github/webhook`, content type `application/json`, secret `GITHUB_WEBHOOK_SECRET`. Events: `Pushes` (also `Pull requests` and `Pull request reviews` if the same repository should earn merit).
-- **GitLab**: project Settings, Webhooks. URL `https://<dsync host>/gitlab/webhook`, secret token `GITLAB_WEBHOOK_SECRET`. Trigger: `Push events`, with the CRA branch as the branch filter (also `Merge request events` if the project should earn merit).
+- **GitHub**: repository Settings, Webhooks, Add webhook. Payload URL `https://<msync host>/github/webhook`, content type `application/json`, secret `GITHUB_WEBHOOK_SECRET`. Events: `Pushes` (also `Pull requests` and `Pull request reviews` if the same repository should earn merit).
+- **GitLab**: project Settings, Webhooks. URL `https://<msync host>/gitlab/webhook`, secret token `GITLAB_WEBHOOK_SECRET`. Trigger: `Push events`, with the CRA branch as the branch filter (also `Merge request events` if the project should earn merit).
 
 A push to any other repository or branch, a tag push, and a branch deletion load nothing. The merit and payout behaviour of both endpoints is unchanged.
 
 ### 14.3 What happens on a push
 
-For a verified push to the CRA repository's branch, DSync takes the pushed head SHA and:
+For a verified push to the CRA repository's branch, MSync takes the pushed head SHA and:
 
 1. Refuses anything that is not a full commit SHA. Files are only ever read at an exact commit.
 2. Does nothing if this commit already has a final outcome (accepted or rejected). A redelivered or replayed push cannot change a verdict or roll the hierarchy back.
-3. Fetches the five `.dsync/` files through the Foundry API at that SHA. The webhook body supplies only the branch, the SHA and the authenticated pusher; its content is never trusted.
+3. Fetches the five `.msync/` files through the Foundry API at that SHA. The webhook body supplies only the branch, the SHA and the authenticated pusher; its content is never trusted.
 4. Builds the change context from the Foundry API: whether the commit is the merge commit of a merged pull or merge request, who merged it, who wrote it, and who approved it. A merged request whose merge commit is not this SHA does not count; the push is then a direct push by the webhook's pusher. An approval counts only if it is current. On GitHub, the reviewer's latest verdict is `APPROVED` and was given on the request's head commit. On GitLab, the user is still in the approvals list and their latest approval note is later than the request's last push. When the API cannot tell, the approval does not count.
 5. Parses and validates (sections 1 to 6), plans the change against the active snapshot (section 10), and authorizes it against the active snapshot (section 11).
 6. If everything passes, activates it in one transaction: the old active snapshot becomes `superseded`, the new one `active`. Then it links every member's GitHub and GitLab identities (14.6) and swaps the engine's runtime state.
 7. If anything fails, records a `rejected` attempt with every violation. The active snapshot stays as it was.
 
-A commit that changes nothing in `.dsync/` (an empty plan) is a no-op and records nothing.
+A commit that changes nothing in `.msync/` (an empty plan) is a no-op and records nothing.
 
 `POST /api/v1/cra/reload` (scope `hierarchy.read` and rank 1000) runs the same steps on the branch head. A reload has no webhook pusher, so it can load a merged pull or merge request but not a direct push.
 
@@ -438,7 +438,7 @@ To fix a rejected change, push a new commit. A rejected commit keeps its verdict
 
 The first snapshot is accepted only when the actor is an owner from engine configuration in the provider form. A member id means nothing before a snapshot exists, and the new snapshot cannot vouch for itself.
 
-1. Put your GitHub or GitLab identity in `DSYNC_OWNER_MEMBER_IDS` (for example `github:Simbuilder`) and set `DSYNC_CRA_REPO`. Restart DSync.
+1. Put your GitHub or GitLab identity in `MSYNC_OWNER_MEMBER_IDS` (for example `github:Simbuilder`) and set `MSYNC_CRA_REPO`. Restart MSync.
 2. Add the webhook (14.2).
 3. As that owner, push the five files to the CRA branch, or merge a pull request that adds them. `GET /api/v1/cra/snapshots` should then show an `active` row with you as `actor`.
 
@@ -451,7 +451,7 @@ If the files landed before the webhook existed, merge them through a pull reques
 | Ranks (payout approvers, eligibility, token management) | Owners from engine configuration stay 1000, whether the token names the owner entry or a member whose GitHub or GitLab identity is an owner entry. Every other member has their standing rank (section 9), with all merit counted as vested. An id the snapshot does not list has no rank. | Owners 1000, everyone else none |
 | Payee identity | A ledger row paid to a member's attested GitHub or GitLab login belongs to that member, so they cannot approve it even if their token declares no payee key. | Token `payee_keys` only |
 | Roles (eligibility) | Active positions and the tier | None |
-| Repositories that earn | `org.toml` `[[foundry]]`: `canonical = false` earns nothing and creates no payout row; `visibility = "private"` is never named publicly | `DSYNC_FOUNDRY_REPOS` |
+| Repositories that earn | `org.toml` `[[foundry]]`: `canonical = false` earns nothing and creates no payout row; `visibility = "private"` is never named publicly | `MSYNC_FOUNDRY_REPOS` |
 | Merit rules | `merit.toml`: `pr_merged` and `review_approved` from their `[[event]]`; an event not listed earns nothing; opening a pull request earns nothing | Contract 3.4 defaults |
 | Payout policy | `payouts.toml`. `PUT /api/v1/payouts/policy` answers 409 because the policy is authored in the CRA. `GET` shows it with `updated_by = cra:<commit>`. | The stored policy, or the env default |
 

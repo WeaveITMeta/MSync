@@ -354,8 +354,8 @@ fn gh_push(repo_name: &str, branch_ref: &str, after: &str, sender: &str) -> Vec<
         "repository": {"full_name": repo_name, "default_branch": "main"},
         "sender": {"login": sender}, "pusher": {"name": sender},
         // A forged copy of the files in the body is never read.
-        "dsync": {"members.toml": "schema = 1\n[[member]]\nid = \"evil\"\nname = \"Evil\"\nstatus = \"active\"\n"},
-        "commits": [{"id": after, "modified": [".dsync/members.toml"]}]
+        "msync": {"members.toml": "schema = 1\n[[member]]\nid = \"evil\"\nname = \"Evil\"\nstatus = \"active\"\n"},
+        "commits": [{"id": after, "modified": [".msync/members.toml"]}]
     }))
     .unwrap()
 }
@@ -457,7 +457,7 @@ async fn gh_files(server: &mut mockito::ServerGuard, sha_: &str, files: &CraFile
     for (kind, text) in files.ordered() {
         mocks.push(
             server
-                .mock("GET", format!("/repos/{GH_PATH}/contents/.dsync/{}", kind.file_name()).as_str())
+                .mock("GET", format!("/repos/{GH_PATH}/contents/.msync/{}", kind.file_name()).as_str())
                 .match_query(Matcher::UrlEncoded("ref".into(), sha_.into()))
                 .match_header("accept", "application/vnd.github.raw+json")
                 .with_status(200)
@@ -518,7 +518,7 @@ async fn github_api_errors_reject_the_load() {
     // A missing file is an error too, never "use what we have".
     let s2 = sha(0xdee);
     server
-        .mock("GET", format!("/repos/{GH_PATH}/contents/.dsync/org.toml").as_str())
+        .mock("GET", format!("/repos/{GH_PATH}/contents/.msync/org.toml").as_str())
         .match_query(Matcher::UrlEncoded("ref".into(), s2.clone()))
         .with_status(404)
         .create_async()
@@ -688,7 +688,7 @@ async fn gl_files(server: &mut mockito::ServerGuard, sha_: &str, files: &CraFile
     for (kind, text) in files.ordered() {
         mocks.push(
             server
-                .mock("GET", format!("/projects/{GL_ENC}/repository/files/.dsync%2F{}/raw", kind.file_name()).as_str())
+                .mock("GET", format!("/projects/{GL_ENC}/repository/files/.msync%2F{}/raw", kind.file_name()).as_str())
                 .match_query(Matcher::UrlEncoded("ref".into(), sha_.into()))
                 .match_header("private-token", "gl-token")
                 .with_status(200)
@@ -880,16 +880,16 @@ fn gitlab_approval_verdicts_need_every_fact() {
 
 fn eustress() -> CraFiles {
     CraFiles {
-        org: include_str!("../../examples/cra/eustress-engine/.dsync/org.toml").into(),
-        roles: include_str!("../../examples/cra/eustress-engine/.dsync/roles.toml").into(),
-        members: include_str!("../../examples/cra/eustress-engine/.dsync/members.toml").into(),
-        merit: include_str!("../../examples/cra/eustress-engine/.dsync/merit.toml").into(),
-        payouts: include_str!("../../examples/cra/eustress-engine/.dsync/payouts.toml").into(),
+        org: include_str!("../../examples/cra/eustress-engine/.msync/org.toml").into(),
+        roles: include_str!("../../examples/cra/eustress-engine/.msync/roles.toml").into(),
+        members: include_str!("../../examples/cra/eustress-engine/.msync/members.toml").into(),
+        merit: include_str!("../../examples/cra/eustress-engine/.msync/merit.toml").into(),
+        payouts: include_str!("../../examples/cra/eustress-engine/.msync/payouts.toml").into(),
     }
 }
 
 fn example(name: &str) -> CraFiles {
-    let read = |f: &str| std::fs::read_to_string(format!("{}/examples/cra/{name}/.dsync/{f}", env!("CARGO_MANIFEST_DIR"))).unwrap();
+    let read = |f: &str| std::fs::read_to_string(format!("{}/examples/cra/{name}/.msync/{f}", env!("CARGO_MANIFEST_DIR"))).unwrap();
     CraFiles { org: read("org.toml"), roles: read("roles.toml"), members: read("members.toml"), merit: read("merit.toml"), payouts: read("payouts.toml") }
 }
 
@@ -1040,7 +1040,7 @@ async fn a_mirror_repository_in_org_toml_earns_nothing() {
 fn merit_rules_come_from_merit_toml() {
     let snap = crate::cra::load(&eustress(), today()).unwrap();
     let r = merit_rules_from_cra(&snap.merit);
-    assert_eq!(r.rubric, "dsync-rubric-v1");
+    assert_eq!(r.rubric, "msync-rubric-v1");
     assert_eq!(r.scorers, vec![ScorerSource::Agent]);
     assert_eq!((r.min_scorers, r.score_window_days), (1, 7));
     assert_eq!((r.pr_merged.base_points, r.pr_merged.max_points), (10, 60));

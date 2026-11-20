@@ -13,6 +13,21 @@ fn founder() -> Vec<String> {
     vec!["github:example-founder".to_string()]
 }
 
+/// Contract 12.1: the repository config directory is `.msync/`. Each example keeps its five
+/// files there (and has no leftover `.dsync/`), and loads from it.
+#[test]
+fn examples_live_in_msync_dir_and_load_from_it() {
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("examples/cra");
+    for slug in SLUGS {
+        let dir = root.join(slug);
+        for f in ["org.toml", "roles.toml", "members.toml", "merit.toml", "payouts.toml"] {
+            assert!(dir.join(".msync").join(f).is_file(), "{slug}/.msync/{f} missing");
+        }
+        assert!(!dir.join(".dsync").exists(), "{slug} still has a .dsync/ directory");
+        assert!(load(&example(slug), today()).is_ok(), "{slug} does not load from .msync/");
+    }
+}
+
 #[test]
 fn every_example_loads_validates_and_bootstraps_by_its_owner() {
     for slug in SLUGS {
@@ -131,7 +146,7 @@ fn voltec_exercises_github_and_gitlab_and_keeps_its_portal_on_community_scopes()
     assert!(s.roles.roles.iter().any(|r| r.title == "Head of Cell Engineering" && r.compartments == vec!["cell-eng".to_string()]));
     assert!(s.org.compartments.iter().any(|c| c.key == "cell-eng"));
     assert_eq!(s.org.consumers.len(), 1);
-    // Voltec's rule: DSync standing never reaches beyond community.*.
+    // Voltec's rule: MSync standing never reaches beyond community.*.
     for c in &s.org.consumers {
         assert!(c.scopes.iter().all(|x| x.starts_with("community.")), "{:?}", c.scopes);
     }

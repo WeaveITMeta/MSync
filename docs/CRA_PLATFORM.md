@@ -1,13 +1,13 @@
-# Apache DSync: Central Rank Authority platform contract
+# MSync (MeritSync): Central Rank Authority platform contract
 
 Status: build contract, 2026-11-12. This is the interface the implementation workers build against. It records McKale's direction of 2026-11-12 and extends `docs/HIERARCHY_AND_THREAT_MODEL.md` (branch `claude/priceless-merkle-ce50c8`). Where the two differ, section 9 says which wins.
 
 ## 1. Premise
 
-DSync is a management hierarchy tool for open-source, source-available and closed-source organizations: role-based access control plus payroll, driven by one hierarchy.
+MSync is a management hierarchy tool for open-source, source-available and closed-source organizations: role-based access control plus payroll, driven by one hierarchy.
 
-- **The Central Rank Authority (CRA) is the organization's repository.** The administration defines roles, job titles, ranks, permissions, members, merit rules and payout policy in files under `.dsync/` in a Git repository hosted on GitHub or GitLab. A change to the hierarchy is a commit, reviewed like code.
-- **DSync is the engine.** It verifies and loads the CRA, ingests events from GitHub and GitLab through the Foundry API, scores work against a fixed rubric, keeps the merit ledger, computes each member's standing, and runs payouts.
+- **The Central Rank Authority (CRA) is the organization's repository.** The administration defines roles, job titles, ranks, permissions, members, merit rules and payout policy in files under `.msync/` in a Git repository hosted on GitHub or GitLab. A change to the hierarchy is a commit, reviewed like code.
+- **MSync is the engine.** It verifies and loads the CRA, ingests events from GitHub and GitLab through the Foundry API, scores work against a fixed rubric, keeps the merit ledger, computes each member's standing, and runs payouts.
 - **Everything else is a projection.** The Discord bot lives in the server and applies roles from the CRA. Portals (Eustress Engine, Weave Solutions, Voltec Industries) read standing through a signed API or their own SSO. Discord is never the source of truth: a role edited by hand in Discord is drift, and drift is reverted and reported.
 - **Merit tracks who moves the project forward.** Merit comes from events that land improvements (merged work, reviews, fixes, releases), weighted by a rubric score, not from activity volume. The hardest worker is visible and can be paid.
 - **Connectors are how it is easy.** Discord, GitHub and GitLab link through OAuth. A portal links through a consumer key. Nothing else is needed to start.
@@ -16,20 +16,20 @@ DSync is a management hierarchy tool for open-source, source-available and close
 
 | Component | Role | Authority |
 |---|---|---|
-| CRA repository (`.dsync/`) | Roles, titles, ranks, permissions, members, appointments, merit rules, payout policy | Source of record for the hierarchy |
-| DSync engine (this service) | Verifies and loads the CRA; merit ledger; rubric scores; standing; payouts; audit | Source of record for earned state (merit, payouts, audit) |
+| CRA repository (`.msync/`) | Roles, titles, ranks, permissions, members, appointments, merit rules, payout policy | Source of record for the hierarchy |
+| MSync engine (this service) | Verifies and loads the CRA; merit ledger; rubric scores; standing; payouts; audit | Source of record for earned state (merit, payouts, audit) |
 | Foundry API (GitHub, GitLab) | Signed webhooks in; file reads at a commit SHA | Input only |
 | Discord bot | Applies and reconciles roles | Projection |
 | Portals / consumers | Read standing with scoped, signed requests | Projection |
 | REST API `/api/v1` and MCP server `/mcp` | Scoped tokens; merit scoring; payouts; hierarchy reads | Guarded entry points |
 
-"Foundry API" is the name for DSync's integration layer over code hosts (GitHub and GitLab today): signed webhooks in, file and review reads out. Code uses the `foundry` module and `Foundry*` types; configuration uses `[[foundry]]` and `DSYNC_FOUNDRY_REPOS`.
+"Foundry API" is the name for MSync's integration layer over code hosts (GitHub and GitLab today): signed webhooks in, file and review reads out. Code uses the `foundry` module and `Foundry*` types; configuration uses `[[foundry]]` and `MSYNC_FOUNDRY_REPOS`.
 
-Owners (rank 1000) are engine configuration (`DSYNC_OWNER_MEMBER_IDS`), never CRA content. A compromised repository cannot mint an owner.
+Owners (rank 1000) are engine configuration (`MSYNC_OWNER_MEMBER_IDS`), never CRA content. A compromised repository cannot mint an owner.
 
 ## 3. CRA file formats (schema 1, TOML)
 
-All files live in `.dsync/` on the CRA repository's default branch. Every file starts with `schema = 1`. Unknown keys are an error (fail closed).
+All files live in `.msync/` on the CRA repository's default branch. Every file starts with `schema = 1`. Unknown keys are an error (fail closed).
 
 ### 3.1 `org.toml`
 
@@ -150,7 +150,7 @@ An identity listed here is proven by the administration. A contributor who is no
 
 ```toml
 schema = 1
-rubric = "dsync-rubric-v1"      # the engine refuses an id it does not know
+rubric = "msync-rubric-v1"      # the engine refuses an id it does not know
 scorers = ["agent"]             # agent | coderabbit. Empty = base points only.
 min_scorers = 1
 score_window_days = 7           # a first score arriving this long after merge still counts
@@ -203,7 +203,7 @@ merit_multiplier = 0.01         # amount = base * (1 + merit_points * multiplier
 
 ## 4. Loading the CRA and who may change it
 
-On a verified push webhook to the CRA repository's default branch that touches `.dsync/`:
+On a verified push webhook to the CRA repository's default branch that touches `.msync/`:
 
 1. Fetch the five files at the pushed commit SHA through the Foundry API (never from the webhook body).
 2. Parse and validate (section 3 rules). Any error rejects the snapshot.
@@ -230,7 +230,7 @@ kind: PrOpened | PrMerged | ReviewApproved | IssueClosed | ReleasePublished | Pu
 - GitHub: `POST /github/webhook`, `X-Hub-Signature-256` HMAC over the raw body (exists today), `X-GitHub-Delivery` for dedupe.
 - GitLab: `POST /gitlab/webhook`, `X-Gitlab-Token` compared in constant time against the configured secret, `X-Gitlab-Event-UUID` (fallback `Idempotency-Key`) for dedupe. Merge request hooks map to `PrOpened` and `PrMerged`; an `approved` action maps to `ReviewApproved`.
 - GitHub dedupe keys keep their exact existing form, so a redelivery of an event processed before this change is still recognized. Every GitLab key is prefixed `gitlab:<host>:`, so a GitLab id can never collide with a GitHub id.
-- A repository not listed in `org.toml` `[[foundry]]`, or listed with `canonical = false`, earns nothing and creates no payout row. This is what stops a mirrored repository from paying twice for one merge. Until CRA loading lands (round 2) the list comes from `DSYNC_FOUNDRY_REPOS`; with it unset, GitHub behaves as it does today and GitLab is refused.
+- A repository not listed in `org.toml` `[[foundry]]`, or listed with `canonical = false`, earns nothing and creates no payout row. This is what stops a mirrored repository from paying twice for one merge. Until CRA loading lands (round 2) the list comes from `MSYNC_FOUNDRY_REPOS`; with it unset, GitHub behaves as it does today and GitLab is refused.
 - Contributors are keyed by `(provider, host, login)`. The legacy `contributors.github_username` column stays; a GitLab-only contributor stores `gitlab:<login>` there, a value no GitHub login can equal.
 
 ### 5.1 Many repositories, one score
@@ -249,11 +249,11 @@ GET /api/v1/leaderboard?repo=&limit=      merit.read: totals or one repository, 
 GET /api/v1/members/{id}/merit            merit.read: one person's XP by repository and by event kind
 ```
 
-## 6. Merit rubric (`dsync-rubric-v1`)
+## 6. Merit rubric (`msync-rubric-v1`)
 
 CodeRabbit is optional. The engine never invents a score. With no score, an event earns `base_points`.
 
-A score is submitted by a scorer (an agent through the MCP server or REST API; optionally CodeRabbit) against a fixed rubric. The rubric is a constant in code with a pinned SHA-256; changing it means publishing `dsync-rubric-v2`, never editing v1.
+A score is submitted by a scorer (an agent through the MCP server or REST API; optionally CodeRabbit) against a fixed rubric. The rubric is a constant in code with a pinned SHA-256; changing it means publishing `msync-rubric-v2`, never editing v1.
 
 | Criterion | Weight | What level 0 to 4 means |
 |---|---|---|
@@ -273,7 +273,7 @@ A score is submitted by a scorer (an agent through the MCP server or REST API; o
 
 ## 7. API tokens, REST and MCP
 
-- Tokens: `dsync_<id>_<secret>`, stored as SHA-256, bound to a member id, with scopes and optional expiry. Shown once at creation. Bootstrap creation uses the legacy `DSYNC_ADMIN_TOKEN`.
+- Tokens: `msync_<id>_<secret>`, stored as SHA-256, bound to a member id, with scopes and optional expiry. Shown once at creation. Bootstrap creation uses the legacy `MSYNC_ADMIN_TOKEN`.
 - Scopes: `hierarchy.read`, `merit.read`, `merit.score`, `payouts.read`, `payouts.prepare`, `payouts.approve`, `payouts.execute`, `payouts.policy`, `tokens.manage`.
 - The actor on every write is the token's member. No request body names its own actor.
 
@@ -308,7 +308,7 @@ MCP (`POST /mcp`, JSON-RPC 2.0, same tokens and scopes): `rubric_get`, `merit_sc
 ## 9. Relation to the hierarchy and threat model document
 
 - Stands unchanged: the mode lever and its defaults (3), the three axes and the permission catalog (4), the strict-inequality grant rule (4.5), root accounts and identity linking rules (6), the audit log, reconciliation, compartments and break-glass (7), the consumer HMAC contract (8), the threat model (9).
-- Changed by this contract: principle 1 and section 5. The hierarchy configuration is no longer edited in DSync tables through guarded API calls. It is authored in the CRA repository, and DSync's guarded-action flow for hierarchy changes becomes the change-authorization check in section 4. DSync tables hold the verified snapshot, not the editable original.
+- Changed by this contract: principle 1 and section 5. The hierarchy configuration is no longer edited in MSync tables through guarded API calls. It is authored in the CRA repository, and MSync's guarded-action flow for hierarchy changes becomes the change-authorization check in section 4. MSync tables hold the verified snapshot, not the editable original.
 - Unanswered decisions D0 to D14 in that document still stand. Work built from this contract assumes the recommended option for D2 (an org id on every new table) and D4 (ranks 0 to 1000) and touches none of the others.
 
 ## 10. Build order
@@ -336,7 +336,7 @@ Compensation is confidential, so it is engine data behind scoped tokens, not CRA
 A payee is a person or company that can be paid.
 
 - Fields: id, display name, legal name, kind (`individual` | `company`), email, optional CRA member id, payee keys (the GitHub or GitLab logins they are paid under), Stripe Connect account id and its payout-enabled state, tax form status (`none` | `requested` | `on_file`), status (`active` | `paused` | `closed`), notes.
-- DSync never stores a bank account or card number. The payout account is the payee's Stripe Connect account; the business's funding source is its own Stripe balance.
+- MSync never stores a bank account or card number. The payout account is the payee's Stripe Connect account; the business's funding source is its own Stripe balance.
 - A payee that is `paused` or `closed`, or whose Stripe account cannot receive transfers, is never paid.
 
 ### 11.3 Pay orders
@@ -396,7 +396,7 @@ MCP tools mirror these: `payees_list`, `payee_get`, `payorders_list`, `payorder_
 
 ## 12. MSync: the rebrand and two chat platforms (owner direction, 2026-11-19)
 
-DSync is now **MSync**, short for **MeritSync**. Earlier sections still say DSync where they have not been rewritten; the rules below win.
+DSync is now **MSync**, short for **MeritSync**. Earlier sections have been rewritten to the new names; the table below keeps the old names as the record of what changed, and the rules below win.
 
 ### 12.1 Names
 

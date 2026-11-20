@@ -60,8 +60,8 @@ jobs:
     - name: Upload artifacts
       uses: actions/upload-artifact@v3
       with:
-        name: dsync-binary
-        path: target/release/dsync
+        name: msync-binary
+        path: target/release/msync
 
   security:
     name: Security Audit

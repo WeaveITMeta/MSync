@@ -43,10 +43,10 @@ impl StripeApi for MockStripe {
 
 fn cfg() -> PaymentConfig {
     PaymentConfig::from_lookup(|k| match k {
-        "DSYNC_PAY_BRANCHES" => Some("main".into()),
-        "DSYNC_PAY_BASE_CENTS_MAIN" => Some("2000".into()),
-        "DSYNC_PAY_MERIT_MULTIPLIER" => Some("0.01".into()),
-        "DSYNC_PAY_MAX_CENTS" => Some("5000".into()),
+        "MSYNC_PAY_BRANCHES" => Some("main".into()),
+        "MSYNC_PAY_BASE_CENTS_MAIN" => Some("2000".into()),
+        "MSYNC_PAY_MERIT_MULTIPLIER" => Some("0.01".into()),
+        "MSYNC_PAY_MAX_CENTS" => Some("5000".into()),
         _ => None,
     })
 }
@@ -274,7 +274,7 @@ async fn no_token_and_bad_tokens_get_the_rest_401() {
     let revoked = token(&pool, "carol", &[scopes::MERIT_READ], &[]).await;
     sqlx::query("UPDATE api_tokens SET revoked_at = datetime('now') WHERE member_id = 'carol'").execute(&pool).await.unwrap();
     let (id, _) = crate::auth::tokens::parse_token(&good).unwrap();
-    let wrong_secret = format!("dsync_{id}_{}", "f".repeat(64));
+    let wrong_secret = format!("msync_{id}_{}", "f".repeat(64));
     let app = app!(ctx(&pool, Arc::new(MockStripe::default()), true));
 
     // The REST 401 body, from a v1 REST route.
@@ -388,7 +388,7 @@ async fn execute_is_refused_and_unlisted_unless_enabled_then_pays_through_mock_s
     assert!(!listed(&v).contains(&EXECUTE_TOOL.to_string()), "not listed even with every scope");
     let v = tool!(off, &executor, EXECUTE_TOOL, json!({"run_id": run_id}));
     assert!(is_error(&v));
-    assert!(text(&v).contains("DSYNC_MCP_ALLOW_EXECUTE=true") && text(&v).contains("operator"), "{}", text(&v));
+    assert!(text(&v).contains("MSYNC_MCP_ALLOW_EXECUTE=true") && text(&v).contains("operator"), "{}", text(&v));
     assert_eq!(stripe.transfers.lock().unwrap().len(), 0);
     let v = tool!(off, &executor, "payouts_ledger_list", json!({"status": "pending_approval"}));
     assert_eq!(structured(&v)["entries"].as_array().unwrap().len(), 1, "row still pending");

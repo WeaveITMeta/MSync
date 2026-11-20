@@ -36,7 +36,7 @@ pub const ORG_ID: &str = crate::auth::DEFAULT_ORG;
 
 /// Shown when a payout policy write is refused because the CRA is the author.
 pub const POLICY_AUTHORED_IN_CRA: &str =
-    "payout policy is authored in the CRA repository (.dsync/payouts.toml) while a CRA snapshot is active; change it there through a reviewed commit";
+    "payout policy is authored in the CRA repository (.msync/payouts.toml) while a CRA snapshot is active; change it there through a reviewed commit";
 
 // ------------------------------------------------------------------ outcome
 
@@ -108,7 +108,7 @@ pub fn parse_stored(row: &SnapshotRow) -> Result<Snapshot, String> {
 /// Load one commit of the CRA repository.
 ///
 /// `pusher` is the authenticated pusher from a verified push webhook (None for a
-/// reload). `owners` is engine configuration (`DSYNC_OWNER_MEMBER_IDS`).
+/// reload). `owners` is engine configuration (`MSYNC_OWNER_MEMBER_IDS`).
 ///
 /// Order: SHA check, idempotency, fetch files at the SHA, change context, parse and
 /// validate, plan against the active snapshot, authorize against the active snapshot,
@@ -211,7 +211,7 @@ pub async fn load_commit(
     };
     let plan = plan_change(old.as_ref(), &new);
     if plan.is_empty() {
-        info!("CRA commit {} changes nothing in .dsync/; no-op", sha);
+        info!("CRA commit {} changes nothing in .msync/; no-op", sha);
         return Ok(LoadOutcome::NoChange { commit_sha: sha });
     }
     let plan_md = plan.render_markdown();
@@ -602,7 +602,7 @@ pub async fn cra_active(pool: &SqlitePool, org: &str) -> Result<bool, sqlx::Erro
 
 // ------------------------------------------------------------------ context
 
-/// The CRA repository and branch (`DSYNC_CRA_REPO`, `DSYNC_CRA_BRANCH`).
+/// The CRA repository and branch (`MSYNC_CRA_REPO`, `MSYNC_CRA_BRANCH`).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct CraSettings {
     pub repo: CraRepo,
@@ -611,7 +611,7 @@ pub struct CraSettings {
 
 #[derive(Debug, thiserror::Error)]
 pub enum CraRuntimeError {
-    #[error("no CRA repository is configured (DSYNC_CRA_REPO)")]
+    #[error("no CRA repository is configured (MSYNC_CRA_REPO)")]
     NotConfigured,
     #[error(transparent)]
     Source(#[from] SourceError),
@@ -626,7 +626,7 @@ pub struct CraContext {
     pub pool: SqlitePool,
     pub handle: CraHandle,
     pub directory: Arc<dyn Directory>,
-    /// Engine owners (`DSYNC_OWNER_MEMBER_IDS` entries: member ids and `provider:login`).
+    /// Engine owners (`MSYNC_OWNER_MEMBER_IDS` entries: member ids and `provider:login`).
     pub owners: Vec<String>,
     pub settings: Option<CraSettings>,
     pub source: Option<Arc<dyn CraSource>>,

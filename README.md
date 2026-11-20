@@ -1,10 +1,10 @@
-# DSync - Discord Bot for Merit-Based Open Source Communities
+# MSync (MeritSync) - Discord Bot for Merit-Based Open Source Communities
 
 [![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
-[![CI](https://github.com/yourusername/dsync/actions/workflows/ci.yml/badge.svg)](https://github.com/yourusername/dsync/actions/workflows/ci.yml)
+[![CI](https://github.com/yourusername/msync/actions/workflows/ci.yml/badge.svg)](https://github.com/yourusername/msync/actions/workflows/ci.yml)
 [![Discord](https://img.shields.io/discord/YOUR_DISCORD_ID?color=7289da&logo=discord&logoColor=white)](https://discord.gg/YOUR_INVITE)
 
-DSync is a powerful Discord bot template that creates a merit-based open source community by automatically syncing GitHub contributions with Discord roles. Built with Rust and Actix, it integrates CodeRabbit for automated code quality assessment and creates a self-improving software ecosystem.
+MSync is a powerful Discord bot template that creates a merit-based open source community by automatically syncing GitHub contributions with Discord roles. Built with Rust and Actix, it integrates CodeRabbit for automated code quality assessment and creates a self-improving software ecosystem.
 
 ## 🚀 Features
 
@@ -61,8 +61,8 @@ High-Quality PR → CodeRabbit Review → Merit Points → Discord Role Update
 
 1. **Clone the repository**
    ```bash
-   git clone https://github.com/yourusername/dsync.git
-   cd dsync
+   git clone https://github.com/yourusername/msync.git
+   cd msync
    ```
 
 2. **Set up environment variables**
@@ -80,7 +80,7 @@ High-Quality PR → CodeRabbit Review → Merit Points → Discord Role Update
 4. **Build and run**
    ```bash
    cargo build --release
-   ./target/release/dsync
+   ./target/release/msync
    ```
 
 ### Discord Bot Setup
@@ -124,7 +124,7 @@ GITHUB_REPO_NAME=your_repo
 # CodeRabbit
 CODERABBIT_API_KEY=your_api_key
 
-# Database
+# Database (the default file keeps its pre-rename name, so existing data is kept)
 DATABASE_URL=sqlite://dsync.db
 
 # Server

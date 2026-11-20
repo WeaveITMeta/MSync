@@ -27,7 +27,7 @@ pub fn merit_rules_for(handle: &CraHandle) -> Arc<MeritRules> {
 }
 
 /// Repository registry in force: the active CRA snapshot's `org.toml` `[[foundry]]`, or
-/// `DSYNC_FOUNDRY_REPOS` when no snapshot is active.
+/// `MSYNC_FOUNDRY_REPOS` when no snapshot is active.
 pub fn foundry_registry(state: &AppState) -> Arc<RepoRegistry> {
     foundry_registry_for(&state.cra.handle, &state.config.foundry_repos)
 }

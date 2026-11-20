@@ -1,5 +1,5 @@
 schema = 1
-rubric = "dsync-rubric-v1"
+rubric = "msync-rubric-v1"
 scorers = ["agent"]
 min_scorers = 1
 score_window_days = 7

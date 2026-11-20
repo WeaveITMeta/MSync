@@ -63,7 +63,7 @@ pub async fn link_for_account(stripe: &dyn StripeApi, cfg: &PaymentConfig, accou
         .map_err(|e| OnboardError::Stripe(e.to_string()))
 }
 
-/// Refresh URL carries an HMAC (keyed by DSYNC_ADMIN_TOKEN) so only links DSync issued can be regenerated.
+/// Refresh URL carries an HMAC (keyed by MSYNC_ADMIN_TOKEN) so only links MSync issued can be regenerated.
 pub fn refresh_url(cfg: &PaymentConfig, account_id: &str) -> String {
     match refresh_sig(cfg, account_id) {
         Some(sig) => format!("{}/payouts/refresh?account={}&sig={}", cfg.public_url, account_id, sig),

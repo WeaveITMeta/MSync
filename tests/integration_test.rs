@@ -1,5 +1,5 @@
-use dsync::config::Config;
-use dsync::models::{Contributor, ContributionStatus};
+use msync::config::Config;
+use msync::models::{Contributor, ContributionStatus};
 use sqlx::sqlite::SqlitePool;
 use std::env;
 

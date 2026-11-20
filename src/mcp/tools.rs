@@ -42,7 +42,7 @@ pub const TOOLS: &[ToolDef] = &[
         name: "rubric_get",
         title: "Get the merit rubric",
         scope: None,
-        description: "Returns the fixed merit rubric dsync-rubric-v1: its id and pinned SHA-256 hash, the six criteria with \
+        description: "Returns the fixed merit rubric msync-rubric-v1: its id and pinned SHA-256 hash, the six criteria with \
             their weights and the meaning of each level 0 to 4, the hard gates, the score formula, the points formula and \
             the event rules in force. Call this before merit_score_submit: a submission must echo the id and hash exactly.",
         input_schema: no_args_schema,
@@ -53,7 +53,7 @@ pub const TOOLS: &[ToolDef] = &[
         name: "merit_score_submit",
         title: "Submit a rubric score",
         scope: Some(scopes::MERIT_SCORE),
-        description: "Scores one merged or open change (a pull request or merge request) against dsync-rubric-v1. You are \
+        description: "Scores one merged or open change (a pull request or merge request) against msync-rubric-v1. You are \
             the scorer: the token's member is recorded, and you cannot name anyone else. Give all six criteria, each with a \
             level 0 to 4 and at least 20 characters of evidence you checked yourself. Set ci_passed and reverted truthfully: \
             ci_passed false caps the score at 40 and reverted true sets it to 0. You may score a change only once, and never \
@@ -161,7 +161,7 @@ pub const TOOLS: &[ToolDef] = &[
         title: "List payees",
         scope: Some(scopes::PAYEES_READ),
         description: "Lists the people and companies that can be paid (payees), optionally by status (active, paused, closed), \
-            with their payee keys, Stripe Connect account state and tax form status. DSync stores no bank or card numbers. \
+            with their payee keys, Stripe Connect account state and tax form status. MSync stores no bank or card numbers. \
             Compensation data is confidential; never repeat it in a public place.",
         input_schema: status_schema,
         read_only: true,
@@ -304,7 +304,7 @@ fn tool_json(t: &ToolDef) -> Value {
                 || t.name == "invoice_approve",
             "openWorldHint": t.name == EXECUTE_TOOL,
         },
-        "_meta": {"dsync/scope": t.scope},
+        "_meta": {"msync/scope": t.scope},
     })
 }
 
@@ -480,7 +480,7 @@ pub async fn call(ctx: &McpContext, p: &Principal, name: &str, args: Option<Valu
     };
     if tool.name == EXECUTE_TOOL && !ctx.allow_execute {
         return Ok(failure(
-            "payouts_run_execute is disabled on this server. An operator must set DSYNC_MCP_ALLOW_EXECUTE=true and restart \
+            "payouts_run_execute is disabled on this server. An operator must set MSYNC_MCP_ALLOW_EXECUTE=true and restart \
              the server to enable it. Until then, execute runs through the REST API with a payouts.execute token.",
         ));
     }

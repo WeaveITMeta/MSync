@@ -1,4 +1,4 @@
-//! `POST /api/v1/tokens` (tokens.manage, or the legacy DSYNC_ADMIN_TOKEN as bootstrap) and
+//! `POST /api/v1/tokens` (tokens.manage, or the legacy MSYNC_ADMIN_TOKEN as bootstrap) and
 //! `POST /api/v1/tokens/{id}/revoke`.
 
 use super::tokens::{self, NewToken, TokenCreator, TokenError};

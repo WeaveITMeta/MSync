@@ -1,11 +1,11 @@
 [package]
-name = "dsync"
+name = "msync"
 version = "0.1.0"
 edition = "2021"
-authors = ["DSync Contributors"]
+authors = ["MSync Contributors"]
 license = "Apache-2.0"
 description = "A Discord bot template for merit-based open source community management"
-repository = "https://github.com/yourusername/dsync"
+repository = "https://github.com/yourusername/msync"
 keywords = ["discord", "bot", "github", "merit", "community"]
 categories = ["web-programming", "command-line-utilities"]
 

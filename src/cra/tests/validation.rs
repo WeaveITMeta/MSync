@@ -271,7 +271,7 @@ fn max_holders_is_enforced_on_live_grants() {
 
 #[test]
 fn an_unknown_rubric_is_refused() {
-    assert_refused(&edit(base(), F::Merit, "dsync-rubric-v1", "my-rubric"), E::UnknownRubric);
+    assert_refused(&edit(base(), F::Merit, "msync-rubric-v1", "my-rubric"), E::UnknownRubric);
 }
 
 #[test]

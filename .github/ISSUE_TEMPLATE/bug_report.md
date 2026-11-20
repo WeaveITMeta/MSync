@@ -1,6 +1,6 @@
 ---
 name: Bug report
-about: Create a report to help us improve DSync
+about: Create a report to help us improve MSync
 title: '[BUG] '
 labels: 'bug'
 assignees: ''
@@ -24,7 +24,7 @@ If applicable, add screenshots to help explain your problem.
 ## 🖥️ Environment
 - OS: [e.g. Ubuntu 22.04]
 - Rust Version: [e.g. 1.75.0]
-- DSync Version: [e.g. 0.1.0]
+- MSync Version: [e.g. 0.1.0]
 - Discord.js Version: [from Cargo.lock]
 
 ## 📝 Logs

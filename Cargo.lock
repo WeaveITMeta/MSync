@@ -783,37 +783,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1aaf95b3e5c8f23aa320147307562d361db0ae0d51242340f558153b4eb2439b"
 
 [[package]]
-name = "dsync"
-version = "0.1.0"
-dependencies = [
- "actix-rt",
- "actix-web",
- "anyhow",
- "async-trait",
- "chrono",
- "config",
- "dotenv",
- "getrandom 0.3.3",
- "hex",
- "hmac",
- "mockito",
- "octocrab",
- "reqwest",
- "serde",
- "serde_json",
- "serenity",
- "sha2",
- "sqlx",
- "subtle",
- "thiserror 1.0.69",
- "tokio",
- "toml",
- "tracing",
- "tracing-subscriber",
- "uuid",
-]
-
-[[package]]
 name = "either"
 version = "1.15.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1805,6 +1774,37 @@ dependencies = [
  "serde_urlencoded",
  "similar",
  "tokio",
+]
+
+[[package]]
+name = "msync"
+version = "0.1.0"
+dependencies = [
+ "actix-rt",
+ "actix-web",
+ "anyhow",
+ "async-trait",
+ "chrono",
+ "config",
+ "dotenv",
+ "getrandom 0.3.3",
+ "hex",
+ "hmac",
+ "mockito",
+ "octocrab",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "serenity",
+ "sha2",
+ "sqlx",
+ "subtle",
+ "thiserror 1.0.69",
+ "tokio",
+ "toml",
+ "tracing",
+ "tracing-subscriber",
+ "uuid",
 ]
 
 [[package]]

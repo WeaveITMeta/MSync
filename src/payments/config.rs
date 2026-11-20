@@ -4,20 +4,20 @@ use std::env;
 /// Payment settings, all from env. Defaults are placeholders; set real values in .env.
 #[derive(Debug, Clone)]
 pub struct PaymentConfig {
-    /// Branches whose merged PRs create ledger rows (DSYNC_PAY_BRANCHES, default "main,upcoming").
+    /// Branches whose merged PRs create ledger rows (MSYNC_PAY_BRANCHES, default "main,upcoming").
     pub branches: Vec<String>,
-    /// Per-branch base amount in cents (DSYNC_PAY_BASE_CENTS_<BRANCH>).
+    /// Per-branch base amount in cents (MSYNC_PAY_BASE_CENTS_<BRANCH>).
     pub base_cents: HashMap<String, i64>,
-    /// Each merit point adds this fraction of the base (DSYNC_PAY_MERIT_MULTIPLIER, default 0.01 = +1%).
+    /// Each merit point adds this fraction of the base (MSYNC_PAY_MERIT_MULTIPLIER, default 0.01 = +1%).
     pub merit_multiplier: f64,
-    /// Hard cap per ledger row in cents (DSYNC_PAY_MAX_CENTS, default 10000).
+    /// Hard cap per ledger row in cents (MSYNC_PAY_MAX_CENTS, default 10000).
     pub max_cents: i64,
-    /// ISO currency (DSYNC_PAY_CURRENCY, default "usd").
+    /// ISO currency (MSYNC_PAY_CURRENCY, default "usd").
     pub currency: String,
     pub stripe_secret_key: Option<String>,
     pub stripe_webhook_secret: Option<String>,
     pub admin_token: Option<String>,
-    /// Base URL used for Stripe onboarding refresh/return links (DSYNC_PUBLIC_URL).
+    /// Base URL used for Stripe onboarding refresh/return links (MSYNC_PUBLIC_URL).
     pub public_url: String,
 }
 
@@ -30,7 +30,7 @@ pub fn branch_env_key(branch: &str) -> String {
         .chars()
         .map(|c| if c.is_ascii_alphanumeric() { c } else { '_' })
         .collect();
-    format!("DSYNC_PAY_BASE_CENTS_{}", b)
+    format!("MSYNC_PAY_BASE_CENTS_{}", b)
 }
 
 impl PaymentConfig {
@@ -38,17 +38,21 @@ impl PaymentConfig {
         Self::from_lookup(|k| env::var(k).ok())
     }
 
+    /// Every key, including the per-branch `MSYNC_PAY_BASE_CENTS_<BRANCH>`, goes through
+    /// [`crate::config::env_var_with`]: the `MSYNC_` name wins, its old twin is the fallback.
     pub fn from_lookup<F: Fn(&str) -> Option<String>>(get: F) -> Self {
-        let non_empty = |k: &str| get(k).map(|v| v.trim().to_string()).filter(|v| !v.is_empty());
+        let non_empty = |k: &str| {
+            crate::config::env_var_with(k, &get).map(|v| v.trim().to_string()).filter(|v| !v.is_empty())
+        };
 
-        let branches: Vec<String> = non_empty("DSYNC_PAY_BRANCHES")
+        let branches: Vec<String> = non_empty("MSYNC_PAY_BRANCHES")
             .unwrap_or_else(|| "main,upcoming".to_string())
             .split(',')
             .map(|b| b.trim().to_string())
             .filter(|b| !b.is_empty())
             .collect();
 
-        let default_base = non_empty("DSYNC_PAY_BASE_CENTS_DEFAULT")
+        let default_base = non_empty("MSYNC_PAY_BASE_CENTS_DEFAULT")
             .and_then(|v| v.parse().ok())
             .unwrap_or(DEFAULT_BASE_CENTS);
 
@@ -65,17 +69,17 @@ impl PaymentConfig {
         PaymentConfig {
             branches,
             base_cents,
-            merit_multiplier: non_empty("DSYNC_PAY_MERIT_MULTIPLIER")
+            merit_multiplier: non_empty("MSYNC_PAY_MERIT_MULTIPLIER")
                 .and_then(|v| v.parse().ok())
                 .unwrap_or(0.01),
-            max_cents: non_empty("DSYNC_PAY_MAX_CENTS")
+            max_cents: non_empty("MSYNC_PAY_MAX_CENTS")
                 .and_then(|v| v.parse().ok())
                 .unwrap_or(10_000),
-            currency: non_empty("DSYNC_PAY_CURRENCY").unwrap_or_else(|| "usd".to_string()).to_lowercase(),
+            currency: non_empty("MSYNC_PAY_CURRENCY").unwrap_or_else(|| "usd".to_string()).to_lowercase(),
             stripe_secret_key: non_empty("STRIPE_SECRET_KEY"),
             stripe_webhook_secret: non_empty("STRIPE_WEBHOOK_SECRET"),
-            admin_token: non_empty("DSYNC_ADMIN_TOKEN"),
-            public_url: non_empty("DSYNC_PUBLIC_URL")
+            admin_token: non_empty("MSYNC_ADMIN_TOKEN"),
+            public_url: non_empty("MSYNC_PUBLIC_URL")
                 .unwrap_or_else(|| "http://localhost:8080".to_string())
                 .trim_end_matches('/')
                 .to_string(),

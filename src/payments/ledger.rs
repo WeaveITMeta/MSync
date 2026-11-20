@@ -207,6 +207,14 @@ pub async fn pay_guarded(
     claim_and_transfer(pool, stripe, id, by, Some(guard)).await
 }
 
+/// Stripe idempotency key for a ledger row: `dsync-ledger-<id>`.
+///
+/// Keeps its pre-rename name on purpose (contract 12.1): a payout approved before the MSync
+/// rename and retried after it must present the same key, or Stripe could pay twice.
+pub fn stripe_idempotency_key(ledger_id: &str) -> String {
+    format!("dsync-ledger-{}", ledger_id)
+}
+
 /// The ONLY place a transfer is created. Claims the row atomically (status pending/failed ->
 /// approved, plus any guard conditions in the same UPDATE) and uses idempotency key
 /// `dsync-ledger-<id>` so a retry can never pay twice on Stripe's side.
@@ -371,7 +379,7 @@ async fn claim_and_transfer(
         amount_cents: entry.amount_cents,
         currency: entry.currency.clone(),
         destination,
-        idempotency_key: format!("dsync-ledger-{}", entry.id),
+        idempotency_key: stripe_idempotency_key(&entry.id),
         ledger_id: entry.id.clone(),
         pr_number: entry.pr_number,
     };

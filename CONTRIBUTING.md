@@ -1,10 +1,10 @@
-# Contributing to DSync
+# Contributing to MSync (MeritSync)
 
-Thank you for your interest in contributing to DSync! This document provides guidelines and instructions for contributing to our merit-based open source community.
+Thank you for your interest in contributing to MSync! This document provides guidelines and instructions for contributing to our merit-based open source community.
 
 ## 🎯 Our Merit-Based Approach
 
-DSync operates on a merit-based system where contributions are automatically evaluated and rewarded. Your Discord roles will automatically update based on your contribution quality and volume.
+MSync operates on a merit-based system where contributions are automatically evaluated and rewarded. Your Discord roles will automatically update based on your contribution quality and volume.
 
 ## 📋 Prerequisites
 
@@ -17,16 +17,16 @@ Before contributing, ensure you have:
 ## 🔄 Contribution Process
 
 ### 1. Find an Issue
-- Check our [issue tracker](https://github.com/yourusername/dsync/issues)
+- Check our [issue tracker](https://github.com/yourusername/msync/issues)
 - Look for issues labeled `good first issue` or `help wanted`
 - Comment on the issue to claim it
 
 ### 2. Fork and Clone
 ```bash
 # Fork the repository on GitHub, then:
-git clone https://github.com/YOUR_USERNAME/dsync.git
-cd dsync
-git remote add upstream https://github.com/ORIGINAL_OWNER/dsync.git
+git clone https://github.com/YOUR_USERNAME/msync.git
+cd msync
+git remote add upstream https://github.com/ORIGINAL_OWNER/msync.git
 ```
 
 ### 3. Create a Branch

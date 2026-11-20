@@ -178,7 +178,7 @@ pub struct LevelInput {
     pub evidence: String,
 }
 
-/// All six criteria of `dsync-rubric-v1`, each exactly once.
+/// All six criteria of `msync-rubric-v1`, each exactly once.
 #[derive(Debug, Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct CriteriaInput {

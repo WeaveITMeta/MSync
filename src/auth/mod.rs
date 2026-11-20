@@ -1,6 +1,6 @@
 //! API tokens, principals, scopes and the rank seam (contract section 7).
 //!
-//! Tokens are `dsync_<id>_<secret>`, stored as SHA-256 hex, bound to a member id. The actor on
+//! Tokens are `msync_<id>_<secret>`, stored as SHA-256 hex, bound to a member id. The actor on
 //! every write is the token's member; no request body names its own actor.
 
 pub mod directory;

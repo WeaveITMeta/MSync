@@ -1,4 +1,4 @@
-//! Where a CRA load gets its facts: the five `.dsync/` files at an exact commit
+//! Where a CRA load gets its facts: the five `.msync/` files at an exact commit
 //! and the [`ChangeContext`] of that commit (contract section 4 steps 1 and 4).
 //!
 //! Rules every implementation follows:
@@ -24,13 +24,13 @@ use serde_json::Value;
 use super::{ChangeContext, CraFileKind, CraFiles, FoundryIdentity};
 use crate::foundry::FoundryProvider;
 
-/// Largest `.dsync/` file the loader accepts. Anything larger is refused.
+/// Largest `.msync/` file the loader accepts. Anything larger is refused.
 pub const MAX_FILE_BYTES: usize = 512 * 1024;
-const USER_AGENT_VALUE: &str = "dsync-cra-loader";
+const USER_AGENT_VALUE: &str = "msync-cra-loader";
 const PER_PAGE: usize = 100;
 const MAX_PAGES: usize = 20;
 
-/// The CRA repository: `provider:host:path` (env `DSYNC_CRA_REPO`).
+/// The CRA repository: `provider:host:path` (env `MSYNC_CRA_REPO`).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CraRepo {
     pub provider: FoundryProvider,
@@ -53,16 +53,16 @@ impl CraRepo {
     pub fn parse(spec: &str) -> Result<Self, String> {
         let parts: Vec<&str> = spec.trim().split(':').map(str::trim).collect();
         if parts.len() != 3 {
-            return Err(format!("DSYNC_CRA_REPO: '{spec}' is not provider:host:path"));
+            return Err(format!("MSYNC_CRA_REPO: '{spec}' is not provider:host:path"));
         }
         let provider = FoundryProvider::parse(parts[0])
-            .ok_or_else(|| format!("DSYNC_CRA_REPO: unknown provider '{}'", parts[0]))?;
+            .ok_or_else(|| format!("MSYNC_CRA_REPO: unknown provider '{}'", parts[0]))?;
         let repo = CraRepo::new(provider, parts[1], parts[2]);
         if repo.host.is_empty() || repo.path.is_empty() || !repo.path.contains('/') {
-            return Err(format!("DSYNC_CRA_REPO: '{spec}' needs a host and an owner/repo path"));
+            return Err(format!("MSYNC_CRA_REPO: '{spec}' needs a host and an owner/repo path"));
         }
         if repo.path.split('/').any(|s| s.is_empty() || s == "." || s == "..") {
-            return Err(format!("DSYNC_CRA_REPO: '{spec}' has an invalid path"));
+            return Err(format!("MSYNC_CRA_REPO: '{spec}' has an invalid path"));
         }
         Ok(repo)
     }
@@ -98,7 +98,7 @@ pub trait CraSource: Send + Sync {
     /// The repository this source reads.
     fn repo(&self) -> &CraRepo;
 
-    /// The five `.dsync/` files at exactly `sha`.
+    /// The five `.msync/` files at exactly `sha`.
     async fn fetch_files(&self, sha: &str) -> Result<CraFiles, SourceError>;
 
     /// Who made the change at `sha` and how it arrived. `pusher` is the
@@ -323,13 +323,13 @@ impl CraSource for GitHubSource {
         let mut out = CraFiles::default();
         for kind in [CraFileKind::Org, CraFileKind::Roles, CraFileKind::Members, CraFileKind::Merit, CraFileKind::Payouts] {
             let name = kind.file_name();
-            let url = self.url(&format!("/contents/.dsync/{name}?ref={sha}"));
+            let url = self.url(&format!("/contents/.msync/{name}?ref={sha}"));
             let resp = self
                 .get(url, "application/vnd.github.raw+json")
                 .send()
                 .await
-                .map_err(|e| SourceError::Api(format!(".dsync/{name}: {e}")))?;
-            let text = read_text(resp, &format!(".dsync/{name}")).await?;
+                .map_err(|e| SourceError::Api(format!(".msync/{name}: {e}")))?;
+            let text = read_text(resp, &format!(".msync/{name}")).await?;
             match kind {
                 CraFileKind::Org => out.org = text,
                 CraFileKind::Roles => out.roles = text,
@@ -509,13 +509,13 @@ impl CraSource for GitLabSource {
         let mut out = CraFiles::default();
         for kind in [CraFileKind::Org, CraFileKind::Roles, CraFileKind::Members, CraFileKind::Merit, CraFileKind::Payouts] {
             let name = kind.file_name();
-            let file = encode_component(&format!(".dsync/{name}"));
+            let file = encode_component(&format!(".msync/{name}"));
             let resp = self
                 .get(self.url(&format!("/repository/files/{file}/raw?ref={sha}")))
                 .send()
                 .await
-                .map_err(|e| SourceError::Api(format!(".dsync/{name}: {e}")))?;
-            let text = read_text(resp, &format!(".dsync/{name}")).await?;
+                .map_err(|e| SourceError::Api(format!(".msync/{name}: {e}")))?;
+            let text = read_text(resp, &format!(".msync/{name}")).await?;
             match kind {
                 CraFileKind::Org => out.org = text,
                 CraFileKind::Roles => out.roles = text,

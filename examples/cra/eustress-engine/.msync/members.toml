@@ -1,7 +1,7 @@
 schema = 1
 
 # Owners (rank 1000) are engine configuration, never CRA content. This example
-# assumes DSYNC_OWNER_MEMBER_IDS = "github:example-founder".
+# assumes MSYNC_OWNER_MEMBER_IDS = "github:example-founder".
 # Contributors who are not listed here still earn merit under their GitHub or
 # GitLab login and link Discord by OAuth proof.
 

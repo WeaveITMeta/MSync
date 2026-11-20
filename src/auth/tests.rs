@@ -33,7 +33,7 @@ async fn mint(pool: &SqlitePool, member: &str, scopes: &[&str], payee: &[&str]) 
 async fn token_is_shown_once_stored_hashed_and_authenticates() {
     let pool = pool().await;
     let t = mint(&pool, "bob", &[scopes::PAYOUTS_READ], &["Bob-GH"]).await;
-    let (id, secret) = parse_token(&t.token).expect("dsync_<id>_<secret>");
+    let (id, secret) = parse_token(&t.token).expect("msync_<id>_<secret>");
     assert_eq!(id, t.id);
     assert_eq!(secret.len(), 64, "32 random bytes, hex");
 
@@ -58,12 +58,26 @@ async fn wrong_secret_is_refused() {
     let pool = pool().await;
     let t = mint(&pool, "bob", &[scopes::PAYOUTS_READ], &[]).await;
     let (id, _) = parse_token(&t.token).unwrap();
-    let forged = format!("dsync_{id}_{}", "0".repeat(64));
+    let forged = format!("msync_{id}_{}", "0".repeat(64));
     assert!(matches!(authenticate_token(&pool, &forged, Utc::now()).await, Err(AuthError::BadSecret)));
     // Malformed and unknown ids are refused too.
-    assert!(matches!(authenticate_token(&pool, "dsync_nope", Utc::now()).await, Err(AuthError::Malformed)));
-    let unknown = format!("dsync_{}_{}", "a".repeat(16), "0".repeat(64));
+    assert!(matches!(authenticate_token(&pool, "msync_nope", Utc::now()).await, Err(AuthError::Malformed)));
+    let unknown = format!("msync_{}_{}", "a".repeat(16), "0".repeat(64));
     assert!(matches!(authenticate_token(&pool, &unknown, Utc::now()).await, Err(AuthError::UnknownToken)));
+}
+
+/// Contract 12.1: tokens are `msync_`. The old `dsync_` prefix was never issued in a
+/// release, so a token presented with it is refused rather than translated.
+#[tokio::test]
+async fn msync_prefix_authenticates_and_old_dsync_prefix_is_refused() {
+    let pool = pool().await;
+    let t = mint(&pool, "bob", &[scopes::PAYOUTS_READ], &[]).await;
+    assert!(t.token.starts_with("msync_"), "{}", t.token);
+    assert_eq!(authenticate_token(&pool, &t.token, Utc::now()).await.unwrap().member_id, "bob");
+
+    let old = format!("dsync_{}", t.token.strip_prefix("msync_").unwrap());
+    assert!(parse_token(&old).is_none());
+    assert!(matches!(authenticate_token(&pool, &old, Utc::now()).await, Err(AuthError::Malformed)));
 }
 
 #[tokio::test]

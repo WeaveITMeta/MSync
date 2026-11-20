@@ -13,7 +13,16 @@ pub struct TransferRequest {
     pub pr_number: i64,
 }
 
-/// The Stripe operations DSync uses. Mocked in tests.
+/// Stripe idempotency key for creating a contributor's Express account.
+///
+/// Keeps its pre-rename name on purpose, for the same reason as the ledger key (contract
+/// 12.1): an account creation retried across the MSync rename must present the same key, or
+/// Stripe could open a second account for the same contributor.
+pub fn account_idempotency_key(github_username: &str) -> String {
+    format!("dsync-account-{}", github_username)
+}
+
+/// The Stripe operations MSync uses. Mocked in tests.
 #[async_trait]
 pub trait StripeApi: Send + Sync {
     async fn create_express_account(&self, github_username: &str) -> Result<String>;
@@ -33,7 +42,7 @@ impl StripeClient {
     pub fn new(secret_key: Option<String>, allow_live: bool) -> Self {
         let secret_key = match secret_key {
             Some(k) if k.contains("_live_") && !allow_live => {
-                warn!("Live Stripe key detected but DSYNC_STRIPE_ALLOW_LIVE is not true; Stripe disabled");
+                warn!("Live Stripe key detected but MSYNC_STRIPE_ALLOW_LIVE is not true; Stripe disabled");
                 None
             }
             other => other,
@@ -91,7 +100,7 @@ impl StripeApi for StripeClient {
                     p("capabilities[transfers][requested]", "true"),
                     p("metadata[github_username]", github_username),
                 ],
-                Some(&format!("dsync-account-{}", github_username)),
+                Some(&account_idempotency_key(github_username)),
             )
             .await?;
         v["id"].as_str().map(String::from).ok_or_else(|| anyhow!("Stripe account response missing id"))

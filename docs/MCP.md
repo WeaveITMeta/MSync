@@ -1,6 +1,6 @@
-# DSync MCP server
+# MSync (MeritSync) MCP server
 
-DSync exposes its merit and payout functions to AI agents through a Model Context Protocol (MCP) server at `POST /mcp`. An agent connected to it can read the rubric, score merged work, read the leaderboard, and, if its token allows, prepare, approve and execute payout runs.
+MSync exposes its merit and payout functions to AI agents through a Model Context Protocol (MCP) server at `POST /mcp`. An agent connected to it can read the rubric, score merged work, read the leaderboard, and, if its token allows, prepare, approve and execute payout runs.
 
 The server is the same engine as the REST API (`/api/v1`). It uses the same API tokens, the same scopes, and the same library functions. There is no MCP-only path to a payout or a score.
 
@@ -30,11 +30,11 @@ A tool failure message is always safe to show an agent. It never contains SQL, a
 
 ## 2. Creating a token for an agent
 
-Tokens are created with `POST /api/v1/tokens`. The first token is created with the legacy `DSYNC_ADMIN_TOKEN` (bootstrap). After that, a member with `tokens.manage` can create tokens, but only with scopes they hold, and only for themselves or a member they strictly outrank.
+Tokens are created with `POST /api/v1/tokens`. The first token is created with the legacy `MSYNC_ADMIN_TOKEN` (bootstrap). After that, a member with `tokens.manage` can create tokens, but only with scopes they hold, and only for themselves or a member they strictly outrank.
 
 ```bash
-curl -X POST https://dsync.example.org/api/v1/tokens \
-  -H "Authorization: Bearer $DSYNC_ADMIN_TOKEN" \
+curl -X POST https://msync.example.org/api/v1/tokens \
+  -H "Authorization: Bearer $MSYNC_ADMIN_TOKEN" \
   -H "Content-Type: application/json" \
   -d '{
         "label": "scoring agent",
@@ -45,21 +45,21 @@ curl -X POST https://dsync.example.org/api/v1/tokens \
       }'
 ```
 
-The response shows the token (`dsync_<id>_<secret>`) once. Store it in the agent's secret store. DSync keeps only its SHA-256.
+The response shows the token (`msync_<id>_<secret>`) once. Store it in the agent's secret store. MSync keeps only its SHA-256.
 
 - `member_id` is who the agent acts as. Every write the agent makes (a score, a run, an approval, an execution) is recorded as this member. No tool input can name a different actor, scorer or approver; an input that tries is rejected with -32602.
-- `payee_keys` are the GitHub and GitLab logins this member is paid under and has authored work under. A key starting `gitlab:` is a GitLab login (`gitlab:<login>`, or `gitlab:<host>:<login>` for a self-managed host). Any other key is a GitHub login. DSync uses these keys to stop a payee approving their own payout and to stop a scorer scoring their own work. Declare every login the member uses.
+- `payee_keys` are the GitHub and GitLab logins this member is paid under and has authored work under. A key starting `gitlab:` is a GitLab login (`gitlab:<login>`, or `gitlab:<host>:<login>` for a self-managed host). Any other key is a GitHub login. MSync uses these keys to stop a payee approving their own payout and to stop a scorer scoring their own work. Declare every login the member uses.
 - Give each agent the smallest set of scopes it needs, and an expiry.
 
 ## 3. Connecting a client
 
-Point the client at `https://<your-dsync-host>/mcp` with the token as a bearer header.
+Point the client at `https://<your-msync-host>/mcp` with the token as a bearer header.
 
 Claude Code:
 
 ```bash
-claude mcp add --transport http dsync https://dsync.example.org/mcp \
-  --header "Authorization: Bearer dsync_0123456789abcdef_..."
+claude mcp add --transport http msync https://msync.example.org/mcp \
+  --header "Authorization: Bearer msync_0123456789abcdef_..."
 ```
 
 A generic client configuration (JSON):
@@ -67,10 +67,10 @@ A generic client configuration (JSON):
 ```json
 {
   "mcpServers": {
-    "dsync": {
+    "msync": {
       "type": "http",
-      "url": "https://dsync.example.org/mcp",
-      "headers": { "Authorization": "Bearer ${DSYNC_AGENT_TOKEN}" }
+      "url": "https://msync.example.org/mcp",
+      "headers": { "Authorization": "Bearer ${MSYNC_AGENT_TOKEN}" }
     }
   }
 }
@@ -79,13 +79,13 @@ A generic client configuration (JSON):
 By hand with curl:
 
 ```bash
-curl -s https://dsync.example.org/mcp \
-  -H "Authorization: Bearer $DSYNC_AGENT_TOKEN" \
+curl -s https://msync.example.org/mcp \
+  -H "Authorization: Bearer $MSYNC_AGENT_TOKEN" \
   -H "Content-Type: application/json" \
   -d '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"curl","version":"1"}}}'
 
-curl -s https://dsync.example.org/mcp \
-  -H "Authorization: Bearer $DSYNC_AGENT_TOKEN" \
+curl -s https://msync.example.org/mcp \
+  -H "Authorization: Bearer $MSYNC_AGENT_TOKEN" \
   -H "Content-Type: application/json" \
   -d '{"jsonrpc":"2.0","id":2,"method":"tools/list"}'
 ```
@@ -100,7 +100,7 @@ Every successful result carries the same JSON twice: as `structuredContent` and 
 
 | Tool | Scope | What it does |
 |---|---|---|
-| `rubric_get` | any valid token | The rubric `dsync-rubric-v1`: id, pinned hash, criteria, weights, level meanings, gates, score and points formulas, event rules |
+| `rubric_get` | any valid token | The rubric `msync-rubric-v1`: id, pinned hash, criteria, weights, level meanings, gates, score and points formulas, event rules |
 | `merit_score_submit` | `merit.score` | Score one change against the rubric as the token's member |
 | `merit_scores_list` | `merit.read` | Every score for one change, and the aggregate |
 | `leaderboard_get` | `merit.read` | Totals, or one repository's XP, with the per-repository drilldown; private repository names included |
@@ -139,8 +139,8 @@ Result (`structuredContent`, shortened):
 
 ```json
 {
-  "id": "dsync-rubric-v1",
-  "hash": "b0e7b801aaf29a4c7b2cb4ac216673040af893bc538309dbc565f2a1bc4faa78",
+  "id": "msync-rubric-v1",
+  "hash": "25108d2fb76f007c70115a0479e399f78e47b97d3b27963e54d8517bd8d605a0",
   "criteria": [
     {"key": "impact", "weight": 30, "levels": [{"level": 0, "meaning": "no user or project effect"}, "..."]},
     "..."
@@ -149,7 +149,7 @@ Result (`structuredContent`, shortened):
   "score_formula": "score = sum(weight * level / 4), 0..100, rounded to one decimal",
   "gates": {"ci_passed_false_caps_score_at": 40.0, "reverted_true_sets_score_to": 0},
   "points_formula": "points = base_points + round((max_points - base_points) * score / 100)",
-  "rules": {"rubric": "dsync-rubric-v1", "scorers": ["agent"], "min_scorers": 1, "score_window_days": 7,
+  "rules": {"rubric": "msync-rubric-v1", "scorers": ["agent"], "min_scorers": 1, "score_window_days": 7,
             "events": {"pr_merged": {"base_points": 10, "max_points": 60}, "...": "..."}}
 }
 ```
@@ -166,7 +166,7 @@ Input:
 | `subject.host` | string, optional | Defaults to `github.com` or `gitlab.com` |
 | `subject.repo` | string | `org/repo` or `group/sub/project` |
 | `subject.subject_id` | string or integer | The global id of the pull or merge request (GitHub `pull_request.id`, GitLab `object_attributes.id`), not its number. `n<number>` when the id was unknown at ingest |
-| `rubric_id` | string | Must be `dsync-rubric-v1` |
+| `rubric_id` | string | Must be `msync-rubric-v1` |
 | `rubric_hash` | string | Must be the hash from `rubric_get` |
 | `ci_passed` | boolean | `false` caps the score at 40 |
 | `reverted` | boolean | `true` sets the score to 0 |
@@ -177,8 +177,8 @@ The scorer is built from the token: id = the token's member, source = agent, Git
 ```json
 {"jsonrpc":"2.0","id":4,"method":"tools/call","params":{"name":"merit_score_submit","arguments":{
   "subject": {"provider": "gitlab", "repo": "grp/proj", "subject_id": "555"},
-  "rubric_id": "dsync-rubric-v1",
-  "rubric_hash": "b0e7b801aaf29a4c7b2cb4ac216673040af893bc538309dbc565f2a1bc4faa78",
+  "rubric_id": "msync-rubric-v1",
+  "rubric_hash": "25108d2fb76f007c70115a0479e399f78e47b97d3b27963e54d8517bd8d605a0",
   "ci_passed": true,
   "reverted": false,
   "criteria": {
@@ -199,7 +199,7 @@ Result:
   "score": {
     "id": "6d1c...", "subject": {"provider": "gitlab", "host": "gitlab.com", "repo": "grp/proj", "subject_id": "555"},
     "scorer_id": "agent-scorer", "scorer_source": "agent",
-    "rubric_id": "dsync-rubric-v1", "rubric_hash": "b0e7...", "score": 31.3,
+    "rubric_id": "msync-rubric-v1", "rubric_hash": "b0e7...", "score": 31.3,
     "ci_passed": true, "reverted": false, "detail": {"kind": "rubric", "criteria": ["..."]}, "created_at": "2026-11-12T18:00:00Z"
   },
   "aggregate": {"score": 31.3, "counted_scorers": 1, "min_scorers": 1},
@@ -326,32 +326,32 @@ Compensation is confidential. Give an agent the payroll read scopes only when it
 
 `payouts_run_execute` moves real money, so it is off by default on MCP.
 
-- Set `DSYNC_MCP_ALLOW_EXECUTE=true` in the server environment and restart to enable it. Any other value, or no value, leaves it off. The flag is read once at startup.
-- While it is off, the tool is not listed for anyone, even a token holding every scope, and a call returns `isError: true` with: `payouts_run_execute is disabled on this server. An operator must set DSYNC_MCP_ALLOW_EXECUTE=true and restart the server to enable it. ...`
+- Set `MSYNC_MCP_ALLOW_EXECUTE=true` in the server environment and restart to enable it. Any other value, or no value, leaves it off. The flag is read once at startup.
+- While it is off, the tool is not listed for anyone, even a token holding every scope, and a call returns `isError: true` with: `payouts_run_execute is disabled on this server. An operator must set MSYNC_MCP_ALLOW_EXECUTE=true and restart the server to enable it. ...`
 - While it is on, the caller still needs `payouts.execute`.
 - The REST route `POST /api/v1/payouts/runs/{id}/execute` is not affected by this flag.
 
 ## 6. What an agent must never be given
 
-- **Never `payouts.approve` and `payouts.execute` on the same token, and never to the same member.** Approval is the human check on a payout. One agent holding both can approve a run and pay it with no second party. Keep execute with a person or a separate, tightly held token, and keep `DSYNC_MCP_ALLOW_EXECUTE` off unless that decision has been made.
+- **Never `payouts.approve` and `payouts.execute` on the same token, and never to the same member.** Approval is the human check on a payout. One agent holding both can approve a run and pay it with no second party. Keep execute with a person or a separate, tightly held token, and keep `MSYNC_MCP_ALLOW_EXECUTE` off unless that decision has been made.
 - **Never `payouts.prepare` and `payouts.approve` and `payouts.execute` together.** That is the full payout path in one credential.
 - **Never `payouts.policy`.** An agent that can rewrite the policy can lower `approvals_required`, remove limits, or shorten the hold. Policy changes belong to people.
 - **Never `tokens.manage`.** It lets the holder mint more tokens with the scopes it holds.
-- **Never a token without its payee keys.** A token for a member who is ever paid, or who authors work, must declare every GitHub or GitLab login that member uses. Without them DSync cannot tell that the member is scoring their own work (see section 7).
+- **Never a token without its payee keys.** A token for a member who is ever paid, or who authors work, must declare every GitHub or GitLab login that member uses. Without them MSync cannot tell that the member is scoring their own work (see section 7).
 - **Never a token without an expiry** for an automated agent. Rotate it. Revoke it with `POST /api/v1/tokens/{id}/revoke` when the agent is retired.
 - Give a scoring agent `merit.read` and `merit.score` only. Give a reporting agent `merit.read` and `payouts.read` only.
 
 ## 7. Known limit: self-score detection depends on payee keys
 
-A scorer may not score work they authored (contract section 6). Today DSync decides who the scorer is on GitHub and GitLab from the payee keys declared on the member's tokens. A key starting `gitlab:` is a GitLab login; any other key is a GitHub login. DSync also follows linked GitHub and GitLab identities of the author's contributor record.
+A scorer may not score work they authored (contract section 6). Today MSync decides who the scorer is on GitHub and GitLab from the payee keys declared on the member's tokens. A key starting `gitlab:` is a GitLab login; any other key is a GitHub login. MSync also follows linked GitHub and GitLab identities of the author's contributor record.
 
-If a member's tokens declare no payee keys, DSync does not know the member's GitHub and GitLab logins, so it does not recognize the member as the author of their own work and accepts the score. This is a known limit. A later round supplies member identities from the CRA (`members.toml` `[member.identities]`) and closes it. The test `known_limit_scorer_without_payee_keys_is_not_recognized_as_author` pins today's behaviour so that change is made deliberately.
+If a member's tokens declare no payee keys, MSync does not know the member's GitHub and GitLab logins, so it does not recognize the member as the author of their own work and accepts the score. This is a known limit. A later round supplies member identities from the CRA (`members.toml` `[member.identities]`) and closes it. The test `known_limit_scorer_without_payee_keys_is_not_recognized_as_author` pins today's behaviour so that change is made deliberately.
 
 Until then, the mitigation is operational: always declare payee keys on tokens (section 6). Once merit rules load from the CRA (`merit.toml`), a `min_scorers` greater than 1 also means one scorer alone cannot set a score. Today the rules are the contract 3.4 defaults, with `min_scorers = 1`.
 
 ## 8. Operator checklist
 
 1. Create one token per agent with the smallest scopes, its payee keys, and an expiry.
-2. Leave `DSYNC_MCP_ALLOW_EXECUTE` unset unless an agent is meant to execute payouts.
+2. Leave `MSYNC_MCP_ALLOW_EXECUTE` unset unless an agent is meant to execute payouts.
 3. Serve `/mcp` over HTTPS.
 4. Watch the server log for `mcp auth refused` and for `internal error` details.
