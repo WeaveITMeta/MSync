@@ -279,7 +279,11 @@ fn de_opt_date<'de, D: Deserializer<'de>>(d: D) -> Result<Option<NaiveDate>, D::
             let s = dt.to_string();
             NaiveDate::parse_from_str(&s, "%Y-%m-%d")
                 .map(Some)
-                .map_err(|_| serde::de::Error::custom(format!("expected a plain date YYYY-MM-DD, found `{s}`")))
+                .map_err(|_| {
+                    serde::de::Error::custom(format!(
+                        "expected a plain date YYYY-MM-DD, found `{s}`"
+                    ))
+                })
         }
         Some(other) => Err(serde::de::Error::custom(format!(
             "expected a date YYYY-MM-DD, found {}",

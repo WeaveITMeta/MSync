@@ -40,7 +40,11 @@ const AUDIT_REASON: &str = "MSync role sync: CRA projection";
 /// Whether a Discord role may be managed: no dangerous permission, and strictly below the
 /// bot's highest role.
 pub fn classify_discord_role(perms: Permissions, position: u16, bot_top: u16) -> RoleSafety {
-    let found: Vec<String> = DANGEROUS.iter().filter(|(p, _)| perms.contains(*p)).map(|(_, n)| n.to_string()).collect();
+    let found: Vec<String> = DANGEROUS
+        .iter()
+        .filter(|(p, _)| perms.contains(*p))
+        .map(|(_, n)| n.to_string())
+        .collect();
     if !found.is_empty() && !crate::chat::sync::mutant("discord_allows_dangerous") {
         return RoleSafety::Dangerous(found);
     }
@@ -62,7 +66,9 @@ pub fn collect_holders<'a>(
             if let Some(key) = wanted.get(rid) {
                 out.entry(key.clone()).or_default().insert(user.to_string());
             } else if crate::chat::sync::mutant("discord_keeps_unmanaged") {
-                out.entry(rid.get().to_string()).or_default().insert(user.to_string());
+                out.entry(rid.get().to_string())
+                    .or_default()
+                    .insert(user.to_string());
             }
         }
     }
@@ -71,14 +77,20 @@ pub fn collect_holders<'a>(
 fn map_err(e: serenity::Error) -> PlatformError {
     if let serenity::Error::Http(serenity::http::HttpError::UnsuccessfulRequest(r)) = &e {
         if r.status_code.as_u16() == 429 {
-            return PlatformError::RateLimited { retry_after_secs: None };
+            return PlatformError::RateLimited {
+                retry_after_secs: None,
+            };
         }
     }
     PlatformError::Api(e.to_string())
 }
 
 fn parse_id(s: &str, what: &str) -> Result<u64, PlatformError> {
-    s.trim().parse::<u64>().ok().filter(|v| *v != 0).ok_or_else(|| PlatformError::Api(format!("{what} `{s}` is not a Discord id")))
+    s.trim()
+        .parse::<u64>()
+        .ok()
+        .filter(|v| *v != 0)
+        .ok_or_else(|| PlatformError::Api(format!("{what} `{s}` is not a Discord id")))
 }
 
 pub struct DiscordPlatform {
@@ -93,21 +105,37 @@ pub struct DiscordPlatform {
 impl DiscordPlatform {
     /// The guild: the CRA's `[discord] guild_id`, else `DISCORD_GUILD_ID`.
     pub fn guild(&self) -> Option<GuildId> {
-        let from_cra = self
-            .cra
-            .active()
-            .and_then(|a| a.snapshot.org.discord.as_ref().and_then(|d| d.guild_id.trim().parse::<u64>().ok()));
-        from_cra.or(self.fallback_guild).filter(|g| *g != 0).map(GuildId::new)
+        let from_cra = self.cra.active().and_then(|a| {
+            a.snapshot
+                .org
+                .discord
+                .as_ref()
+                .and_then(|d| d.guild_id.trim().parse::<u64>().ok())
+        });
+        from_cra
+            .or(self.fallback_guild)
+            .filter(|g| *g != 0)
+            .map(GuildId::new)
     }
 
     fn alert_channel(&self) -> Option<ChannelId> {
         let a = self.cra.active()?;
-        let id = a.snapshot.org.discord.as_ref()?.alert_channel_id.as_ref()?.trim().parse::<u64>().ok()?;
+        let id = a
+            .snapshot
+            .org
+            .discord
+            .as_ref()?
+            .alert_channel_id
+            .as_ref()?
+            .trim()
+            .parse::<u64>()
+            .ok()?;
         (id != 0).then(|| ChannelId::new(id))
     }
 
     fn guild_or_err(&self) -> Result<GuildId, PlatformError> {
-        self.guild().ok_or_else(|| PlatformError::Api("no Discord guild configured".into()))
+        self.guild()
+            .ok_or_else(|| PlatformError::Api("no Discord guild configured".into()))
     }
 }
 
@@ -121,17 +149,35 @@ impl SyncPlatform for DiscordPlatform {
         self.token_set && self.guild().is_some()
     }
 
-    async fn role_safety(&self, roles: &[String]) -> Result<BTreeMap<String, RoleSafety>, PlatformError> {
+    async fn role_safety(
+        &self,
+        roles: &[String],
+    ) -> Result<BTreeMap<String, RoleSafety>, PlatformError> {
         let guild = self.guild_or_err()?;
         let all = self.http.get_guild_roles(guild).await.map_err(map_err)?;
-        let me = self.http.get_current_user_guild_member(guild).await.map_err(map_err)?;
-        let bot_top = all.iter().filter(|r| me.roles.contains(&r.id)).map(|r| r.position).max().unwrap_or(0);
+        let me = self
+            .http
+            .get_current_user_guild_member(guild)
+            .await
+            .map_err(map_err)?;
+        let bot_top = all
+            .iter()
+            .filter(|r| me.roles.contains(&r.id))
+            .map(|r| r.position)
+            .max()
+            .unwrap_or(0);
         Ok(roles
             .iter()
             .map(|id| {
-                let safety = match id.parse::<u64>().ok().and_then(|n| all.iter().find(|r| r.id.get() == n)) {
+                let safety = match id
+                    .parse::<u64>()
+                    .ok()
+                    .and_then(|n| all.iter().find(|r| r.id.get() == n))
+                {
                     // @everyone (id = guild id) is held by everyone and cannot be granted.
-                    Some(r) if r.id.get() == guild.get() => RoleSafety::Dangerous(vec!["@everyone".into()]),
+                    Some(r) if r.id.get() == guild.get() => {
+                        RoleSafety::Dangerous(vec!["@everyone".into()])
+                    }
                     Some(r) => classify_discord_role(r.permissions, r.position, bot_top),
                     None => RoleSafety::Missing,
                 };
@@ -140,15 +186,34 @@ impl SyncPlatform for DiscordPlatform {
             .collect())
     }
 
-    async fn holders(&self, roles: &[String]) -> Result<BTreeMap<String, BTreeSet<String>>, PlatformError> {
+    async fn holders(
+        &self,
+        roles: &[String],
+    ) -> Result<BTreeMap<String, BTreeSet<String>>, PlatformError> {
         let guild = self.guild_or_err()?;
-        let wanted: BTreeMap<RoleId, String> =
-            roles.iter().filter_map(|r| r.parse::<u64>().ok().filter(|n| *n != 0).map(|n| (RoleId::new(n), r.clone()))).collect();
-        let mut out: BTreeMap<String, BTreeSet<String>> = roles.iter().map(|r| (r.clone(), BTreeSet::new())).collect();
+        let wanted: BTreeMap<RoleId, String> = roles
+            .iter()
+            .filter_map(|r| {
+                r.parse::<u64>()
+                    .ok()
+                    .filter(|n| *n != 0)
+                    .map(|n| (RoleId::new(n), r.clone()))
+            })
+            .collect();
+        let mut out: BTreeMap<String, BTreeSet<String>> =
+            roles.iter().map(|r| (r.clone(), BTreeSet::new())).collect();
         let mut after: Option<u64> = None;
         loop {
-            let page = self.http.get_guild_members(guild, Some(MEMBER_PAGE), after).await.map_err(map_err)?;
-            collect_holders(&mut out, &wanted, page.iter().map(|m| (m.user.id.get(), m.roles.as_slice())));
+            let page = self
+                .http
+                .get_guild_members(guild, Some(MEMBER_PAGE), after)
+                .await
+                .map_err(map_err)?;
+            collect_holders(
+                &mut out,
+                &wanted,
+                page.iter().map(|m| (m.user.id.get(), m.roles.as_slice())),
+            );
             if (page.len() as u64) < MEMBER_PAGE {
                 break;
             }
@@ -160,23 +225,33 @@ impl SyncPlatform for DiscordPlatform {
     async fn add_member(&self, role: &str, user: &str) -> Result<(), PlatformError> {
         let guild = self.guild_or_err()?;
         let (r, u) = (parse_id(role, "role")?, parse_id(user, "user")?);
-        self.http.add_member_role(guild, UserId::new(u), RoleId::new(r), Some(AUDIT_REASON)).await.map_err(map_err)
+        self.http
+            .add_member_role(guild, UserId::new(u), RoleId::new(r), Some(AUDIT_REASON))
+            .await
+            .map_err(map_err)
     }
 
     async fn remove_member(&self, role: &str, user: &str) -> Result<(), PlatformError> {
         let guild = self.guild_or_err()?;
         let (r, u) = (parse_id(role, "role")?, parse_id(user, "user")?);
-        self.http.remove_member_role(guild, UserId::new(u), RoleId::new(r), Some(AUDIT_REASON)).await.map_err(map_err)
+        self.http
+            .remove_member_role(guild, UserId::new(u), RoleId::new(r), Some(AUDIT_REASON))
+            .await
+            .map_err(map_err)
     }
 
     async fn alert(&self, text: &str) -> Result<(), PlatformError> {
-        let channel = self
-            .alert_channel()
-            .ok_or_else(|| PlatformError::Refused("no [discord] alert_channel_id in org.toml".into()))?;
+        let channel = self.alert_channel().ok_or_else(|| {
+            PlatformError::Refused("no [discord] alert_channel_id in org.toml".into())
+        })?;
         let mut t = text.to_string();
         if t.chars().count() > MESSAGE_LIMIT {
             t = t.chars().take(MESSAGE_LIMIT - 1).collect::<String>() + "…";
         }
-        channel.say(&self.http, t).await.map(|_| ()).map_err(map_err)
+        channel
+            .say(&self.http, t)
+            .await
+            .map(|_| ())
+            .map_err(map_err)
     }
 }

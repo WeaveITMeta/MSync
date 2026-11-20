@@ -10,7 +10,9 @@
 //! turns it off again until Stripe confirms the new account.
 
 use super::error::PayoutError;
-use crate::auth::{is_payee, member_payee_keys, scopes, tokens::format_db_time, Directory, Principal};
+use crate::auth::{
+    is_payee, member_payee_keys, scopes, tokens::format_db_time, Directory, Principal,
+};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
@@ -58,7 +60,10 @@ impl Payee {
     /// The payee key written to the ledger `github_username` of this payee's rows: its first
     /// key (alphabetical), or `payee:<id>` when it has none. Blocks and per-member limits key on it.
     pub fn ledger_key(&self) -> String {
-        self.payee_keys.first().cloned().unwrap_or_else(|| format!("payee:{}", self.row.id))
+        self.payee_keys
+            .first()
+            .cloned()
+            .unwrap_or_else(|| format!("payee:{}", self.row.id))
     }
 
     pub fn is_active(&self) -> bool {
@@ -160,7 +165,10 @@ fn check_len(errs: &mut Vec<String>, field: &str, v: &Option<String>, max: usize
 }
 
 fn valid_stripe_account(a: &str) -> bool {
-    a.len() > 5 && a.len() <= 64 && a.starts_with("acct_") && a[5..].chars().all(|c| c.is_ascii_alphanumeric())
+    a.len() > 5
+        && a.len() <= 64
+        && a.starts_with("acct_")
+        && a[5..].chars().all(|c| c.is_ascii_alphanumeric())
 }
 
 /// Lowercased, trimmed, unique, sorted payee keys; errors for empty or malformed keys.
@@ -171,7 +179,11 @@ fn normalize_keys(keys: &[String], errs: &mut Vec<String>) -> Vec<String> {
     }
     for k in keys {
         let k = k.trim().to_lowercase();
-        if k.is_empty() || k.len() > 100 || k.chars().any(char::is_whitespace) || k.starts_with("payee:") {
+        if k.is_empty()
+            || k.len() > 100
+            || k.chars().any(char::is_whitespace)
+            || k.starts_with("payee:")
+        {
             errs.push(format!("invalid payee key '{k}'"));
             continue;
         }
@@ -201,7 +213,12 @@ fn validate(f: &Fields) -> Vec<String> {
     if f.display_name.is_empty() {
         errs.push("display_name is required".into());
     }
-    check_len(&mut errs, "display_name", &Some(f.display_name.clone()), MAX_TEXT);
+    check_len(
+        &mut errs,
+        "display_name",
+        &Some(f.display_name.clone()),
+        MAX_TEXT,
+    );
     check_len(&mut errs, "legal_name", &f.legal_name, MAX_TEXT);
     check_len(&mut errs, "email", &f.email, MAX_TEXT);
     check_len(&mut errs, "member_id", &f.member_id, MAX_TEXT);
@@ -230,7 +247,10 @@ fn validate(f: &Fields) -> Vec<String> {
 
 // ------------------------------------------------------------------ reads
 
-pub async fn keys_of(conn: &mut SqliteConnection, payee_id: &str) -> Result<Vec<String>, sqlx::Error> {
+pub async fn keys_of(
+    conn: &mut SqliteConnection,
+    payee_id: &str,
+) -> Result<Vec<String>, sqlx::Error> {
     sqlx::query_scalar("SELECT payee_key FROM payee_keys WHERE payee_id = ? ORDER BY payee_key")
         .bind(payee_id)
         .fetch_all(&mut *conn)
@@ -243,7 +263,10 @@ pub async fn load(pool: &SqlitePool, id: &str) -> Result<Option<Payee>, sqlx::Er
     load_conn(&mut conn, id).await
 }
 
-pub async fn load_conn(conn: &mut SqliteConnection, id: &str) -> Result<Option<Payee>, sqlx::Error> {
+pub async fn load_conn(
+    conn: &mut SqliteConnection,
+    id: &str,
+) -> Result<Option<Payee>, sqlx::Error> {
     let Some(row) = sqlx::query_as::<_, PayeeRow>("SELECT * FROM payees WHERE id = ?")
         .bind(id)
         .fetch_optional(&mut *conn)
@@ -257,10 +280,11 @@ pub async fn load_conn(conn: &mut SqliteConnection, id: &str) -> Result<Option<P
 
 /// The payee paid under a payee key, if any.
 pub async fn by_key(pool: &SqlitePool, key: &str) -> Result<Option<Payee>, sqlx::Error> {
-    let id: Option<String> = sqlx::query_scalar("SELECT payee_id FROM payee_keys WHERE payee_key = ?")
-        .bind(key.trim().to_lowercase())
-        .fetch_optional(pool)
-        .await?;
+    let id: Option<String> =
+        sqlx::query_scalar("SELECT payee_id FROM payee_keys WHERE payee_key = ?")
+            .bind(key.trim().to_lowercase())
+            .fetch_optional(pool)
+            .await?;
     match id {
         Some(id) => load(pool, &id).await,
         None => Ok(None),
@@ -268,15 +292,21 @@ pub async fn by_key(pool: &SqlitePool, key: &str) -> Result<Option<Payee>, sqlx:
 }
 
 /// GET /api/v1/payees (`payees.read`). Optional status filter.
-pub async fn list(pool: &SqlitePool, principal: &Principal, status: Option<&str>) -> Result<Vec<Payee>, PayoutError> {
+pub async fn list(
+    pool: &SqlitePool,
+    principal: &Principal,
+    status: Option<&str>,
+) -> Result<Vec<Payee>, PayoutError> {
     principal.require(scopes::PAYEES_READ)?;
     let ids: Vec<String> = match status {
         Some(s) => {
-            sqlx::query_scalar("SELECT id FROM payees WHERE org_id = ? AND status = ? ORDER BY display_name, id")
-                .bind(&principal.org_id)
-                .bind(s)
-                .fetch_all(pool)
-                .await?
+            sqlx::query_scalar(
+                "SELECT id FROM payees WHERE org_id = ? AND status = ? ORDER BY display_name, id",
+            )
+            .bind(&principal.org_id)
+            .bind(s)
+            .fetch_all(pool)
+            .await?
         }
         None => {
             sqlx::query_scalar("SELECT id FROM payees WHERE org_id = ? ORDER BY display_name, id")
@@ -297,7 +327,9 @@ pub async fn list(pool: &SqlitePool, principal: &Principal, status: Option<&str>
 /// GET /api/v1/payees/{id} (`payees.read`).
 pub async fn get(pool: &SqlitePool, principal: &Principal, id: &str) -> Result<Payee, PayoutError> {
     principal.require(scopes::PAYEES_READ)?;
-    let p = load(pool, id).await?.ok_or(PayoutError::NotFound("payee"))?;
+    let p = load(pool, id)
+        .await?
+        .ok_or(PayoutError::NotFound("payee"))?;
     if p.row.org_id != principal.org_id {
         return Err(PayoutError::NotFound("payee"));
     }
@@ -339,18 +371,33 @@ pub async fn principal_is_payee_of(
     payee_id: &str,
 ) -> Result<bool, sqlx::Error> {
     match load(pool, payee_id).await? {
-        Some(p) => principal_is(pool, directory, principal, p.row.member_id.as_deref(), &p.payee_keys).await,
+        Some(p) => {
+            principal_is(
+                pool,
+                directory,
+                principal,
+                p.row.member_id.as_deref(),
+                &p.payee_keys,
+            )
+            .await
+        }
         None => Ok(false),
     }
 }
 
 /// Could the principal be paid by an order open to any payee (a `pool_by_xp` with no payee
 /// list)? Yes when they own any payee record or have declared any payee key. Fail closed.
-pub async fn principal_could_be_any_payee(pool: &SqlitePool, principal: &Principal) -> Result<bool, sqlx::Error> {
+pub async fn principal_could_be_any_payee(
+    pool: &SqlitePool,
+    principal: &Principal,
+) -> Result<bool, sqlx::Error> {
     if !principal.payee_keys.is_empty() {
         return Ok(true);
     }
-    if !member_payee_keys(pool, &principal.member_id).await?.is_empty() {
+    if !member_payee_keys(pool, &principal.member_id)
+        .await?
+        .is_empty()
+    {
         return Ok(true);
     }
     let own: Option<i64> = sqlx::query_scalar("SELECT 1 FROM payees WHERE member_id = ? LIMIT 1")
@@ -362,7 +409,14 @@ pub async fn principal_could_be_any_payee(pool: &SqlitePool, principal: &Princip
 
 // ------------------------------------------------------------------ writes
 
-async fn record_event(conn: &mut SqliteConnection, payee_id: &str, action: &str, actor: &str, detail: serde_json::Value, now: &str) -> Result<(), sqlx::Error> {
+async fn record_event(
+    conn: &mut SqliteConnection,
+    payee_id: &str,
+    action: &str,
+    actor: &str,
+    detail: serde_json::Value,
+    now: &str,
+) -> Result<(), sqlx::Error> {
     sqlx::query("INSERT INTO payee_events (payee_id, action, actor, detail, created_at) VALUES (?, ?, ?, ?, ?)")
         .bind(payee_id)
         .bind(action)
@@ -374,19 +428,30 @@ async fn record_event(conn: &mut SqliteConnection, payee_id: &str, action: &str,
     Ok(())
 }
 
-async fn write_keys(conn: &mut SqliteConnection, payee_id: &str, org: &str, keys: &[String]) -> Result<(), PayoutError> {
+async fn write_keys(
+    conn: &mut SqliteConnection,
+    payee_id: &str,
+    org: &str,
+    keys: &[String],
+) -> Result<(), PayoutError> {
     for k in keys {
-        let owner: Option<String> = sqlx::query_scalar("SELECT payee_id FROM payee_keys WHERE payee_key = ?")
-            .bind(k)
-            .fetch_optional(&mut *conn)
-            .await?;
+        let owner: Option<String> =
+            sqlx::query_scalar("SELECT payee_id FROM payee_keys WHERE payee_key = ?")
+                .bind(k)
+                .fetch_optional(&mut *conn)
+                .await?;
         if let Some(o) = owner {
             if o != payee_id {
-                return Err(PayoutError::Invalid(vec![format!("payee key '{k}' already belongs to another payee")]));
+                return Err(PayoutError::Invalid(vec![format!(
+                    "payee key '{k}' already belongs to another payee"
+                )]));
             }
         }
     }
-    sqlx::query("DELETE FROM payee_keys WHERE payee_id = ?").bind(payee_id).execute(&mut *conn).await?;
+    sqlx::query("DELETE FROM payee_keys WHERE payee_id = ?")
+        .bind(payee_id)
+        .execute(&mut *conn)
+        .await?;
     for k in keys {
         sqlx::query("INSERT INTO payee_keys (payee_key, payee_id, org_id) VALUES (?, ?, ?)")
             .bind(k)
@@ -400,7 +465,10 @@ async fn write_keys(conn: &mut SqliteConnection, payee_id: &str, org: &str, keys
 
 /// With no Stripe account of its own, a payee takes the Stripe account and payout-enabled state
 /// of the contributor with one of its payee keys (contract 11.2 link by payee key).
-async fn link_contributor_account(conn: &mut SqliteConnection, payee_id: &str) -> Result<(), sqlx::Error> {
+async fn link_contributor_account(
+    conn: &mut SqliteConnection,
+    payee_id: &str,
+) -> Result<(), sqlx::Error> {
     sqlx::query(
         "UPDATE payees SET
            stripe_account_id = (SELECT c.stripe_account_id FROM contributors c JOIN payee_keys k ON k.payee_key = lower(c.github_username)
@@ -435,7 +503,12 @@ pub async fn create(
         member_id: input.member_id.as_deref().and_then(clean),
         payee_keys: keys,
         stripe_account_id: input.stripe_account_id.as_deref().and_then(clean),
-        tax_form_status: input.tax_form_status.as_deref().map(str::trim).unwrap_or("none").to_string(),
+        tax_form_status: input
+            .tax_form_status
+            .as_deref()
+            .map(str::trim)
+            .unwrap_or("none")
+            .to_string(),
         status: ACTIVE.into(),
         notes: input.notes.as_deref().and_then(clean),
     };
@@ -443,8 +516,18 @@ pub async fn create(
     if !errs.is_empty() {
         return Err(PayoutError::Invalid(errs));
     }
-    if principal_is(pool, directory, principal, f.member_id.as_deref(), &f.payee_keys).await? {
-        return Err(PayoutError::Forbidden("a payee cannot create or edit their own payee record".into()));
+    if principal_is(
+        pool,
+        directory,
+        principal,
+        f.member_id.as_deref(),
+        &f.payee_keys,
+    )
+    .await?
+    {
+        return Err(PayoutError::Forbidden(
+            "a payee cannot create or edit their own payee record".into(),
+        ));
     }
     let id = Uuid::new_v4().to_string();
     let now_s = format_db_time(now);
@@ -473,7 +556,15 @@ pub async fn create(
     .await?;
     write_keys(&mut tx, &id, &principal.org_id, &f.payee_keys).await?;
     link_contributor_account(&mut tx, &id).await?;
-    record_event(&mut tx, &id, "create", &principal.member_id, json!({}), &now_s).await?;
+    record_event(
+        &mut tx,
+        &id,
+        "create",
+        &principal.member_id,
+        json!({}),
+        &now_s,
+    )
+    .await?;
     crate::audit::append_in(
         &mut tx,
         &crate::audit::AuditEntry::by_principal(
@@ -508,12 +599,24 @@ pub async fn update(
     now: DateTime<Utc>,
 ) -> Result<Payee, PayoutError> {
     principal.require(scopes::PAYEES_MANAGE)?;
-    let cur = load(pool, id).await?.ok_or(PayoutError::NotFound("payee"))?;
+    let cur = load(pool, id)
+        .await?
+        .ok_or(PayoutError::NotFound("payee"))?;
     if cur.row.org_id != principal.org_id {
         return Err(PayoutError::NotFound("payee"));
     }
-    if principal_is(pool, directory, principal, cur.row.member_id.as_deref(), &cur.payee_keys).await? {
-        return Err(PayoutError::Forbidden("a payee cannot create or edit their own payee record".into()));
+    if principal_is(
+        pool,
+        directory,
+        principal,
+        cur.row.member_id.as_deref(),
+        &cur.payee_keys,
+    )
+    .await?
+    {
+        return Err(PayoutError::Forbidden(
+            "a payee cannot create or edit their own payee record".into(),
+        ));
     }
     let mut errs = Vec::new();
     let mut changed: Vec<&str> = Vec::new();
@@ -578,8 +681,18 @@ pub async fn update(
     if !errs.is_empty() {
         return Err(PayoutError::Invalid(errs));
     }
-    if principal_is(pool, directory, principal, f.member_id.as_deref(), &f.payee_keys).await? {
-        return Err(PayoutError::Forbidden("a payee cannot create or edit their own payee record".into()));
+    if principal_is(
+        pool,
+        directory,
+        principal,
+        f.member_id.as_deref(),
+        &f.payee_keys,
+    )
+    .await?
+    {
+        return Err(PayoutError::Forbidden(
+            "a payee cannot create or edit their own payee record".into(),
+        ));
     }
     let account_changed = f.stripe_account_id != cur.row.stripe_account_id;
     let now_s = format_db_time(now);
@@ -608,7 +721,15 @@ pub async fn update(
         write_keys(&mut tx, id, &principal.org_id, &f.payee_keys).await?;
     }
     link_contributor_account(&mut tx, id).await?;
-    record_event(&mut tx, id, "update", &principal.member_id, json!({ "fields": changed }), &now_s).await?;
+    record_event(
+        &mut tx,
+        id,
+        "update",
+        &principal.member_id,
+        json!({ "fields": changed }),
+        &now_s,
+    )
+    .await?;
     // Always audited, and always with the Stripe account change spelled out (last four only).
     crate::audit::append_in(
         &mut tx,

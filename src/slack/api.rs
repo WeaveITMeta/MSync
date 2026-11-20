@@ -26,7 +26,11 @@ pub trait SlackApi: Send + Sync {
     async fn usergroup_users(&self, usergroup_id: &str) -> Result<Vec<String>, PlatformError>;
 
     /// `usergroups.users.update`: replace the full member list of a user group.
-    async fn set_usergroup_users(&self, usergroup_id: &str, user_ids: &[String]) -> Result<(), PlatformError>;
+    async fn set_usergroup_users(
+        &self,
+        usergroup_id: &str,
+        user_ids: &[String],
+    ) -> Result<(), PlatformError>;
 
     /// `chat.postMessage` to a channel.
     async fn post_message(&self, channel: &str, text: &str) -> Result<(), PlatformError>;
@@ -46,7 +50,10 @@ pub struct SlackWebApi {
 impl SlackWebApi {
     pub fn new(base: Option<String>, token: Option<String>) -> Self {
         SlackWebApi {
-            base: base.unwrap_or_else(|| DEFAULT_SLACK_API_BASE.to_string()).trim_end_matches('/').to_string(),
+            base: base
+                .unwrap_or_else(|| DEFAULT_SLACK_API_BASE.to_string())
+                .trim_end_matches('/')
+                .to_string(),
             token: token.filter(|t| !t.trim().is_empty()),
             response_url_prefix: DEFAULT_RESPONSE_URL_PREFIX.to_string(),
             http: reqwest::Client::builder()
@@ -63,7 +70,9 @@ impl SlackWebApi {
     }
 
     fn token(&self) -> Result<&str, PlatformError> {
-        self.token.as_deref().ok_or_else(|| PlatformError::Api("MSYNC_SLACK_BOT_TOKEN is not set".into()))
+        self.token
+            .as_deref()
+            .ok_or_else(|| PlatformError::Api("MSYNC_SLACK_BOT_TOKEN is not set".into()))
     }
 }
 
@@ -71,9 +80,14 @@ fn ok_body(v: &Value) -> Result<(), PlatformError> {
     if v.get("ok").and_then(Value::as_bool) == Some(true) {
         Ok(())
     } else {
-        let e = v.get("error").and_then(Value::as_str).unwrap_or("unknown error");
+        let e = v
+            .get("error")
+            .and_then(Value::as_str)
+            .unwrap_or("unknown error");
         if e == "ratelimited" {
-            Err(PlatformError::RateLimited { retry_after_secs: None })
+            Err(PlatformError::RateLimited {
+                retry_after_secs: None,
+            })
         } else {
             Err(PlatformError::Api(e.to_string()))
         }
@@ -88,12 +102,17 @@ async fn json_of(resp: reqwest::Response) -> Result<Value, PlatformError> {
             .get("retry-after")
             .and_then(|v| v.to_str().ok())
             .and_then(|v| v.trim().parse::<u64>().ok());
-        return Err(PlatformError::RateLimited { retry_after_secs: retry });
+        return Err(PlatformError::RateLimited {
+            retry_after_secs: retry,
+        });
     }
     if !resp.status().is_success() {
         return Err(PlatformError::Api(format!("HTTP {}", resp.status())));
     }
-    let v: Value = resp.json().await.map_err(|e| PlatformError::Api(e.to_string()))?;
+    let v: Value = resp
+        .json()
+        .await
+        .map_err(|e| PlatformError::Api(e.to_string()))?;
     ok_body(&v)?;
     Ok(v)
 }
@@ -135,11 +154,19 @@ impl SlackApi for SlackWebApi {
         let v = json_of(resp).await?;
         Ok(v.get("users")
             .and_then(Value::as_array)
-            .map(|a| a.iter().filter_map(|u| u.as_str().map(String::from)).collect())
+            .map(|a| {
+                a.iter()
+                    .filter_map(|u| u.as_str().map(String::from))
+                    .collect()
+            })
             .unwrap_or_default())
     }
 
-    async fn set_usergroup_users(&self, usergroup_id: &str, user_ids: &[String]) -> Result<(), PlatformError> {
+    async fn set_usergroup_users(
+        &self,
+        usergroup_id: &str,
+        user_ids: &[String],
+    ) -> Result<(), PlatformError> {
         let token = self.token()?;
         let resp = self
             .http
@@ -167,9 +194,18 @@ impl SlackApi for SlackWebApi {
 
     async fn respond(&self, response_url: &str, body: &Value) -> Result<(), String> {
         if !response_url.starts_with(&self.response_url_prefix) {
-            return Err(format!("response_url outside {} refused", self.response_url_prefix));
+            return Err(format!(
+                "response_url outside {} refused",
+                self.response_url_prefix
+            ));
         }
-        let resp = self.http.post(response_url).json(body).send().await.map_err(|e| e.to_string())?;
+        let resp = self
+            .http
+            .post(response_url)
+            .json(body)
+            .send()
+            .await
+            .map_err(|e| e.to_string())?;
         if resp.status().is_success() {
             Ok(())
         } else {

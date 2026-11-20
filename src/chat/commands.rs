@@ -22,10 +22,18 @@ use crate::foundry::{legacy_username, FoundryProvider};
 use crate::models::Contributor;
 
 use super::identity::{self, Binding};
-use super::{ChatActor, ChatCommand, ChatContext, ChatPlatform, ChatReply, ProjectionApplier, ProjectionPlan};
+use super::{
+    ChatActor, ChatCommand, ChatContext, ChatPlatform, ChatReply, ProjectionApplier, ProjectionPlan,
+};
 
 /// Run one command. `arg` is the command's text argument (the login for `link`).
-pub async fn run(ctx: &ChatContext, actor: &ChatActor, cmd: ChatCommand, arg: &str, applier: &dyn ProjectionApplier) -> ChatReply {
+pub async fn run(
+    ctx: &ChatContext,
+    actor: &ChatActor,
+    cmd: ChatCommand,
+    arg: &str,
+    applier: &dyn ProjectionApplier,
+) -> ChatReply {
     match cmd {
         ChatCommand::Link => link(ctx, actor, arg).await,
         ChatCommand::Stats => stats(ctx, actor).await,
@@ -48,7 +56,13 @@ pub enum Caller {
     /// CRA active: the member `members.toml` lists for this chat account. Attested by the
     /// administration, so verified. `contributor` is the merit row their GitHub or GitLab
     /// identities lead to, when there is one.
-    Member { id: String, name: String, status: MemberStatus, identities: Identities, contributor: Option<String> },
+    Member {
+        id: String,
+        name: String,
+        status: MemberStatus,
+        identities: Identities,
+        contributor: Option<String>,
+    },
     /// No CRA: a binding made in chat.
     Bound(Binding),
 }
@@ -71,10 +85,16 @@ pub fn cra_member<'a>(snap: &'a Snapshot, actor: &ChatActor) -> Option<&'a Membe
 
 /// Resolve the caller. With `create`, a CRA member whose logins have no contributor row yet
 /// gets one (payout setup needs a row to hold the Stripe account).
-pub async fn resolve(ctx: &ChatContext, actor: &ChatActor, create: bool) -> Result<Caller, sqlx::Error> {
+pub async fn resolve(
+    ctx: &ChatContext,
+    actor: &ChatActor,
+    create: bool,
+) -> Result<Caller, sqlx::Error> {
     if let Some(active) = ctx.cra.active() {
         let snap = &active.snapshot;
-        let Some(m) = cra_member(snap, actor) else { return Ok(Caller::Unknown) };
+        let Some(m) = cra_member(snap, actor) else {
+            return Ok(Caller::Unknown);
+        };
         let logins = member_foundry_logins(snap, &m.id);
         let mut contributor = None;
         for (p, host, login) in &logins {
@@ -85,7 +105,11 @@ pub async fn resolve(ctx: &ChatContext, actor: &ChatActor, create: bool) -> Resu
         }
         if contributor.is_none() && create {
             if let Some((p, host, login)) = logins.first() {
-                contributor = Some(resolve_contributor(&ctx.pool, *p, host, login).await?.github_username);
+                contributor = Some(
+                    resolve_contributor(&ctx.pool, *p, host, login)
+                        .await?
+                        .github_username,
+                );
             }
         }
         return Ok(Caller::Member {
@@ -118,8 +142,16 @@ pub fn parse_login(arg: &str) -> Result<(FoundryProvider, String), String> {
     if login.is_empty() {
         return Err("❌ Please provide your GitHub username!".to_string());
     }
-    if login.len() > 255 || !login.chars().all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.')) {
-        return Err(format!("❌ `{}` is not a valid {} login.", login, provider_label(provider)));
+    if login.len() > 255
+        || !login
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.'))
+    {
+        return Err(format!(
+            "❌ `{}` is not a valid {} login.",
+            login,
+            provider_label(provider)
+        ));
     }
     Ok((provider, login.to_string()))
 }
@@ -157,7 +189,12 @@ fn cra_identities_text(ids: &Identities) -> String {
 async fn audit_link_refused(ctx: &ChatContext, actor: &ChatActor, login: &str, reason: &str) {
     let who = match actor.platform {
         ChatPlatform::Discord => format!("discord:{}", actor.user_id),
-        _ => format!("{}:{}:{}", actor.platform.as_str(), actor.team_id, actor.user_id),
+        _ => format!(
+            "{}:{}:{}",
+            actor.platform.as_str(),
+            actor.team_id,
+            actor.user_id
+        ),
     };
     let login: String = login.trim().chars().take(100).collect();
     crate::audit::append_best_effort(
@@ -211,7 +248,11 @@ pub async fn link(ctx: &ChatContext, actor: &ChatActor, arg: &str) -> ChatReply 
     // 1. The caller's binding never changes from chat.
     match identity::binding_for(&ctx.pool, actor).await {
         Ok(Some(b)) if b.contributor.eq_ignore_ascii_case(&key) => {
-            return ChatReply::private(format!("✅ Your {} account is already linked to `{}`. Nothing changed.", p.label(), b.contributor));
+            return ChatReply::private(format!(
+                "✅ Your {} account is already linked to `{}`. Nothing changed.",
+                p.label(),
+                b.contributor
+            ));
         }
         Ok(Some(b)) => {
             audit_link_refused(ctx, actor, &key, "caller_already_linked").await;
@@ -262,7 +303,15 @@ pub async fn link(ctx: &ChatContext, actor: &ChatActor, arg: &str) -> ChatReply 
             Err(e) => return ChatReply::private(format!("❌ Failed to create account: {}", e)),
         },
     };
-    match identity::bind(&ctx.pool, actor, &contributor.github_username, false, "link").await {
+    match identity::bind(
+        &ctx.pool,
+        actor,
+        &contributor.github_username,
+        false,
+        "link",
+    )
+    .await
+    {
         Ok(true) => {}
         Ok(false) => {
             audit_link_refused(ctx, actor, &key, "login_taken").await;
@@ -348,11 +397,15 @@ pub async fn stats(ctx: &ChatContext, actor: &ChatActor) -> ChatReply {
 
 /// `leaderboard`: the top ten contributors.
 pub async fn leaderboard(ctx: &ChatContext, _actor: &ChatActor) -> ChatReply {
-    let top = sqlx::query_as::<_, Contributor>("SELECT * FROM contributors ORDER BY total_merit_points DESC LIMIT 10")
-        .fetch_all(&ctx.pool)
-        .await;
+    let top = sqlx::query_as::<_, Contributor>(
+        "SELECT * FROM contributors ORDER BY total_merit_points DESC LIMIT 10",
+    )
+    .fetch_all(&ctx.pool)
+    .await;
     let text = match top {
-        Ok(contributors) if contributors.is_empty() => "📊 No contributors yet! Be the first to contribute!".to_string(),
+        Ok(contributors) if contributors.is_empty() => {
+            "📊 No contributors yet! Be the first to contribute!".to_string()
+        }
         Ok(contributors) => {
             let mut board = "🏆 **Top Contributors**\n\n".to_string();
             for (rank, c) in contributors.iter().enumerate() {
@@ -401,13 +454,20 @@ pub fn admin_check(ctx: &ChatContext, actor: &ChatActor) -> Result<(), String> {
         };
         return match ctx.directory.rank_of(&m.id) {
             Some(r) if r >= i64::from(need) => Ok(()),
-            Some(r) => Err(format!("❌ This command needs CRA rank {need} or above; yours is {r}.")),
-            None => Err(format!("❌ This command needs CRA rank {need} or above, and your rank could not be read.")),
+            Some(r) => Err(format!(
+                "❌ This command needs CRA rank {need} or above; yours is {r}."
+            )),
+            None => Err(format!(
+                "❌ This command needs CRA rank {need} or above, and your rank could not be read."
+            )),
         };
     }
     match actor.is_platform_admin {
         Some(true) => Ok(()),
-        Some(false) => Err(format!("❌ You need {} administrator permissions to run this command!", actor.platform.label())),
+        Some(false) => Err(format!(
+            "❌ You need {} administrator permissions to run this command!",
+            actor.platform.label()
+        )),
         None => Err(format!(
             "❌ Could not confirm your {} administrator permissions, so this command is refused.",
             actor.platform.label()
@@ -418,7 +478,12 @@ pub fn admin_check(ctx: &ChatContext, actor: &ChatActor) -> Result<(), String> {
 // ------------------------------------------------------------------- sync
 
 /// The CRA projection for one platform.
-pub fn projection_plan(snap: &Snapshot, platform: ChatPlatform, merits: &BTreeMap<String, u64>, today: chrono::NaiveDate) -> ProjectionPlan {
+pub fn projection_plan(
+    snap: &Snapshot,
+    platform: ChatPlatform,
+    merits: &BTreeMap<String, u64>,
+    today: chrono::NaiveDate,
+) -> ProjectionPlan {
     let users = snap
         .members
         .members
@@ -428,24 +493,49 @@ pub fn projection_plan(snap: &Snapshot, platform: ChatPlatform, merits: &BTreeMa
     match platform {
         ChatPlatform::Discord => {
             let p = discord_projection(snap, merits, today);
-            ProjectionPlan { managed: p.role_order.into_iter().map(|r| r.discord_role_id).collect(), assignments: p.assignments, users }
+            ProjectionPlan {
+                managed: p
+                    .role_order
+                    .into_iter()
+                    .map(|r| r.discord_role_id)
+                    .collect(),
+                assignments: p.assignments,
+                users,
+            }
         }
         ChatPlatform::Slack => {
             let p = slack_projection(snap, merits, today);
-            ProjectionPlan { managed: p.usergroup_order.into_iter().map(|g| g.usergroup_id).collect(), assignments: p.assignments, users }
+            ProjectionPlan {
+                managed: p
+                    .usergroup_order
+                    .into_iter()
+                    .map(|g| g.usergroup_id)
+                    .collect(),
+                assignments: p.assignments,
+                users,
+            }
         }
     }
 }
 
 /// `sync`: apply the projection for the caller's platform. With a CRA: the CRA's job titles
 /// (Discord roles or Slack user groups). With no CRA: the pre-CRA merit roles (Discord).
-pub async fn sync(ctx: &ChatContext, actor: &ChatActor, applier: &dyn ProjectionApplier) -> ChatReply {
+pub async fn sync(
+    ctx: &ChatContext,
+    actor: &ChatActor,
+    applier: &dyn ProjectionApplier,
+) -> ChatReply {
     if let Err(denied) = admin_check(ctx, actor) {
         return ChatReply::private(denied);
     }
     let report = match ctx.cra.active() {
         Some(active) => {
-            let plan = projection_plan(&active.snapshot, actor.platform, &cached_merits(&ctx.cra), ctx.today());
+            let plan = projection_plan(
+                &active.snapshot,
+                actor.platform,
+                &cached_merits(&ctx.cra),
+                ctx.today(),
+            );
             applier.apply(&plan).await
         }
         None => applier.apply_legacy().await,
@@ -471,11 +561,20 @@ pub async fn payouts(ctx: &ChatContext, actor: &ChatActor) -> ChatReply {
     if let Err(denied) = admin_check(ctx, actor) {
         return ChatReply::private(denied);
     }
-    let text = match crate::payments::ledger::list(&ctx.pool, Some(crate::payments::ledger::PENDING)).await {
+    let text = match crate::payments::ledger::list(
+        &ctx.pool,
+        Some(crate::payments::ledger::PENDING),
+    )
+    .await
+    {
         Ok(entries) if entries.is_empty() => "No payouts pending approval.".to_string(),
         Ok(entries) => {
             let total: i64 = entries.iter().map(|e| e.amount_cents).sum();
-            let mut out = format!("**{} payout(s) pending approval** (total {:.2})\n", entries.len(), total as f64 / 100.0);
+            let mut out = format!(
+                "**{} payout(s) pending approval** (total {:.2})\n",
+                entries.len(),
+                total as f64 / 100.0
+            );
             for e in entries.iter().take(15) {
                 out.push_str(&format!(
                     "- PR #{} `{}` -> `{}`: {:.2} {} (id `{}`)\n",
@@ -552,17 +651,29 @@ pub async fn payout_setup(ctx: &ChatContext, actor: &ChatActor) -> ChatReply {
         }
         Err(e) => return ChatReply::private(format!("Failed to look up your account: {}", e)),
     };
-    let enabled: Result<Option<i64>, sqlx::Error> =
-        sqlx::query_scalar("SELECT stripe_payouts_enabled FROM contributors WHERE github_username = ?")
-            .bind(&key)
-            .fetch_optional(&ctx.pool)
-            .await;
+    let enabled: Result<Option<i64>, sqlx::Error> = sqlx::query_scalar(
+        "SELECT stripe_payouts_enabled FROM contributors WHERE github_username = ?",
+    )
+    .bind(&key)
+    .fetch_optional(&ctx.pool)
+    .await;
     match enabled {
-        Ok(Some(e)) if e != 0 => return ChatReply::private("Your payout account is already set up and verified. Nothing else to do."),
+        Ok(Some(e)) if e != 0 => {
+            return ChatReply::private(
+                "Your payout account is already set up and verified. Nothing else to do.",
+            )
+        }
         Ok(_) => {}
         Err(e) => return ChatReply::private(format!("Failed to look up your account: {}", e)),
     }
-    match onboarding::onboarding_link_for_verified_login(&ctx.pool, ctx.stripe.as_ref(), &ctx.payments, &key).await {
+    match onboarding::onboarding_link_for_verified_login(
+        &ctx.pool,
+        ctx.stripe.as_ref(),
+        &ctx.payments,
+        &key,
+    )
+    .await
+    {
         Ok(link) => ChatReply::private(format!(
             "Set up payouts for `{}` here (private link, expires in a few minutes):\n{}",
             key, link.url
@@ -588,7 +699,10 @@ pub fn chat_actor_id(actor: &ChatActor) -> String {
 /// active member), or a binding proven by an OAuth sign-in (`accounts`). An unverified
 /// binding made with `link` is refused, so typing someone else's login can never clock in as
 /// them. Err is the private reply.
-pub async fn verified_payee(ctx: &ChatContext, actor: &ChatActor) -> Result<crate::payments::payees::Payee, String> {
+pub async fn verified_payee(
+    ctx: &ChatContext,
+    actor: &ChatActor,
+) -> Result<crate::payments::payees::Payee, String> {
     use crate::payments::payees;
     let p = actor.platform;
     let db = |e: sqlx::Error| format!("❌ Database error: {e}");
@@ -647,7 +761,11 @@ pub async fn verified_payee(ctx: &ChatContext, actor: &ChatActor) -> Result<crat
             (payees::by_key(&ctx.pool, &b.contributor.to_lowercase()).await.map_err(db)?, b.contributor)
         }
     };
-    payee.ok_or_else(|| format!("❌ `{who}` has no payee record, so there is no time to clock. Ask an administrator."))
+    payee.ok_or_else(|| {
+        format!(
+            "❌ `{who}` has no payee record, so there is no time to clock. Ask an administrator."
+        )
+    })
 }
 
 async fn audit_clock_in_refused(ctx: &ChatContext, actor: &ChatActor, reason: &str) {
@@ -665,25 +783,43 @@ async fn audit_clock_in_refused(ctx: &ChatContext, actor: &ChatActor, reason: &s
 }
 
 fn local_text(t: &str, tz: &str) -> String {
-    match (crate::auth::tokens::parse_db_time(t), crate::payments::shifts::parse_tz(tz)) {
-        (Some(t), Ok(z)) => t.with_timezone(&z).format("%a %Y-%m-%d %H:%M %Z").to_string(),
+    match (
+        crate::auth::tokens::parse_db_time(t),
+        crate::payments::shifts::parse_tz(tz),
+    ) {
+        (Some(t), Ok(z)) => t
+            .with_timezone(&z)
+            .format("%a %Y-%m-%d %H:%M %Z")
+            .to_string(),
         _ => format!("{t} UTC"),
     }
 }
 
 /// `clock-in`: clock in for the caller's current shift. The shift sets the end; there is no
 /// clock-out in chat. A second clock-in answers with the same entry.
-pub async fn clock_in(ctx: &ChatContext, actor: &ChatActor, now: chrono::DateTime<chrono::Utc>) -> ChatReply {
+pub async fn clock_in(
+    ctx: &ChatContext,
+    actor: &ChatActor,
+    now: chrono::DateTime<chrono::Utc>,
+) -> ChatReply {
     use crate::payments::timeclock;
     let payee = match verified_payee(ctx, actor).await {
         Ok(p) => p,
         Err(msg) => return ChatReply::private(msg),
     };
-    let who = timeclock::Actor { kind: crate::audit::ActorKind::Chat, id: chat_actor_id(actor), token_id: None };
+    let who = timeclock::Actor {
+        kind: crate::audit::ActorKind::Chat,
+        id: chat_actor_id(actor),
+        token_id: None,
+    };
     match timeclock::clock_in_for(&ctx.pool, &payee, &who, now).await {
         Ok(r) => {
             let e = &r.entry.row;
-            let head = if r.result == "created" { "✅ Clocked in." } else { "✅ You are already clocked in for this shift. Nothing changed." };
+            let head = if r.result == "created" {
+                "✅ Clocked in."
+            } else {
+                "✅ You are already clocked in for this shift. Nothing changed."
+            };
             ChatReply::private(format!(
                 "{head}\nPaid from {} to {} ({} minutes). The shift's end ends your time; you do not need to clock out.",
                 local_text(&e.start_at, &e.time_zone),
@@ -696,7 +832,11 @@ pub async fn clock_in(ctx: &ChatContext, actor: &ChatActor, now: chrono::DateTim
 }
 
 /// `shift`: the caller's current or next shift.
-pub async fn shift(ctx: &ChatContext, actor: &ChatActor, now: chrono::DateTime<chrono::Utc>) -> ChatReply {
+pub async fn shift(
+    ctx: &ChatContext,
+    actor: &ChatActor,
+    now: chrono::DateTime<chrono::Utc>,
+) -> ChatReply {
     use crate::payments::shifts;
     let payee = match verified_payee(ctx, actor).await {
         Ok(p) => p,
@@ -706,7 +846,9 @@ pub async fn shift(ctx: &ChatContext, actor: &ChatActor, now: chrono::DateTime<c
         Ok(s) => s,
         Err(e) => return ChatReply::private(format!("❌ Database error: {e}")),
     };
-    let open = specs.iter().any(|s| matches!(s.pattern, shifts::Pattern::Open { .. }));
+    let open = specs
+        .iter()
+        .any(|s| matches!(s.pattern, shifts::Pattern::Open { .. }));
     let Some(o) = shifts::current_or_next(&specs, now) else {
         return ChatReply::private(if open {
             "You have no scheduled shift in the next two weeks. You have an open-shift allowance, so a clock-in starts one.".to_string()
@@ -714,8 +856,25 @@ pub async fn shift(ctx: &ChatContext, actor: &ChatActor, now: chrono::DateTime<c
             "You have no shift in the next two weeks.".to_string()
         });
     };
-    let tz = specs.iter().find(|s| s.id == o.shift_id).map(|s| s.tz).unwrap_or(chrono_tz::UTC);
-    let fmt = |t: chrono::DateTime<chrono::Utc>| t.with_timezone(&tz).format("%a %Y-%m-%d %H:%M %Z").to_string();
-    let when = if o.window_start <= now { "Your current shift" } else { "Your next shift" };
-    ChatReply::private(format!("{when}: {} to {}. You can clock in from {}.", fmt(o.start), fmt(o.end), fmt(o.window_start)))
+    let tz = specs
+        .iter()
+        .find(|s| s.id == o.shift_id)
+        .map(|s| s.tz)
+        .unwrap_or(chrono_tz::UTC);
+    let fmt = |t: chrono::DateTime<chrono::Utc>| {
+        t.with_timezone(&tz)
+            .format("%a %Y-%m-%d %H:%M %Z")
+            .to_string()
+    };
+    let when = if o.window_start <= now {
+        "Your current shift"
+    } else {
+        "Your next shift"
+    };
+    ChatReply::private(format!(
+        "{when}: {} to {}. You can clock in from {}.",
+        fmt(o.start),
+        fmt(o.end),
+        fmt(o.window_start)
+    ))
 }

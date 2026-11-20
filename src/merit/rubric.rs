@@ -237,7 +237,11 @@ pub fn apply_gates(raw: f32, ci_passed: bool, reverted: bool) -> f32 {
 }
 
 /// Full rubric score from validated levels plus gates.
-pub fn score(levels: &[CriterionScore], ci_passed: bool, reverted: bool) -> Result<f32, RubricError> {
+pub fn score(
+    levels: &[CriterionScore],
+    ci_passed: bool,
+    reverted: bool,
+) -> Result<f32, RubricError> {
     Ok(apply_gates(score_levels(levels)?, ci_passed, reverted))
 }
 
@@ -247,7 +251,11 @@ pub fn points(base_points: i32, max_points: i32, score: Option<f32>) -> i32 {
     match score {
         None => base_points,
         Some(s) => {
-            let s = if s.is_finite() { s.clamp(0.0, 100.0) } else { 0.0 } as f64;
+            let s = if s.is_finite() {
+                s.clamp(0.0, 100.0)
+            } else {
+                0.0
+            } as f64;
             base_points + ((max_points - base_points) as f64 * s / 100.0).round() as i32
         }
     }
@@ -270,7 +278,11 @@ mod tests {
 
     #[test]
     fn rubric_hash_is_pinned() {
-        assert_eq!(computed_hash(), RUBRIC_SHA256, "rubric v1 changed; publish v2 instead");
+        assert_eq!(
+            computed_hash(),
+            RUBRIC_SHA256,
+            "rubric v1 changed; publish v2 instead"
+        );
     }
 
     #[test]
@@ -278,7 +290,14 @@ mod tests {
         let w: Vec<(&str, u32)> = CRITERIA.iter().map(|c| (c.key, c.weight)).collect();
         assert_eq!(
             w,
-            vec![("impact", 30), ("correctness", 20), ("difficulty", 15), ("quality", 15), ("risk", 10), ("communication", 10)]
+            vec![
+                ("impact", 30),
+                ("correctness", 20),
+                ("difficulty", 15),
+                ("quality", 15),
+                ("risk", 10),
+                ("communication", 10)
+            ]
         );
         assert_eq!(CRITERIA.iter().map(|c| c.weight).sum::<u32>(), 100);
         assert_eq!(RUBRIC_ID, "msync-rubric-v1");
@@ -313,29 +332,56 @@ mod tests {
     fn validation_rejects_bad_submissions() {
         let mut l = all(2);
         l[0].level = 5;
-        assert!(matches!(score_levels(&l), Err(RubricError::LevelOutOfRange(..))));
+        assert!(matches!(
+            score_levels(&l),
+            Err(RubricError::LevelOutOfRange(..))
+        ));
         let mut l = all(2);
         l[3].evidence = "too short".into();
-        assert!(matches!(score_levels(&l), Err(RubricError::EvidenceTooShort(..))));
+        assert!(matches!(
+            score_levels(&l),
+            Err(RubricError::EvidenceTooShort(..))
+        ));
         let mut l = all(2);
         l[3].evidence = "                         x".into(); // whitespace does not count
-        assert!(matches!(score_levels(&l), Err(RubricError::EvidenceTooShort(..))));
+        assert!(matches!(
+            score_levels(&l),
+            Err(RubricError::EvidenceTooShort(..))
+        ));
         let mut l = all(2);
         l.pop();
-        assert!(matches!(score_levels(&l), Err(RubricError::MissingCriterion(..))));
+        assert!(matches!(
+            score_levels(&l),
+            Err(RubricError::MissingCriterion(..))
+        ));
         let mut l = all(2);
         l[5].criterion = "impact".into();
-        assert!(matches!(score_levels(&l), Err(RubricError::DuplicateCriterion(..))));
+        assert!(matches!(
+            score_levels(&l),
+            Err(RubricError::DuplicateCriterion(..))
+        ));
         let mut l = all(2);
         l[5].criterion = "vibes".into();
-        assert!(matches!(score_levels(&l), Err(RubricError::UnknownCriterion(..))));
+        assert!(matches!(
+            score_levels(&l),
+            Err(RubricError::UnknownCriterion(..))
+        ));
         assert!(validate_header(RUBRIC_ID, RUBRIC_SHA256).is_ok());
-        assert_eq!(validate_header("msync-rubric-v2", RUBRIC_SHA256), Err(RubricError::UnknownRubric("msync-rubric-v2".into())));
-        assert_eq!(validate_header(RUBRIC_ID, "00"), Err(RubricError::HashMismatch));
+        assert_eq!(
+            validate_header("msync-rubric-v2", RUBRIC_SHA256),
+            Err(RubricError::UnknownRubric("msync-rubric-v2".into()))
+        );
+        assert_eq!(
+            validate_header(RUBRIC_ID, "00"),
+            Err(RubricError::HashMismatch)
+        );
         assert!(validate_total(101.0, "evidence that is long enough").is_err());
         assert!(validate_total(f32::NAN, "evidence that is long enough").is_err());
         assert!(validate_total(80.0, "short").is_err());
-        assert_eq!(validate_total(80.04, "evidence that is long enough").unwrap(), 80.0);
+        assert_eq!(
+            validate_total(80.04, "evidence that is long enough").unwrap(),
+            80.0
+        );
     }
 
     #[test]

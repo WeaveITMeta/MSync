@@ -25,10 +25,10 @@ impl DiscordSyncService {
     ) -> Result<()> {
         if let Some(discord_user_id) = contributor.discord_user_id {
             let user_id = UserId::from(discord_user_id as u64);
-            
+
             // Get merit roles from database
             let roles = sqlx::query_as::<_, MeritRole>(
-                "SELECT * FROM merit_roles ORDER BY required_merit_points DESC"
+                "SELECT * FROM merit_roles ORDER BY required_merit_points DESC",
             )
             .fetch_all(&self.db_pool)
             .await?;
@@ -70,7 +70,7 @@ impl DiscordSyncService {
 
     pub async fn sync_all_roles(&self, guild_id: GuildId) -> Result<(i32, i32)> {
         let contributors = sqlx::query_as::<_, Contributor>(
-            "SELECT * FROM contributors WHERE discord_user_id IS NOT NULL"
+            "SELECT * FROM contributors WHERE discord_user_id IS NOT NULL",
         )
         .fetch_all(&self.db_pool)
         .await?;
@@ -82,7 +82,10 @@ impl DiscordSyncService {
             match self.sync_contributor_role(guild_id, &contributor).await {
                 Ok(_) => synced += 1,
                 Err(e) => {
-                    error!("Failed to sync role for {}: {}", contributor.github_username, e);
+                    error!(
+                        "Failed to sync role for {}: {}",
+                        contributor.github_username, e
+                    );
                     failed += 1;
                 }
             }
@@ -112,9 +115,10 @@ impl DiscordSyncService {
     }
 
     pub async fn create_discord_roles(&self, guild_id: GuildId) -> Result<()> {
-        let merit_roles: Vec<(String, i64)> = sqlx::query_as("SELECT role_name, permissions_level FROM merit_roles")
-            .fetch_all(&self.db_pool)
-            .await?;
+        let merit_roles: Vec<(String, i64)> =
+            sqlx::query_as("SELECT role_name, permissions_level FROM merit_roles")
+                .fetch_all(&self.db_pool)
+                .await?;
 
         for (role_name, permissions_level) in merit_roles {
             let color = match permissions_level {
@@ -141,8 +145,8 @@ impl DiscordSyncService {
             sqlx::query("UPDATE merit_roles SET discord_role_id = ? WHERE role_name = ?")
                 .bind(new_role_id)
                 .bind(&role_name)
-            .execute(&self.db_pool)
-            .await?;
+                .execute(&self.db_pool)
+                .await?;
 
             info!("Created Discord role: {} (ID: {})", role_name, new_role.id);
         }

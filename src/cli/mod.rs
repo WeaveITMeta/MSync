@@ -49,17 +49,34 @@ pub enum Command {
     Help,
     Version,
     Templates,
-    Init { template: String, dir: PathBuf },
-    Check { dir: PathBuf },
-    Plan { old: PathBuf, new: PathBuf },
+    Init {
+        template: String,
+        dir: PathBuf,
+    },
+    Check {
+        dir: PathBuf,
+    },
+    Plan {
+        old: PathBuf,
+        new: PathBuf,
+    },
     Doctor,
-    TokenCreate { label: String, member: String, scopes: Vec<String>, payee_keys: Vec<String>, expires: Option<String> },
+    TokenCreate {
+        label: String,
+        member: String,
+        scopes: Vec<String>,
+        payee_keys: Vec<String>,
+        expires: Option<String>,
+    },
 }
 
 /// Split `--flag value` / `--flag=value` options from positional arguments. Every flag
 /// must be in `known`; a flag given twice or with no value is an error.
 #[allow(clippy::type_complexity)]
-fn options(args: &[String], known: &[&str]) -> Result<(Vec<(String, String)>, Vec<String>), String> {
+fn options(
+    args: &[String],
+    known: &[&str],
+) -> Result<(Vec<(String, String)>, Vec<String>), String> {
     let mut opts: Vec<(String, String)> = Vec::new();
     let mut pos = Vec::new();
     let mut i = 0;
@@ -70,7 +87,9 @@ fn options(args: &[String], known: &[&str]) -> Result<(Vec<(String, String)>, Ve
                 Some((n, v)) => (n.to_string(), v.to_string()),
                 None => {
                     i += 1;
-                    let v = args.get(i).ok_or_else(|| format!("--{rest} needs a value"))?;
+                    let v = args
+                        .get(i)
+                        .ok_or_else(|| format!("--{rest} needs a value"))?;
                     if v.starts_with("--") {
                         return Err(format!("--{rest} needs a value"));
                     }
@@ -99,11 +118,16 @@ fn take(opts: &[(String, String)], name: &str) -> Option<String> {
 }
 
 fn required(opts: &[(String, String)], name: &str, cmd: &str) -> Result<String, String> {
-    take(opts, name).filter(|v| !v.trim().is_empty()).ok_or_else(|| format!("msync {cmd} needs --{name}"))
+    take(opts, name)
+        .filter(|v| !v.trim().is_empty())
+        .ok_or_else(|| format!("msync {cmd} needs --{name}"))
 }
 
 fn list(v: &str) -> Vec<String> {
-    v.split(',').map(|s| s.trim().to_string()).filter(|s| !s.is_empty()).collect()
+    v.split(',')
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+        .collect()
 }
 
 fn no_positionals(pos: &[String], cmd: &str) -> Result<(), String> {
@@ -118,7 +142,9 @@ pub fn parse(args: &[String]) -> Result<Command, String> {
     if args.iter().any(|a| a == "--help" || a == "-h") {
         return Ok(Command::Help);
     }
-    let Some(first) = args.first() else { return Ok(Command::Serve) };
+    let Some(first) = args.first() else {
+        return Ok(Command::Serve);
+    };
     let rest = &args[1..];
     match first.as_str() {
         "--version" | "-V" | "version" => Ok(Command::Version),
@@ -136,19 +162,27 @@ pub fn parse(args: &[String]) -> Result<Command, String> {
         "init" => {
             let (opts, pos) = options(rest, &["template", "dir"])?;
             no_positionals(&pos, "init")?;
-            Ok(Command::Init { template: required(&opts, "template", "init")?, dir: PathBuf::from(required(&opts, "dir", "init")?) })
+            Ok(Command::Init {
+                template: required(&opts, "template", "init")?,
+                dir: PathBuf::from(required(&opts, "dir", "init")?),
+            })
         }
         "check" => {
             let (_, pos) = options(rest, &[])?;
             match pos.as_slice() {
-                [dir] => Ok(Command::Check { dir: PathBuf::from(dir) }),
+                [dir] => Ok(Command::Check {
+                    dir: PathBuf::from(dir),
+                }),
                 _ => Err("msync check needs exactly one directory: msync check <dir>".into()),
             }
         }
         "plan" => {
             let (_, pos) = options(rest, &[])?;
             match pos.as_slice() {
-                [old, new] => Ok(Command::Plan { old: PathBuf::from(old), new: PathBuf::from(new) }),
+                [old, new] => Ok(Command::Plan {
+                    old: PathBuf::from(old),
+                    new: PathBuf::from(new),
+                }),
                 _ => Err("msync plan needs two directories: msync plan <old-dir> <new-dir>".into()),
             }
         }
@@ -160,10 +194,22 @@ pub fn parse(args: &[String]) -> Result<Command, String> {
         "token" => {
             match rest.first().map(String::as_str) {
                 Some("create") => {}
-                Some(other) => return Err(format!("unknown token command '{other}'; use: msync token create ...")),
-                None => return Err("use: msync token create --label <text> --member <id> --scopes <a,b>".into()),
+                Some(other) => {
+                    return Err(format!(
+                        "unknown token command '{other}'; use: msync token create ..."
+                    ))
+                }
+                None => {
+                    return Err(
+                        "use: msync token create --label <text> --member <id> --scopes <a,b>"
+                            .into(),
+                    )
+                }
             }
-            let (opts, pos) = options(&rest[1..], &["label", "member", "scopes", "payee-keys", "expires"])?;
+            let (opts, pos) = options(
+                &rest[1..],
+                &["label", "member", "scopes", "payee-keys", "expires"],
+            )?;
             no_positionals(&pos, "token create")?;
             let scopes = list(&required(&opts, "scopes", "token create")?);
             if scopes.is_empty() {
@@ -173,7 +219,9 @@ pub fn parse(args: &[String]) -> Result<Command, String> {
                 label: required(&opts, "label", "token create")?,
                 member: required(&opts, "member", "token create")?,
                 scopes,
-                payee_keys: take(&opts, "payee-keys").map(|v| list(&v)).unwrap_or_default(),
+                payee_keys: take(&opts, "payee-keys")
+                    .map(|v| list(&v))
+                    .unwrap_or_default(),
                 expires: take(&opts, "expires"),
             })
         }
@@ -187,12 +235,26 @@ pub fn parse(args: &[String]) -> Result<Command, String> {
 /// Returns the paths written.
 pub fn init(template: &str, dir: &Path) -> Result<Vec<PathBuf>, String> {
     let t = templates::get(template).ok_or_else(|| {
-        format!("unknown template '{template}'; one of: {}", templates::names().join(", "))
+        format!(
+            "unknown template '{template}'; one of: {}",
+            templates::names().join(", ")
+        )
     })?;
-    let targets: Vec<(PathBuf, &str)> = t.files.iter().map(|(rel, body)| (dir.join(rel), *body)).collect();
-    let existing: Vec<String> = targets.iter().filter(|(p, _)| p.exists()).map(|(p, _)| p.display().to_string()).collect();
+    let targets: Vec<(PathBuf, &str)> = t
+        .files
+        .iter()
+        .map(|(rel, body)| (dir.join(rel), *body))
+        .collect();
+    let existing: Vec<String> = targets
+        .iter()
+        .filter(|(p, _)| p.exists())
+        .map(|(p, _)| p.display().to_string())
+        .collect();
     if !existing.is_empty() {
-        return Err(format!("refusing to overwrite existing files: {}", existing.join(", ")));
+        return Err(format!(
+            "refusing to overwrite existing files: {}",
+            existing.join(", ")
+        ));
     }
     let mut written = Vec::new();
     for (path, body) in targets {
@@ -206,7 +268,8 @@ pub fn init(template: &str, dir: &Path) -> Result<Vec<PathBuf>, String> {
             .create_new(true)
             .open(&path)
             .map_err(|e| format!("{}: {e}", path.display()))?;
-        f.write_all(body.as_bytes()).map_err(|e| format!("{}: {e}", path.display()))?;
+        f.write_all(body.as_bytes())
+            .map_err(|e| format!("{}: {e}", path.display()))?;
         written.push(path);
     }
     Ok(written)
@@ -228,8 +291,15 @@ pub fn placeholders(files: &crate::cra::CraFiles) -> Vec<String> {
             let mut rest = line;
             while let Some(i) = rest.find(PLACEHOLDER) {
                 let tail = &rest[i..];
-                let end = tail.find(|c: char| !(c.is_ascii_alphanumeric() || c == '_')).unwrap_or(tail.len());
-                out.push(format!("{}:{}: placeholder `{}` is not filled in", kind.file_name(), n + 1, &tail[..end]));
+                let end = tail
+                    .find(|c: char| !(c.is_ascii_alphanumeric() || c == '_'))
+                    .unwrap_or(tail.len());
+                out.push(format!(
+                    "{}:{}: placeholder `{}` is not filled in",
+                    kind.file_name(),
+                    n + 1,
+                    &tail[..end]
+                ));
                 rest = &tail[end..];
             }
         }
@@ -241,13 +311,23 @@ pub fn placeholders(files: &crate::cra::CraFiles) -> Vec<String> {
 pub fn check_dir(dir: &Path, today: NaiveDate) -> Result<Snapshot, Vec<String>> {
     let base = dir.join(".msync");
     let files = read_dir_files(dir)?;
-    let mut errors: Vec<String> =
-        placeholders(&files).into_iter().map(|e| format!("{}/{e}", base.display())).collect();
+    let mut errors: Vec<String> = placeholders(&files)
+        .into_iter()
+        .map(|e| format!("{}/{e}", base.display()))
+        .collect();
     match crate::cra::load(&files, today) {
         Ok(s) if errors.is_empty() => Ok(s),
         Ok(_) => Err(errors),
         Err(es) => {
-            errors.extend(es.iter().map(|e| format!("{}/{}: {:?}: {}", base.display(), e.file.file_name(), e.code, e.message)));
+            errors.extend(es.iter().map(|e| {
+                format!(
+                    "{}/{}: {:?}: {}",
+                    base.display(),
+                    e.file.file_name(),
+                    e.code,
+                    e.message
+                )
+            }));
             Err(errors)
         }
     }
@@ -272,7 +352,12 @@ pub fn check_report(dir: &Path, today: NaiveDate) -> (String, bool) {
             for e in &errors {
                 let _ = writeln!(out, "error: {e}");
             }
-            let _ = writeln!(out, "FAILED: {} error(s) in {}", errors.len(), dir.join(".msync").display());
+            let _ = writeln!(
+                out,
+                "FAILED: {} error(s) in {}",
+                errors.len(),
+                dir.join(".msync").display()
+            );
             (out, false)
         }
     }
@@ -289,8 +374,14 @@ fn eligible(old: &Snapshot, permission: &str, rank: u32, today: NaiveDate) -> Ve
             continue;
         }
         let positions = active_positions(old, &m.id, today);
-        let r = positions.iter().map(|(role, _)| role.rank).max().unwrap_or(0);
-        let has = positions.iter().any(|(role, _)| role.permissions.iter().any(|p| p == permission));
+        let r = positions
+            .iter()
+            .map(|(role, _)| role.rank)
+            .max()
+            .unwrap_or(0);
+        let has = positions
+            .iter()
+            .any(|(role, _)| role.permissions.iter().any(|p| p == permission));
         if r > rank && has {
             out.push(format!("`{}` (rank {r})", m.id));
         }
@@ -300,10 +391,17 @@ fn eligible(old: &Snapshot, permission: &str, rank: u32, today: NaiveDate) -> Ve
 
 /// The change preview from `old_dir` (which may have no `.msync/`: the first snapshot) to
 /// `new_dir`, with who could act and approve. `Err` when either side does not validate.
-pub fn plan_report(old_dir: &Path, new_dir: &Path, today: NaiveDate) -> Result<String, Vec<String>> {
+pub fn plan_report(
+    old_dir: &Path,
+    new_dir: &Path,
+    today: NaiveDate,
+) -> Result<String, Vec<String>> {
     let old = if old_dir.join(".msync").is_dir() {
         Some(check_dir(old_dir, today).map_err(|es| {
-            let mut v = vec![format!("the old side {} does not validate:", old_dir.display())];
+            let mut v = vec![format!(
+                "the old side {} does not validate:",
+                old_dir.display()
+            )];
             v.extend(es);
             v
         })?)
@@ -372,20 +470,105 @@ struct Connector {
 }
 
 const CONNECTORS: &[Connector] = &[
-    Connector { name: "Bootstrap admin token", required: &["MSYNC_ADMIN_TOKEN"], optional: &[], note: "creates the first API token over REST (or use `msync token create`)" },
-    Connector { name: "Owners", required: &["MSYNC_OWNER_MEMBER_IDS"], optional: &[], note: "rank 1000; the github:<login> form bootstraps the first CRA snapshot" },
-    Connector { name: "Discord bot", required: &["DISCORD_TOKEN", "DISCORD_APPLICATION_ID"], optional: &["DISCORD_GUILD_ID"], note: "docs/DISCORD.md" },
-    Connector { name: "Slack app", required: &["MSYNC_SLACK_SIGNING_SECRET"], optional: &["MSYNC_SLACK_BOT_TOKEN", "MSYNC_SLACK_TEAM_ID"], note: "docs/SLACK.md; the bot token is needed for user groups and admin checks" },
-    Connector { name: "GitHub webhooks (Foundry API)", required: &["GITHUB_WEBHOOK_SECRET"], optional: &["GITHUB_TOKEN"], note: "POST /github/webhook; the token reads a GitHub CRA repository" },
-    Connector { name: "GitLab webhooks (Foundry API)", required: &["GITLAB_WEBHOOK_SECRET"], optional: &["GITLAB_TOKEN"], note: "POST /gitlab/webhook; the token reads a GitLab CRA repository" },
-    Connector { name: "Stripe Connect payouts", required: &["STRIPE_SECRET_KEY", "STRIPE_WEBHOOK_SECRET"], optional: &["MSYNC_PUBLIC_URL"], note: "test keys only unless MSYNC_STRIPE_ALLOW_LIVE=true" },
-    Connector { name: "Portal sync API", required: &["MSYNC_SUBJECT_KEY"], optional: &[], note: "docs/PORTAL_API.md; plus MSYNC_CONSUMER_SECRET_<KEY>_<KEYID> per consumer" },
-    Connector { name: "MSync OAuth/OIDC provider", required: &["MSYNC_KEY_ENCRYPTION_KEY"], optional: &[], note: "docs/SIGN_IN.md; /oauth/* answers 503 without it" },
-    Connector { name: "Sign in with GitHub", required: &["MSYNC_OAUTH_GITHUB_CLIENT_ID", "MSYNC_OAUTH_GITHUB_CLIENT_SECRET"], optional: &[], note: "" },
-    Connector { name: "Sign in with GitLab", required: &["MSYNC_OAUTH_GITLAB_CLIENT_ID", "MSYNC_OAUTH_GITLAB_CLIENT_SECRET"], optional: &[], note: "" },
-    Connector { name: "Sign in with Discord", required: &["MSYNC_OAUTH_DISCORD_CLIENT_ID", "MSYNC_OAUTH_DISCORD_CLIENT_SECRET"], optional: &[], note: "" },
-    Connector { name: "Sign in with Slack", required: &["MSYNC_OAUTH_SLACK_CLIENT_ID", "MSYNC_OAUTH_SLACK_CLIENT_SECRET"], optional: &[], note: "" },
-    Connector { name: "Sign in with Google", required: &["MSYNC_OAUTH_GOOGLE_CLIENT_ID", "MSYNC_OAUTH_GOOGLE_CLIENT_SECRET"], optional: &[], note: "" },
+    Connector {
+        name: "Bootstrap admin token",
+        required: &["MSYNC_ADMIN_TOKEN"],
+        optional: &[],
+        note: "creates the first API token over REST (or use `msync token create`)",
+    },
+    Connector {
+        name: "Owners",
+        required: &["MSYNC_OWNER_MEMBER_IDS"],
+        optional: &[],
+        note: "rank 1000; the github:<login> form bootstraps the first CRA snapshot",
+    },
+    Connector {
+        name: "Discord bot",
+        required: &["DISCORD_TOKEN", "DISCORD_APPLICATION_ID"],
+        optional: &["DISCORD_GUILD_ID"],
+        note: "docs/DISCORD.md",
+    },
+    Connector {
+        name: "Slack app",
+        required: &["MSYNC_SLACK_SIGNING_SECRET"],
+        optional: &["MSYNC_SLACK_BOT_TOKEN", "MSYNC_SLACK_TEAM_ID"],
+        note: "docs/SLACK.md; the bot token is needed for user groups and admin checks",
+    },
+    Connector {
+        name: "GitHub webhooks (Foundry API)",
+        required: &["GITHUB_WEBHOOK_SECRET"],
+        optional: &["GITHUB_TOKEN"],
+        note: "POST /github/webhook; the token reads a GitHub CRA repository",
+    },
+    Connector {
+        name: "GitLab webhooks (Foundry API)",
+        required: &["GITLAB_WEBHOOK_SECRET"],
+        optional: &["GITLAB_TOKEN"],
+        note: "POST /gitlab/webhook; the token reads a GitLab CRA repository",
+    },
+    Connector {
+        name: "Stripe Connect payouts",
+        required: &["STRIPE_SECRET_KEY", "STRIPE_WEBHOOK_SECRET"],
+        optional: &["MSYNC_PUBLIC_URL"],
+        note: "test keys only unless MSYNC_STRIPE_ALLOW_LIVE=true",
+    },
+    Connector {
+        name: "Portal sync API",
+        required: &["MSYNC_SUBJECT_KEY"],
+        optional: &[],
+        note: "docs/PORTAL_API.md; plus MSYNC_CONSUMER_SECRET_<KEY>_<KEYID> per consumer",
+    },
+    Connector {
+        name: "MSync OAuth/OIDC provider",
+        required: &["MSYNC_KEY_ENCRYPTION_KEY"],
+        optional: &[],
+        note: "docs/SIGN_IN.md; /oauth/* answers 503 without it",
+    },
+    Connector {
+        name: "Sign in with GitHub",
+        required: &[
+            "MSYNC_OAUTH_GITHUB_CLIENT_ID",
+            "MSYNC_OAUTH_GITHUB_CLIENT_SECRET",
+        ],
+        optional: &[],
+        note: "",
+    },
+    Connector {
+        name: "Sign in with GitLab",
+        required: &[
+            "MSYNC_OAUTH_GITLAB_CLIENT_ID",
+            "MSYNC_OAUTH_GITLAB_CLIENT_SECRET",
+        ],
+        optional: &[],
+        note: "",
+    },
+    Connector {
+        name: "Sign in with Discord",
+        required: &[
+            "MSYNC_OAUTH_DISCORD_CLIENT_ID",
+            "MSYNC_OAUTH_DISCORD_CLIENT_SECRET",
+        ],
+        optional: &[],
+        note: "",
+    },
+    Connector {
+        name: "Sign in with Slack",
+        required: &[
+            "MSYNC_OAUTH_SLACK_CLIENT_ID",
+            "MSYNC_OAUTH_SLACK_CLIENT_SECRET",
+        ],
+        optional: &[],
+        note: "",
+    },
+    Connector {
+        name: "Sign in with Google",
+        required: &[
+            "MSYNC_OAUTH_GOOGLE_CLIENT_ID",
+            "MSYNC_OAUTH_GOOGLE_CLIENT_SECRET",
+        ],
+        optional: &[],
+        note: "",
+    },
 ];
 
 /// The doctor report over an environment snapshot. Values are only ever tested for
@@ -394,9 +577,14 @@ const CONNECTORS: &[Connector] = &[
 /// Returns the text and whether anything is wrong (a problem, not a missing optional).
 pub fn doctor_report(vars: &[(String, String)]) -> (String, bool) {
     let get = |k: &str| -> Option<String> {
-        let v = vars.iter().find(|(n, _)| n == k).map(|(_, v)| v.clone()).or_else(|| {
-            crate::config::legacy_env_name(k).and_then(|old| vars.iter().find(|(n, _)| *n == old).map(|(_, v)| v.clone()))
-        })?;
+        let v = vars
+            .iter()
+            .find(|(n, _)| n == k)
+            .map(|(_, v)| v.clone())
+            .or_else(|| {
+                crate::config::legacy_env_name(k)
+                    .and_then(|old| vars.iter().find(|(n, _)| *n == old).map(|(_, v)| v.clone()))
+            })?;
         if v.trim().is_empty() {
             None
         } else {
@@ -409,15 +597,28 @@ pub fn doctor_report(vars: &[(String, String)]) -> (String, bool) {
     let _ = writeln!(out, "MSync doctor (values are never printed)\n");
 
     let dev = crate::config::dev_mode_from(|k| get(k));
-    let _ = writeln!(out, "[{}] Dev mode: {}", if dev { "!!" } else { "ok" }, if dev { "ON (MSYNC_DEV_MODE=true): never on a reachable host" } else { "off" });
-    let db = get("DATABASE_URL").unwrap_or_else(|| format!("{} (default)", crate::config::DEFAULT_DATABASE_URL));
+    let _ = writeln!(
+        out,
+        "[{}] Dev mode: {}",
+        if dev { "!!" } else { "ok" },
+        if dev {
+            "ON (MSYNC_DEV_MODE=true): never on a reachable host"
+        } else {
+            "off"
+        }
+    );
+    let db = get("DATABASE_URL")
+        .unwrap_or_else(|| format!("{} (default)", crate::config::DEFAULT_DATABASE_URL));
     let _ = writeln!(out, "[ok] Database: {}", redact_url(&db));
     match get("MSYNC_PUBLIC_URL") {
         Some(u) => {
             let _ = writeln!(out, "[ok] Public URL: {}", redact_url(&u));
         }
         None => {
-            let _ = writeln!(out, "[--] Public URL: not set (MSYNC_PUBLIC_URL; default http://localhost:8080)");
+            let _ = writeln!(
+                out,
+                "[--] Public URL: not set (MSYNC_PUBLIC_URL; default http://localhost:8080)"
+            );
         }
     }
 
@@ -425,10 +626,17 @@ pub fn doctor_report(vars: &[(String, String)]) -> (String, bool) {
     match (get("MSYNC_CRA_REPO"), get("MSYNC_CRA_LOCAL_DIR")) {
         (Some(_), Some(_)) => {
             problems += 1;
-            let _ = writeln!(out, "[XX] CRA: both MSYNC_CRA_REPO and MSYNC_CRA_LOCAL_DIR are set; set one");
+            let _ = writeln!(
+                out,
+                "[XX] CRA: both MSYNC_CRA_REPO and MSYNC_CRA_LOCAL_DIR are set; set one"
+            );
         }
         (Some(r), None) => {
-            let _ = writeln!(out, "[ok] CRA repository: {r} (branch {})", get("MSYNC_CRA_BRANCH").unwrap_or_else(|| "main".into()));
+            let _ = writeln!(
+                out,
+                "[ok] CRA repository: {r} (branch {})",
+                get("MSYNC_CRA_BRANCH").unwrap_or_else(|| "main".into())
+            );
         }
         (None, Some(d)) if dev => {
             let _ = writeln!(out, "[!!] CRA: local directory {d} (dev mode only)");
@@ -445,19 +653,44 @@ pub fn doctor_report(vars: &[(String, String)]) -> (String, bool) {
     for c in CONNECTORS {
         let missing: Vec<&str> = c.required.iter().copied().filter(|k| !set(k)).collect();
         let opt_missing: Vec<&str> = c.optional.iter().copied().filter(|k| !set(k)).collect();
-        let note = if c.note.is_empty() { String::new() } else { format!(" ({})", c.note) };
+        let note = if c.note.is_empty() {
+            String::new()
+        } else {
+            format!(" ({})", c.note)
+        };
         if missing.is_empty() {
-            let extra = if opt_missing.is_empty() { String::new() } else { format!("; optional, not set: {}", opt_missing.join(", ")) };
+            let extra = if opt_missing.is_empty() {
+                String::new()
+            } else {
+                format!("; optional, not set: {}", opt_missing.join(", "))
+            };
             let _ = writeln!(out, "[ok] {}: configured{extra}{note}", c.name);
         } else if missing.len() == c.required.len() {
-            let _ = writeln!(out, "[--] {}: not configured: missing {}{note}", c.name, missing.join(", "));
+            let _ = writeln!(
+                out,
+                "[--] {}: not configured: missing {}{note}",
+                c.name,
+                missing.join(", ")
+            );
         } else {
             problems += 1;
-            let _ = writeln!(out, "[XX] {}: partly configured: missing {}{note}", c.name, missing.join(", "));
+            let _ = writeln!(
+                out,
+                "[XX] {}: partly configured: missing {}{note}",
+                c.name,
+                missing.join(", ")
+            );
         }
     }
-    let consumers = vars.iter().filter(|(k, v)| k.starts_with("MSYNC_CONSUMER_SECRET_") && !v.trim().is_empty()).count();
-    let _ = writeln!(out, "[{}] Portal consumer secrets: {consumers} set (MSYNC_CONSUMER_SECRET_<KEY>_<KEYID>)", if consumers > 0 { "ok" } else { "--" });
+    let consumers = vars
+        .iter()
+        .filter(|(k, v)| k.starts_with("MSYNC_CONSUMER_SECRET_") && !v.trim().is_empty())
+        .count();
+    let _ = writeln!(
+        out,
+        "[{}] Portal consumer secrets: {consumers} set (MSYNC_CONSUMER_SECRET_<KEY>_<KEYID>)",
+        if consumers > 0 { "ok" } else { "--" }
+    );
 
     // Chat platforms: at least one outside dev mode.
     let discord = set("DISCORD_TOKEN");
@@ -477,21 +710,44 @@ pub fn doctor_report(vars: &[(String, String)]) -> (String, bool) {
     let allow_live = get("MSYNC_STRIPE_ALLOW_LIVE").is_some_and(|v| v.trim() == "true");
     if !key.is_empty() {
         let kind = if live_key { "a LIVE key" } else { "a test key" };
-        let _ = writeln!(out, "[{}] Stripe key kind: {kind}{}", if live_key { "!!" } else { "ok" }, if live_key && !allow_live { "; refused until MSYNC_STRIPE_ALLOW_LIVE=true" } else { "" });
+        let _ = writeln!(
+            out,
+            "[{}] Stripe key kind: {kind}{}",
+            if live_key { "!!" } else { "ok" },
+            if live_key && !allow_live {
+                "; refused until MSYNC_STRIPE_ALLOW_LIVE=true"
+            } else {
+                ""
+            }
+        );
     }
     if dev && (live_key || allow_live) {
         problems += 1;
-        let _ = writeln!(out, "[XX] Dev mode with a live Stripe configuration: the service refuses to start");
+        let _ = writeln!(
+            out,
+            "[XX] Dev mode with a live Stripe configuration: the service refuses to start"
+        );
     }
 
     // MCP execution switch.
     if get("MSYNC_MCP_ALLOW_EXECUTE").is_some_and(|v| v.trim() == "true") {
-        let _ = writeln!(out, "[!!] MSYNC_MCP_ALLOW_EXECUTE=true: agents can execute payout runs over MCP");
+        let _ = writeln!(
+            out,
+            "[!!] MSYNC_MCP_ALLOW_EXECUTE=true: agents can execute payout runs over MCP"
+        );
     } else {
         let _ = writeln!(out, "[ok] MCP payout execution: off");
     }
 
-    let _ = writeln!(out, "\n{}", if problems == 0 { "No problems found.".to_string() } else { format!("{problems} problem(s) found.") });
+    let _ = writeln!(
+        out,
+        "\n{}",
+        if problems == 0 {
+            "No problems found.".to_string()
+        } else {
+            format!("{problems} problem(s) found.")
+        }
+    );
     (out, problems > 0)
 }
 
@@ -580,13 +836,23 @@ pub async fn run(cmd: Command) -> i32 {
             }
             i32::from(problems)
         }
-        Command::TokenCreate { label, member, scopes, payee_keys, expires } => {
-            token_create(label, member, scopes, payee_keys, expires).await
-        }
+        Command::TokenCreate {
+            label,
+            member,
+            scopes,
+            payee_keys,
+            expires,
+        } => token_create(label, member, scopes, payee_keys, expires).await,
     }
 }
 
-async fn token_create(label: String, member: String, scopes: Vec<String>, payee_keys: Vec<String>, expires: Option<String>) -> i32 {
+async fn token_create(
+    label: String,
+    member: String,
+    scopes: Vec<String>,
+    payee_keys: Vec<String>,
+    expires: Option<String>,
+) -> i32 {
     let expires_at = match expires.as_deref().map(chrono::DateTime::parse_from_rfc3339) {
         None => None,
         Some(Ok(t)) => Some(t.with_timezone(&chrono::Utc)),
@@ -595,7 +861,8 @@ async fn token_create(label: String, member: String, scopes: Vec<String>, payee_
             return 2;
         }
     };
-    let url = crate::config::env_var("DATABASE_URL").unwrap_or_else(|| crate::config::DEFAULT_DATABASE_URL.to_string());
+    let url = crate::config::env_var("DATABASE_URL")
+        .unwrap_or_else(|| crate::config::DEFAULT_DATABASE_URL.to_string());
     let pool = match crate::server::open_database(&url).await {
         Ok(p) => p,
         Err(e) => {
@@ -604,10 +871,29 @@ async fn token_create(label: String, member: String, scopes: Vec<String>, payee_
         }
     };
     let directory = crate::auth::EnvDirectory::from_env();
-    let new = crate::auth::tokens::NewToken { label, member_id: member, scopes, payee_keys, expires_at };
-    match crate::auth::tokens::create_token(&pool, &directory, crate::auth::tokens::TokenCreator::Bootstrap, new, chrono::Utc::now()).await {
+    let new = crate::auth::tokens::NewToken {
+        label,
+        member_id: member,
+        scopes,
+        payee_keys,
+        expires_at,
+    };
+    match crate::auth::tokens::create_token(
+        &pool,
+        &directory,
+        crate::auth::tokens::TokenCreator::Bootstrap,
+        new,
+        chrono::Utc::now(),
+    )
+    .await
+    {
         Ok(t) => {
-            eprintln!("Created token {} for member {} with scopes {}. It is shown once; store it now.", t.id, t.member_id, t.scopes.join(","));
+            eprintln!(
+                "Created token {} for member {} with scopes {}. It is shown once; store it now.",
+                t.id,
+                t.member_id,
+                t.scopes.join(",")
+            );
             println!("{}", t.token);
             0
         }

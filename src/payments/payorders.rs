@@ -21,7 +21,10 @@ use super::error::PayoutError;
 use super::ledger::{self, SourceRow, SOURCE_PAY_ORDER};
 use super::payees::{self, double_option, Payee};
 use super::policy::{self, PayoutPolicy};
-use crate::auth::{is_payee, member_payee_keys, scopes, tokens::format_db_time, tokens::parse_db_time, Directory, Principal};
+use crate::auth::{
+    is_payee, member_payee_keys, scopes, tokens::format_db_time, tokens::parse_db_time, Directory,
+    Principal,
+};
 use chrono::{DateTime, Datelike, Duration, NaiveDate, TimeZone, Utc};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
@@ -132,7 +135,9 @@ fn amount_ok(errs: &mut Vec<String>, field: &str, v: i64) {
 
 fn bps_ok(errs: &mut Vec<String>, field: &str, v: i64) {
     if !(0..=BPS_FULL).contains(&v) {
-        errs.push(format!("{field} must be between 0 and {BPS_FULL} basis points (100%)"));
+        errs.push(format!(
+            "{field} must be between 0 and {BPS_FULL} basis points (100%)"
+        ));
     }
 }
 
@@ -141,7 +146,9 @@ impl AmountRule {
     pub fn payee_ids(&self) -> Option<Vec<String>> {
         match self {
             AmountRule::Fixed(r) => Some(vec![r.payee_id.clone()]),
-            AmountRule::PoolPercent(r) => Some(r.shares.iter().map(|s| s.payee_id.clone()).collect()),
+            AmountRule::PoolPercent(r) => {
+                Some(r.shares.iter().map(|s| s.payee_id.clone()).collect())
+            }
             AmountRule::PoolByXp(r) if r.payee_ids.is_empty() => None,
             AmountRule::PoolByXp(r) => Some(r.payee_ids.clone()),
             AmountRule::PercentOfAmount(r) => Some(vec![r.payee_id.clone()]),
@@ -182,7 +189,9 @@ impl AmountRule {
                     sum = sum.saturating_add(s.bps);
                 }
                 if sum > BPS_FULL {
-                    errs.push(format!("shares sum to {sum} basis points; the most is {BPS_FULL} (100%)"));
+                    errs.push(format!(
+                        "shares sum to {sum} basis points; the most is {BPS_FULL} (100%)"
+                    ));
                 }
             }
             AmountRule::PoolByXp(r) => {
@@ -214,7 +223,9 @@ impl AmountRule {
                 for (k, b) in &r.bases {
                     amount_ok(&mut errs, "bases[]", *b);
                     if NaiveDate::parse_from_str(k, "%Y-%m-%d").is_err() {
-                        errs.push(format!("bases key '{k}' must be an occurrence date (YYYY-MM-DD)"));
+                        errs.push(format!(
+                            "bases key '{k}' must be an occurrence date (YYYY-MM-DD)"
+                        ));
                     }
                 }
             }
@@ -255,7 +266,13 @@ pub struct Split {
 impl Split {
     fn finish(pool_cents: i64, allocations: Vec<Allocation>, note: Option<String>) -> Split {
         let paid: i64 = allocations.iter().map(|a| a.cents).sum();
-        Split { pool_cents, allocations, paid_cents: paid, leftover_cents: pool_cents - paid, note }
+        Split {
+            pool_cents,
+            allocations,
+            paid_cents: paid,
+            leftover_cents: pool_cents - paid,
+            note,
+        }
     }
 
     /// Move a payee's cents to unpaid (payee paused or closed at materialization).
@@ -278,13 +295,22 @@ pub fn percent_of(amount_cents: i64, bps: i64) -> Result<i64, String> {
         return Err(format!("amount must be between 0 and {MAX_CENTS} cents"));
     }
     if !(0..=BPS_FULL).contains(&bps) {
-        return Err(format!("percentage must be between 0 and {BPS_FULL} basis points"));
+        return Err(format!(
+            "percentage must be between 0 and {BPS_FULL} basis points"
+        ));
     }
     Ok(((amount_cents as i128 * bps as i128) / BPS_FULL as i128) as i64)
 }
 
 fn line(payee_id: &str, cents: i64) -> Allocation {
-    Allocation { payee_id: Some(payee_id.to_string()), label: payee_id.to_string(), cents, unpaid_cents: 0, xp: None, note: None }
+    Allocation {
+        payee_id: Some(payee_id.to_string()),
+        label: payee_id.to_string(),
+        cents,
+        unpaid_cents: 0,
+        xp: None,
+        note: None,
+    }
 }
 
 /// `fixed`: the amount to one payee.
@@ -292,7 +318,11 @@ pub fn split_fixed(payee_id: &str, amount_cents: i64) -> Result<Split, String> {
     if !(1..=MAX_CENTS).contains(&amount_cents) {
         return Err(format!("amount must be between 1 and {MAX_CENTS} cents"));
     }
-    Ok(Split::finish(amount_cents, vec![line(payee_id, amount_cents)], None))
+    Ok(Split::finish(
+        amount_cents,
+        vec![line(payee_id, amount_cents)],
+        None,
+    ))
 }
 
 /// `pool_percent`: each payee gets floor(pool * bps / 10000). The percentages must sum to at
@@ -302,7 +332,9 @@ pub fn split_pool_percent(pool_cents: i64, shares: &[(String, i64)]) -> Result<S
     let mut seen = HashSet::new();
     for (p, bps) in shares {
         if !(0..=BPS_FULL).contains(bps) {
-            return Err(format!("percentage must be between 0 and {BPS_FULL} basis points"));
+            return Err(format!(
+                "percentage must be between 0 and {BPS_FULL} basis points"
+            ));
         }
         if !seen.insert(p.clone()) {
             return Err(format!("payee {p} appears twice"));
@@ -310,7 +342,9 @@ pub fn split_pool_percent(pool_cents: i64, shares: &[(String, i64)]) -> Result<S
         sum += bps;
     }
     if sum > BPS_FULL {
-        return Err(format!("percentages sum to {sum} basis points; the most is {BPS_FULL}"));
+        return Err(format!(
+            "percentages sum to {sum} basis points; the most is {BPS_FULL}"
+        ));
     }
     let mut out = Vec::new();
     for (p, bps) in shares {
@@ -340,7 +374,12 @@ pub struct XpInput {
 /// A share above `max_share_bps` of the pool is cut to it; a share of a person with no payee
 /// record is not paid. Every cut, unpaid share and rounding remainder is leftover. Zero qualifying
 /// XP pays nothing and says why.
-pub fn split_pool_by_xp(pool_cents: i64, entries: &[XpInput], min_xp: i64, max_share_bps: Option<i64>) -> Result<Split, String> {
+pub fn split_pool_by_xp(
+    pool_cents: i64,
+    entries: &[XpInput],
+    min_xp: i64,
+    max_share_bps: Option<i64>,
+) -> Result<Split, String> {
     if !(0..=MAX_CENTS).contains(&pool_cents) {
         return Err(format!("pool must be between 0 and {MAX_CENTS} cents"));
     }
@@ -360,11 +399,20 @@ pub fn split_pool_by_xp(pool_cents: i64, entries: &[XpInput], min_xp: i64, max_s
         g.1 = g.1.saturating_add(e.xp);
     }
     let threshold = min_xp.max(1);
-    let qualifying: Vec<(String, Option<String>, i64)> =
-        groups.into_iter().filter(|(_, (_, xp))| *xp >= threshold).map(|(l, (p, xp))| (l, p, xp)).collect();
+    let qualifying: Vec<(String, Option<String>, i64)> = groups
+        .into_iter()
+        .filter(|(_, (_, xp))| *xp >= threshold)
+        .map(|(l, (p, xp))| (l, p, xp))
+        .collect();
     let total: i128 = qualifying.iter().map(|(_, _, xp)| *xp as i128).sum();
     if total <= 0 {
-        return Ok(Split::finish(pool_cents, Vec::new(), Some(format!("no one earned {threshold} or more XP in the period; nothing is paid"))));
+        return Ok(Split::finish(
+            pool_cents,
+            Vec::new(),
+            Some(format!(
+                "no one earned {threshold} or more XP in the period; nothing is paid"
+            )),
+        ));
     }
     let cap = match max_share_bps {
         Some(m) => percent_of(pool_cents, m)?,
@@ -374,7 +422,14 @@ pub fn split_pool_by_xp(pool_cents: i64, entries: &[XpInput], min_xp: i64, max_s
     for (label, payee_id, xp) in qualifying {
         let share = ((pool_cents as i128 * xp as i128) / total) as i64;
         let capped = share.min(cap);
-        let mut a = Allocation { payee_id: payee_id.clone(), label, cents: capped, unpaid_cents: share - capped, xp: Some(xp), note: None };
+        let mut a = Allocation {
+            payee_id: payee_id.clone(),
+            label,
+            cents: capped,
+            unpaid_cents: share - capped,
+            xp: Some(xp),
+            note: None,
+        };
         if share > capped {
             a.note = Some(format!("share capped at {} cents (max_share_bps)", cap));
         }
@@ -443,7 +498,9 @@ fn midnight(d: NaiveDate) -> DateTime<Utc> {
 
 fn days_in_month(y: i32, m: u32) -> u32 {
     let (ny, nm) = if m == 12 { (y + 1, 1) } else { (y, m + 1) };
-    (NaiveDate::from_ymd_opt(ny, nm, 1).expect("valid") - NaiveDate::from_ymd_opt(y, m, 1).expect("valid")).num_days() as u32
+    (NaiveDate::from_ymd_opt(ny, nm, 1).expect("valid")
+        - NaiveDate::from_ymd_opt(y, m, 1).expect("valid"))
+    .num_days() as u32
 }
 
 /// `d` moved by `months` (may be negative), keeping its day or clamping to the month's end.
@@ -495,8 +552,12 @@ impl OrderSchedule {
                     return None;
                 }
                 let d = match r.cadence {
-                    RepeatCadence::Weekly => r.start.checked_add_signed(Duration::days(7 * n as i64))?,
-                    RepeatCadence::Biweekly => r.start.checked_add_signed(Duration::days(14 * n as i64))?,
+                    RepeatCadence::Weekly => {
+                        r.start.checked_add_signed(Duration::days(7 * n as i64))?
+                    }
+                    RepeatCadence::Biweekly => {
+                        r.start.checked_add_signed(Duration::days(14 * n as i64))?
+                    }
                     RepeatCadence::Monthly => shift_months(r.start, n as i64)?,
                     RepeatCadence::Quarterly => shift_months(r.start, 3 * n as i64)?,
                 };
@@ -527,7 +588,11 @@ impl OrderSchedule {
 /// before the first) up to its own date.
 pub fn occurrence(s: &OrderSchedule, n: u32) -> Option<Occurrence> {
     let d = s.nth_date(n)?;
-    let prev = if n == 0 { s.step_back(d) } else { s.nth_date(n - 1).unwrap_or_else(|| s.step_back(d)) };
+    let prev = if n == 0 {
+        s.step_back(d)
+    } else {
+        s.nth_date(n - 1).unwrap_or_else(|| s.step_back(d))
+    };
     Some(Occurrence {
         index: n,
         period_key: d.format("%Y-%m-%d").to_string(),
@@ -551,7 +616,12 @@ pub struct DuePlan {
 
 /// Pure: which occurrences are due at `now`. `recorded` holds the period keys already written
 /// (materialized or skipped); those are never returned again.
-pub fn due_occurrences(s: &OrderSchedule, resume_from: Option<DateTime<Utc>>, now: DateTime<Utc>, recorded: &HashSet<String>) -> DuePlan {
+pub fn due_occurrences(
+    s: &OrderSchedule,
+    resume_from: Option<DateTime<Utc>>,
+    now: DateTime<Utc>,
+    recorded: &HashSet<String>,
+) -> DuePlan {
     let mut plan = DuePlan::default();
     let mut n = 0u32;
     loop {
@@ -579,7 +649,12 @@ pub fn due_occurrences(s: &OrderSchedule, resume_from: Option<DateTime<Utc>>, no
 
 /// The next `count` occurrences not yet recorded and not skipped by a pause, in date order
 /// (overdue ones first). Pure.
-pub fn upcoming(s: &OrderSchedule, resume_from: Option<DateTime<Utc>>, recorded: &HashSet<String>, count: u32) -> Vec<Occurrence> {
+pub fn upcoming(
+    s: &OrderSchedule,
+    resume_from: Option<DateTime<Utc>>,
+    recorded: &HashSet<String>,
+    count: u32,
+) -> Vec<Occurrence> {
     let mut out = Vec::new();
     let mut n = 0u32;
     while out.len() < count as usize && n <= MAX_OCCURRENCES {
@@ -616,10 +691,13 @@ pub struct OrderRow {
 
 impl OrderRow {
     fn rule(&self) -> Result<AmountRule, PayoutError> {
-        serde_json::from_str(&self.amount_rule).map_err(|e| PayoutError::InvalidState(format!("stored amount rule is unreadable: {e}")))
+        serde_json::from_str(&self.amount_rule).map_err(|e| {
+            PayoutError::InvalidState(format!("stored amount rule is unreadable: {e}"))
+        })
     }
     fn sched(&self) -> Result<OrderSchedule, PayoutError> {
-        serde_json::from_str(&self.schedule).map_err(|e| PayoutError::InvalidState(format!("stored schedule is unreadable: {e}")))
+        serde_json::from_str(&self.schedule)
+            .map_err(|e| PayoutError::InvalidState(format!("stored schedule is unreadable: {e}")))
     }
 }
 
@@ -704,11 +782,20 @@ pub struct OrderPatch {
 }
 
 async fn load_row(pool: &SqlitePool, id: &str) -> Result<Option<OrderRow>, sqlx::Error> {
-    sqlx::query_as::<_, OrderRow>("SELECT * FROM pay_orders WHERE id = ?").bind(id).fetch_optional(pool).await
+    sqlx::query_as::<_, OrderRow>("SELECT * FROM pay_orders WHERE id = ?")
+        .bind(id)
+        .fetch_optional(pool)
+        .await
 }
 
-async fn load_scoped(pool: &SqlitePool, principal: &Principal, id: &str) -> Result<OrderRow, PayoutError> {
-    let row = load_row(pool, id).await?.ok_or(PayoutError::NotFound("pay order"))?;
+async fn load_scoped(
+    pool: &SqlitePool,
+    principal: &Principal,
+    id: &str,
+) -> Result<OrderRow, PayoutError> {
+    let row = load_row(pool, id)
+        .await?
+        .ok_or(PayoutError::NotFound("pay order"))?;
     if row.org_id != principal.org_id {
         return Err(PayoutError::NotFound("pay order"));
     }
@@ -718,7 +805,16 @@ async fn load_scoped(pool: &SqlitePool, principal: &Principal, id: &str) -> Resu
 /// Record a pay order event and its audit entry (`payorder.<action>`) inside the caller's
 /// transaction: no audit entry, no change.
 #[allow(clippy::too_many_arguments)]
-async fn event(conn: &mut SqliteConnection, order: &str, action: &str, from: Option<&str>, to: Option<&str>, revision: i64, actor: &str, now: &str) -> Result<(), sqlx::Error> {
+async fn event(
+    conn: &mut SqliteConnection,
+    order: &str,
+    action: &str,
+    from: Option<&str>,
+    to: Option<&str>,
+    revision: i64,
+    actor: &str,
+    now: &str,
+) -> Result<(), sqlx::Error> {
     sqlx::query(
         "INSERT INTO pay_order_events (order_id, action, from_status, to_status, revision, actor, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
     )
@@ -770,19 +866,24 @@ pub async fn member_is_payee_of(
         if !token_keys.is_empty() || !member_payee_keys(pool, member_id).await?.is_empty() {
             return Ok(true);
         }
-        let own: Option<i64> = sqlx::query_scalar("SELECT 1 FROM payees WHERE member_id = ? LIMIT 1")
-            .bind(member_id)
-            .fetch_optional(pool)
-            .await?;
+        let own: Option<i64> =
+            sqlx::query_scalar("SELECT 1 FROM payees WHERE member_id = ? LIMIT 1")
+                .bind(member_id)
+                .fetch_optional(pool)
+                .await?;
         return Ok(own.is_some());
     };
     for id in ids {
-        let Some(p) = payees::load(pool, id).await? else { continue };
+        let Some(p) = payees::load(pool, id).await? else {
+            continue;
+        };
         if p.row.member_id.as_deref() == Some(member_id) {
             return Ok(true);
         }
         for k in &p.payee_keys {
-            if token_keys.iter().any(|t| t.to_lowercase() == *k) || is_payee(pool, directory, member_id, k).await? {
+            if token_keys.iter().any(|t| t.to_lowercase() == *k)
+                || is_payee(pool, directory, member_id, k).await?
+            {
                 return Ok(true);
             }
         }
@@ -790,10 +891,26 @@ pub async fn member_is_payee_of(
     Ok(false)
 }
 
-async fn refuse_payee(pool: &SqlitePool, directory: &dyn Directory, principal: &Principal, rule: &AmountRule, verb: &str) -> Result<(), PayoutError> {
+async fn refuse_payee(
+    pool: &SqlitePool,
+    directory: &dyn Directory,
+    principal: &Principal,
+    rule: &AmountRule,
+    verb: &str,
+) -> Result<(), PayoutError> {
     let ids = rule.payee_ids();
-    if member_is_payee_of(pool, directory, &principal.member_id, &principal.payee_keys, ids.as_deref()).await? {
-        return Err(PayoutError::Forbidden(format!("a payee cannot {verb} a pay order that pays them")));
+    if member_is_payee_of(
+        pool,
+        directory,
+        &principal.member_id,
+        &principal.payee_keys,
+        ids.as_deref(),
+    )
+    .await?
+    {
+        return Err(PayoutError::Forbidden(format!(
+            "a payee cannot {verb} a pay order that pays them"
+        )));
     }
     Ok(())
 }
@@ -841,7 +958,12 @@ pub async fn order_approvals(
         if reason.is_none() {
             counted.insert(m.clone());
         }
-        out.push(OrderApproval { approver_member_id: m, created_at: at, counts: reason.is_none(), reason });
+        out.push(OrderApproval {
+            approver_member_id: m,
+            created_at: at,
+            counts: reason.is_none(),
+            reason,
+        });
     }
     let n = counted.len() as i64;
     Ok((out, n))
@@ -851,7 +973,12 @@ fn required(policy: &PayoutPolicy) -> i64 {
     policy.approval.approvals_required.max(1)
 }
 
-async fn view(pool: &SqlitePool, cfg: &PaymentConfig, directory: &dyn Directory, row: OrderRow) -> Result<OrderView, PayoutError> {
+async fn view(
+    pool: &SqlitePool,
+    cfg: &PaymentConfig,
+    directory: &dyn Directory,
+    row: OrderRow,
+) -> Result<OrderView, PayoutError> {
     let eff = policy::load_effective(pool, &row.org_id, cfg).await?;
     let rule_v: Value = serde_json::from_str(&row.amount_rule).unwrap_or(Value::Null);
     let sched_v: Value = serde_json::from_str(&row.schedule).unwrap_or(Value::Null);
@@ -892,7 +1019,11 @@ async fn view(pool: &SqlitePool, cfg: &PaymentConfig, directory: &dyn Directory,
 
 // ------------------------------------------------------------------ validation with the database
 
-async fn validate_full(pool: &SqlitePool, rule: &AmountRule, schedule: &OrderSchedule) -> Result<(), PayoutError> {
+async fn validate_full(
+    pool: &SqlitePool,
+    rule: &AmountRule,
+    schedule: &OrderSchedule,
+) -> Result<(), PayoutError> {
     let mut errs = rule.validate();
     errs.extend(schedule.validate());
     if let Some(ids) = rule.payee_ids() {
@@ -911,11 +1042,21 @@ async fn validate_full(pool: &SqlitePool, rule: &AmountRule, schedule: &OrderSch
     }
 }
 
-async fn currency_for(pool: &SqlitePool, cfg: &PaymentConfig, org: &str, asked: Option<&str>) -> Result<String, PayoutError> {
+async fn currency_for(
+    pool: &SqlitePool,
+    cfg: &PaymentConfig,
+    org: &str,
+    asked: Option<&str>,
+) -> Result<String, PayoutError> {
     let eff = policy::load_effective(pool, org, cfg).await?;
-    let c = asked.map(|c| c.trim().to_lowercase()).unwrap_or_else(|| eff.policy.currency.to_lowercase());
+    let c = asked
+        .map(|c| c.trim().to_lowercase())
+        .unwrap_or_else(|| eff.policy.currency.to_lowercase());
     if !c.eq_ignore_ascii_case(&eff.policy.currency) {
-        return Err(PayoutError::Invalid(vec![format!("currency must be the payout policy currency {}", eff.policy.currency)]));
+        return Err(PayoutError::Invalid(vec![format!(
+            "currency must be the payout policy currency {}",
+            eff.policy.currency
+        )]));
     }
     Ok(c)
 }
@@ -923,7 +1064,9 @@ async fn currency_for(pool: &SqlitePool, cfg: &PaymentConfig, org: &str, asked: 
 fn check_name(name: &str) -> Result<String, PayoutError> {
     let n = name.trim();
     if n.is_empty() || n.chars().count() > 200 {
-        return Err(PayoutError::Invalid(vec!["name is required (at most 200 characters)".into()]));
+        return Err(PayoutError::Invalid(vec![
+            "name is required (at most 200 characters)".into(),
+        ]));
     }
     Ok(n.to_string())
 }
@@ -931,19 +1074,32 @@ fn check_name(name: &str) -> Result<String, PayoutError> {
 // ------------------------------------------------------------------ REST / MCP functions
 
 /// GET /api/v1/payorders (`payorders.read`).
-pub async fn list(pool: &SqlitePool, cfg: &PaymentConfig, directory: &dyn Directory, principal: &Principal, status: Option<&str>) -> Result<Vec<OrderView>, PayoutError> {
+pub async fn list(
+    pool: &SqlitePool,
+    cfg: &PaymentConfig,
+    directory: &dyn Directory,
+    principal: &Principal,
+    status: Option<&str>,
+) -> Result<Vec<OrderView>, PayoutError> {
     principal.require(scopes::PAYORDERS_READ)?;
-    let rows = match status {
-        Some(s) => sqlx::query_as::<_, OrderRow>("SELECT * FROM pay_orders WHERE org_id = ? AND status = ? ORDER BY created_at, id")
+    let rows =
+        match status {
+            Some(s) => sqlx::query_as::<_, OrderRow>(
+                "SELECT * FROM pay_orders WHERE org_id = ? AND status = ? ORDER BY created_at, id",
+            )
             .bind(&principal.org_id)
             .bind(s)
             .fetch_all(pool)
             .await?,
-        None => sqlx::query_as::<_, OrderRow>("SELECT * FROM pay_orders WHERE org_id = ? ORDER BY created_at, id")
-            .bind(&principal.org_id)
-            .fetch_all(pool)
-            .await?,
-    };
+            None => {
+                sqlx::query_as::<_, OrderRow>(
+                    "SELECT * FROM pay_orders WHERE org_id = ? ORDER BY created_at, id",
+                )
+                .bind(&principal.org_id)
+                .fetch_all(pool)
+                .await?
+            }
+        };
     let mut out = Vec::new();
     for r in rows {
         out.push(view(pool, cfg, directory, r).await?);
@@ -952,7 +1108,13 @@ pub async fn list(pool: &SqlitePool, cfg: &PaymentConfig, directory: &dyn Direct
 }
 
 /// GET /api/v1/payorders/{id} (`payorders.read`).
-pub async fn get(pool: &SqlitePool, cfg: &PaymentConfig, directory: &dyn Directory, principal: &Principal, id: &str) -> Result<OrderView, PayoutError> {
+pub async fn get(
+    pool: &SqlitePool,
+    cfg: &PaymentConfig,
+    directory: &dyn Directory,
+    principal: &Principal,
+    id: &str,
+) -> Result<OrderView, PayoutError> {
     principal.require(scopes::PAYORDERS_READ)?;
     let row = load_scoped(pool, principal, id).await?;
     view(pool, cfg, directory, row).await
@@ -996,7 +1158,17 @@ pub async fn create(
     .bind(&now_s)
     .execute(&mut *tx)
     .await?;
-    event(&mut tx, &id, "create", None, Some(status), 1, &principal.member_id, &now_s).await?;
+    event(
+        &mut tx,
+        &id,
+        "create",
+        None,
+        Some(status),
+        1,
+        &principal.member_id,
+        &now_s,
+    )
+    .await?;
     tx.commit().await?;
     let row = load_scoped(pool, principal, &id).await?;
     view(pool, cfg, directory, row).await
@@ -1017,7 +1189,10 @@ pub async fn update(
     principal.require(scopes::PAYORDERS_MANAGE)?;
     let row = load_scoped(pool, principal, id).await?;
     if row.status == ENDED || row.status == CANCELLED {
-        return Err(PayoutError::InvalidState(format!("pay order is '{}' and cannot be edited", row.status)));
+        return Err(PayoutError::InvalidState(format!(
+            "pay order is '{}' and cannot be edited",
+            row.status
+        )));
     }
     let old_rule = row.rule()?;
     refuse_payee(pool, directory, principal, &old_rule, "edit").await?;
@@ -1037,13 +1212,21 @@ pub async fn update(
         None => row.name.clone(),
     };
     let memo = match &patch.memo {
-        Some(m) => m.as_deref().map(str::trim).filter(|m| !m.is_empty()).map(str::to_string),
+        Some(m) => m
+            .as_deref()
+            .map(str::trim)
+            .filter(|m| !m.is_empty())
+            .map(str::to_string),
         None => row.memo.clone(),
     };
     let rule_s = serde_json::to_string(&rule).expect("serializable");
     let sched_s = serde_json::to_string(&schedule).expect("serializable");
     let material = rule_s != row.amount_rule || sched_s != row.schedule || currency != row.currency;
-    let (revision, revised_by) = if material { (row.revision + 1, principal.member_id.clone()) } else { (row.revision, row.revised_by.clone()) };
+    let (revision, revised_by) = if material {
+        (row.revision + 1, principal.member_id.clone())
+    } else {
+        (row.revision, row.revised_by.clone())
+    };
     let now_s = format_db_time(now);
     let mut tx = pool.begin().await?;
     let res = sqlx::query(
@@ -1064,9 +1247,21 @@ pub async fn update(
     .execute(&mut *tx)
     .await?;
     if res.rows_affected() == 0 {
-        return Err(PayoutError::InvalidState("pay order changed concurrently; read it again".into()));
+        return Err(PayoutError::InvalidState(
+            "pay order changed concurrently; read it again".into(),
+        ));
     }
-    event(&mut tx, id, "update", Some(&row.status), Some(&row.status), revision, &principal.member_id, &now_s).await?;
+    event(
+        &mut tx,
+        id,
+        "update",
+        Some(&row.status),
+        Some(&row.status),
+        revision,
+        &principal.member_id,
+        &now_s,
+    )
+    .await?;
     tx.commit().await?;
     let row = load_scoped(pool, principal, id).await?;
     view(pool, cfg, directory, row).await
@@ -1095,13 +1290,20 @@ pub async fn approve(
     principal.require(scopes::PAYORDERS_APPROVE)?;
     let row = load_scoped(pool, principal, id).await?;
     if row.status == ENDED || row.status == CANCELLED {
-        return Err(PayoutError::InvalidState(format!("pay order is '{}' and cannot be approved", row.status)));
+        return Err(PayoutError::InvalidState(format!(
+            "pay order is '{}' and cannot be approved",
+            row.status
+        )));
     }
     if principal.member_id == row.created_by {
-        return Err(PayoutError::Forbidden("the creator of a pay order can never approve it".into()));
+        return Err(PayoutError::Forbidden(
+            "the creator of a pay order can never approve it".into(),
+        ));
     }
     if principal.member_id == row.revised_by {
-        return Err(PayoutError::Forbidden("the author of a pay order change can never approve it".into()));
+        return Err(PayoutError::Forbidden(
+            "the author of a pay order change can never approve it".into(),
+        ));
     }
     refuse_payee(pool, directory, principal, &row.rule()?, "approve").await?;
     let mut tx = pool.begin().await?;
@@ -1119,13 +1321,27 @@ pub async fn approve(
     .await?;
     let recorded = res.rows_affected() > 0;
     if recorded {
-        event(&mut tx, id, "approve", Some(&row.status), Some(&row.status), row.revision, &principal.member_id, &format_db_time(now)).await?;
+        event(
+            &mut tx,
+            id,
+            "approve",
+            Some(&row.status),
+            Some(&row.status),
+            row.revision,
+            &principal.member_id,
+            &format_db_time(now),
+        )
+        .await?;
     }
     tx.commit().await?;
     let revision = row.revision;
     let order = view(pool, cfg, directory, row).await?;
     Ok(ApproveOrderResult {
-        result: if recorded { "recorded" } else { "already_approved" },
+        result: if recorded {
+            "recorded"
+        } else {
+            "already_approved"
+        },
         approver_member_id: principal.member_id.clone(),
         revision,
         order,
@@ -1166,11 +1382,18 @@ pub async fn transition(
         Transition::Cancel => (&[DRAFT, ACTIVE, PAUSED], CANCELLED),
     };
     if !from.contains(&row.status.as_str()) {
-        return Err(PayoutError::InvalidState(format!("pay order is '{}' and cannot {verb}", row.status)));
+        return Err(PayoutError::InvalidState(format!(
+            "pay order is '{}' and cannot {verb}",
+            row.status
+        )));
     }
     let now_s = format_db_time(now);
     // Resuming a paused order skips what fell while paused: nothing dated before now is paid.
-    let resume_from = if t == Transition::Resume && row.status == PAUSED { Some(now_s.clone()) } else { row.resume_from.clone() };
+    let resume_from = if t == Transition::Resume && row.status == PAUSED {
+        Some(now_s.clone())
+    } else {
+        row.resume_from.clone()
+    };
     let mut tx = pool.begin().await?;
     let res = sqlx::query("UPDATE pay_orders SET status = ?, resume_from = ?, updated_by = ?, updated_at = ? WHERE id = ? AND status = ?")
         .bind(to)
@@ -1182,9 +1405,21 @@ pub async fn transition(
         .execute(&mut *tx)
         .await?;
     if res.rows_affected() == 0 {
-        return Err(PayoutError::InvalidState("pay order changed concurrently; read it again".into()));
+        return Err(PayoutError::InvalidState(
+            "pay order changed concurrently; read it again".into(),
+        ));
     }
-    event(&mut tx, id, verb, Some(&row.status), Some(to), row.revision, &principal.member_id, &now_s).await?;
+    event(
+        &mut tx,
+        id,
+        verb,
+        Some(&row.status),
+        Some(to),
+        row.revision,
+        &principal.member_id,
+        &now_s,
+    )
+    .await?;
     tx.commit().await?;
     let row = load_scoped(pool, principal, id).await?;
     view(pool, cfg, directory, row).await
@@ -1194,7 +1429,9 @@ pub async fn transition(
 
 /// Key -> payee id for every payee key.
 async fn key_map(pool: &SqlitePool) -> Result<HashMap<String, String>, sqlx::Error> {
-    let rows: Vec<(String, String)> = sqlx::query_as("SELECT payee_key, payee_id FROM payee_keys").fetch_all(pool).await?;
+    let rows: Vec<(String, String)> = sqlx::query_as("SELECT payee_key, payee_id FROM payee_keys")
+        .fetch_all(pool)
+        .await?;
     Ok(rows.into_iter().collect())
 }
 
@@ -1231,7 +1468,11 @@ pub async fn xp_in_period(
         cid = norm_id("c.id"),
         aid = norm_id("a.contributor_id")
     );
-    let rows = sqlx::query(&sql).bind(format_db_time(start)).bind(format_db_time(end)).fetch_all(pool).await?;
+    let rows = sqlx::query(&sql)
+        .bind(format_db_time(start))
+        .bind(format_db_time(end))
+        .fetch_all(pool)
+        .await?;
     let keys = key_map(pool).await?;
     let mut per: BTreeMap<String, (String, i64)> = BTreeMap::new();
     for r in rows {
@@ -1246,7 +1487,10 @@ pub async fn xp_in_period(
                 (Some(p), Some(rp)) => rule.repos.iter().any(|f| {
                     f.provider == *p
                         && f.repo.trim().eq_ignore_ascii_case(rp)
-                        && f.host.as_deref().unwrap_or(default_host(&f.provider)).eq_ignore_ascii_case(host.as_deref().unwrap_or(default_host(p)))
+                        && f.host
+                            .as_deref()
+                            .unwrap_or(default_host(&f.provider))
+                            .eq_ignore_ascii_case(host.as_deref().unwrap_or(default_host(p)))
                 }),
                 _ => false,
             };
@@ -1260,7 +1504,11 @@ pub async fn xp_in_period(
     let mut out = Vec::new();
     for (key, (role, xp)) in per {
         let payee_id = keys.get(&key).cloned();
-        if !rule.payee_ids.is_empty() && !payee_id.as_ref().is_some_and(|p| rule.payee_ids.contains(p)) {
+        if !rule.payee_ids.is_empty()
+            && !payee_id
+                .as_ref()
+                .is_some_and(|p| rule.payee_ids.contains(p))
+        {
             continue;
         }
         if !rule.roles.is_empty() {
@@ -1270,8 +1518,14 @@ pub async fn xp_in_period(
                     member = payees::load(pool, pid).await?.and_then(|p| p.row.member_id);
                 }
             }
-            let cra_roles = member.as_deref().map(|m| directory.roles_of(m)).unwrap_or_default();
-            let ok = rule.roles.iter().any(|want| want.eq_ignore_ascii_case(&role) || cra_roles.iter().any(|r| r.eq_ignore_ascii_case(want)));
+            let cra_roles = member
+                .as_deref()
+                .map(|m| directory.roles_of(m))
+                .unwrap_or_default();
+            let ok = rule.roles.iter().any(|want| {
+                want.eq_ignore_ascii_case(&role)
+                    || cra_roles.iter().any(|r| r.eq_ignore_ascii_case(want))
+            });
             if !ok {
                 continue;
             }
@@ -1292,24 +1546,40 @@ pub async fn compute_split(
     Ok(match rule {
         AmountRule::Fixed(r) => split_fixed(&r.payee_id, r.amount_cents),
         AmountRule::PoolPercent(r) => {
-            let shares: Vec<(String, i64)> = r.shares.iter().map(|s| (s.payee_id.clone(), s.bps)).collect();
+            let shares: Vec<(String, i64)> = r
+                .shares
+                .iter()
+                .map(|s| (s.payee_id.clone(), s.bps))
+                .collect();
             split_pool_percent(r.pool_cents, &shares)
         }
         AmountRule::PoolByXp(r) => {
             let xp = xp_in_period(pool, directory, r, occ.period_start, occ.period_end).await?;
             split_pool_by_xp(r.pool_cents, &xp, r.min_xp, r.max_share_bps)
         }
-        AmountRule::PercentOfAmount(r) => match r.bases.get(&occ.period_key).copied().or(r.base_cents) {
-            Some(base) => split_percent_of_amount(&r.payee_id, base, r.bps),
-            None => Err(format!("no base amount for {}; add it to the order (bases or base_cents)", occ.period_key)),
-        },
+        AmountRule::PercentOfAmount(r) => {
+            match r.bases.get(&occ.period_key).copied().or(r.base_cents) {
+                Some(base) => split_percent_of_amount(&r.payee_id, base, r.bps),
+                None => Err(format!(
+                    "no base amount for {}; add it to the order (bases or base_cents)",
+                    occ.period_key
+                )),
+            }
+        }
     })
 }
 
 /// Withhold the shares of payees that are paused or closed (never queued for later).
-async fn withhold_inactive(pool: &SqlitePool, split: &mut Split) -> Result<HashMap<String, Payee>, sqlx::Error> {
+async fn withhold_inactive(
+    pool: &SqlitePool,
+    split: &mut Split,
+) -> Result<HashMap<String, Payee>, sqlx::Error> {
     let mut found = HashMap::new();
-    let ids: Vec<String> = split.allocations.iter().filter_map(|a| a.payee_id.clone()).collect();
+    let ids: Vec<String> = split
+        .allocations
+        .iter()
+        .filter_map(|a| a.payee_id.clone())
+        .collect();
     for id in ids {
         match payees::load(pool, &id).await? {
             Some(p) => {
@@ -1377,7 +1647,10 @@ pub async fn preview(
             waiting.push(format!("order is {}", row.status));
         }
         if !approved {
-            waiting.push(format!("{counted} of {} required approvals", required(&eff.policy)));
+            waiting.push(format!(
+                "{counted} of {} required approvals",
+                required(&eff.policy)
+            ));
         }
         let split = match compute_split(pool, directory, &rule, &occ).await? {
             Ok(mut s) => {
@@ -1394,7 +1667,11 @@ pub async fn preview(
             occurs_at: format_db_time(occ.occurs_at),
             period_start: format_db_time(occ.period_start),
             period_end: format_db_time(occ.period_end),
-            timing: if occ.occurs_at <= now { "due" } else { "upcoming" },
+            timing: if occ.occurs_at <= now {
+                "due"
+            } else {
+                "upcoming"
+            },
             split,
             waiting_for: waiting,
         });
@@ -1404,15 +1681,17 @@ pub async fn preview(
         status: row.status,
         approved,
         items,
-        note: matches!(rule, AmountRule::PoolByXp(_)).then(|| "pool_by_xp shares count the XP earned so far in each period".into()),
+        note: matches!(rule, AmountRule::PoolByXp(_))
+            .then(|| "pool_by_xp shares count the XP earned so far in each period".into()),
     })
 }
 
 async fn recorded_keys(pool: &SqlitePool, order_id: &str) -> Result<HashSet<String>, sqlx::Error> {
-    let keys: Vec<String> = sqlx::query_scalar("SELECT period_key FROM pay_order_occurrences WHERE order_id = ?")
-        .bind(order_id)
-        .fetch_all(pool)
-        .await?;
+    let keys: Vec<String> =
+        sqlx::query_scalar("SELECT period_key FROM pay_order_occurrences WHERE order_id = ?")
+            .bind(order_id)
+            .fetch_all(pool)
+            .await?;
     Ok(keys.into_iter().collect())
 }
 
@@ -1478,7 +1757,9 @@ async fn record_occurrence(
             if a.cents <= 0 {
                 continue;
             }
-            let Some(p) = payees_found.get(pid) else { continue };
+            let Some(p) = payees_found.get(pid) else {
+                continue;
+            };
             let contributor_id: Option<String> = sqlx::query_scalar(&format!(
                 "SELECT {} FROM contributors c JOIN payee_keys k ON k.payee_key = lower(c.github_username) WHERE k.payee_id = ? ORDER BY k.payee_key LIMIT 1",
                 norm_id("c.id")
@@ -1498,7 +1779,9 @@ async fn record_occurrence(
                 pay_after: Some(format_db_time(occ.occurs_at)),
                 created_at: now_s.clone(),
             };
-            let Some(lid) = ledger::insert_source_row(&mut tx, &src).await? else { continue };
+            let Some(lid) = ledger::insert_source_row(&mut tx, &src).await? else {
+                continue;
+            };
             // The order's counted approvals carry over to its rows; evaluate re-checks each
             // approver (rank, payee) at pay time, exactly as for merit rows.
             for m in approvers {
@@ -1542,19 +1825,27 @@ async fn record_occurrence(
 
 /// Materialize every due occurrence of every active, approved order at `now`. Creates ledger
 /// rows only; never transfers. Safe to call any number of times: `UNIQUE (order_id, period_key)`.
-pub async fn materialize_due(ctx: &ApiContext, now: DateTime<Utc>) -> Result<MaterializeReport, PayoutError> {
+pub async fn materialize_due(
+    ctx: &ApiContext,
+    now: DateTime<Utc>,
+) -> Result<MaterializeReport, PayoutError> {
     let pool = &ctx.pool;
     let directory = ctx.directory.as_ref();
     let mut report = MaterializeReport::default();
-    let orders = sqlx::query_as::<_, OrderRow>("SELECT * FROM pay_orders WHERE status = ? ORDER BY created_at, id")
-        .bind(ACTIVE)
-        .fetch_all(pool)
-        .await?;
+    let orders = sqlx::query_as::<_, OrderRow>(
+        "SELECT * FROM pay_orders WHERE status = ? ORDER BY created_at, id",
+    )
+    .bind(ACTIVE)
+    .fetch_all(pool)
+    .await?;
     for row in orders {
         let (rule, schedule) = match (row.rule(), row.sched()) {
             (Ok(r), Ok(s)) => (r, s),
             _ => {
-                error!("pay order {} has an unreadable rule or schedule; skipped", row.id);
+                error!(
+                    "pay order {} has an unreadable rule or schedule; skipped",
+                    row.id
+                );
                 continue;
             }
         };
@@ -1564,20 +1855,41 @@ pub async fn materialize_due(ctx: &ApiContext, now: DateTime<Utc>) -> Result<Mat
         let plan = due_occurrences(&schedule, resume, now, &recorded);
 
         for occ in &plan.skipped {
-            let done = record_occurrence(pool, &row, occ, "skipped", None, Some("the order was paused on this date"), &HashMap::new(), &[], now).await?;
+            let done = record_occurrence(
+                pool,
+                &row,
+                occ,
+                "skipped",
+                None,
+                Some("the order was paused on this date"),
+                &HashMap::new(),
+                &[],
+                now,
+            )
+            .await?;
             if done.is_some() {
-                report.skipped.push((row.id.clone(), occ.period_key.clone()));
+                report
+                    .skipped
+                    .push((row.id.clone(), occ.period_key.clone()));
             }
         }
 
         let mut pending = false;
         if !plan.due.is_empty() {
-            let (approvals, counted) = order_approvals(pool, directory, &eff.policy, &row, &rule).await?;
+            let (approvals, counted) =
+                order_approvals(pool, directory, &eff.policy, &row, &rule).await?;
             if counted < required(&eff.policy) {
-                report.waiting.push((row.id.clone(), format!("{counted} of {} required approvals", required(&eff.policy))));
+                report.waiting.push((
+                    row.id.clone(),
+                    format!("{counted} of {} required approvals", required(&eff.policy)),
+                ));
                 continue;
             }
-            let approvers: Vec<String> = approvals.into_iter().filter(|a| a.counts).map(|a| a.approver_member_id).collect();
+            let approvers: Vec<String> = approvals
+                .into_iter()
+                .filter(|a| a.counts)
+                .map(|a| a.approver_member_id)
+                .collect();
             for occ in &plan.due {
                 let mut split = match compute_split(pool, directory, &rule, occ).await? {
                     Ok(s) => s,
@@ -1588,9 +1900,28 @@ pub async fn materialize_due(ctx: &ApiContext, now: DateTime<Utc>) -> Result<Mat
                     }
                 };
                 let found = withhold_inactive(pool, &mut split).await?;
-                if let Some(ids) = record_occurrence(pool, &row, occ, "materialized", Some(&split), split.note.as_deref(), &found, &approvers, now).await? {
-                    info!("pay order {} occurrence {} materialized into {} ledger rows", row.id, occ.period_key, ids.len());
-                    report.materialized.push((row.id.clone(), occ.period_key.clone(), ids));
+                if let Some(ids) = record_occurrence(
+                    pool,
+                    &row,
+                    occ,
+                    "materialized",
+                    Some(&split),
+                    split.note.as_deref(),
+                    &found,
+                    &approvers,
+                    now,
+                )
+                .await?
+                {
+                    info!(
+                        "pay order {} occurrence {} materialized into {} ledger rows",
+                        row.id,
+                        occ.period_key,
+                        ids.len()
+                    );
+                    report
+                        .materialized
+                        .push((row.id.clone(), occ.period_key.clone(), ids));
                 }
             }
         }
@@ -1606,7 +1937,17 @@ pub async fn materialize_due(ctx: &ApiContext, now: DateTime<Utc>) -> Result<Mat
                 .execute(&mut *tx)
                 .await?;
             if res.rows_affected() > 0 {
-                event(&mut tx, &row.id, "end", Some(ACTIVE), Some(ENDED), row.revision, "system:scheduler", &format_db_time(now)).await?;
+                event(
+                    &mut tx,
+                    &row.id,
+                    "end",
+                    Some(ACTIVE),
+                    Some(ENDED),
+                    row.revision,
+                    "system:scheduler",
+                    &format_db_time(now),
+                )
+                .await?;
                 report.ended.push(row.id.clone());
             }
             tx.commit().await?;

@@ -36,7 +36,10 @@ pub async fn open_database(url: &str) -> Result<SqlitePool> {
         .connect_with(opts)
         .await
         .with_context(|| format!("could not open the database {url}"))?;
-    sqlx::migrate!("./migrations").run(&pool).await.context("database migrations failed")?;
+    sqlx::migrate!("./migrations")
+        .run(&pool)
+        .await
+        .context("database migrations failed")?;
     Ok(pool)
 }
 
@@ -99,7 +102,9 @@ pub async fn serve() -> Result<()> {
 
     // Payment model (ledger + Stripe Connect). Transfers only happen on admin approve.
     let payment_config = Arc::new(PaymentConfig::from_env());
-    let allow_live = crate::config::env_var("MSYNC_STRIPE_ALLOW_LIVE").map(|v| v == "true").unwrap_or(false);
+    let allow_live = crate::config::env_var("MSYNC_STRIPE_ALLOW_LIVE")
+        .map(|v| v == "true")
+        .unwrap_or(false);
     let stripe_client = StripeClient::new(payment_config.stripe_secret_key.clone(), allow_live);
     if !stripe_client.is_configured() {
         info!("Stripe not configured; payout approvals will fail until STRIPE_SECRET_KEY is set");
@@ -111,12 +116,19 @@ pub async fn serve() -> Result<()> {
 
     // Discord HTTP client for webhook use. Without Discord it is never called.
     let discord_http = Arc::new(serenity::http::Http::new(
-        config.discord.as_ref().map(|d| d.token.as_str()).unwrap_or(""),
+        config
+            .discord
+            .as_ref()
+            .map(|d| d.token.as_str())
+            .unwrap_or(""),
     ));
 
     // API tokens rank seam and payout controls (v1 API + scheduler)
     let env_directory = EnvDirectory::from_env();
-    info!("Payout approver owners configured: {}", env_directory.owner_count());
+    info!(
+        "Payout approver owners configured: {}",
+        env_directory.owner_count()
+    );
     // CRA: the active snapshot (if any) from the store; refuse to start on an unusable one.
     let cra_owners = env_directory.owner_entries();
     let cra_handle = crate::cra::CraHandle::new();
@@ -124,9 +136,11 @@ pub async fn serve() -> Result<()> {
         .reload_from_store(&db_pool, crate::cra::loader::ORG_ID)
         .await
         .map_err(anyhow::Error::msg)?;
-    let directory: Arc<dyn Directory> = Arc::new(CraDirectory::new(env_directory, cra_handle.clone()));
+    let directory: Arc<dyn Directory> =
+        Arc::new(CraDirectory::new(env_directory, cra_handle.clone()));
     // The CRA repository (MSYNC_CRA_REPO), or in dev mode a local directory standing in for it.
-    let local = crate::cra::loader::local_from_config(&config, &owner_list_in_order()).map_err(anyhow::Error::msg)?;
+    let local = crate::cra::loader::local_from_config(&config, &owner_list_in_order())
+        .map_err(anyhow::Error::msg)?;
     let is_local = local.is_some();
     let (cra_settings, cra_source) = match local {
         Some((settings, source)) => (Some(settings), Some(source)),
@@ -169,9 +183,14 @@ pub async fn serve() -> Result<()> {
             s.branch,
             active.map(|a| a.commit_sha.clone())
         ),
-        (None, _) => info!("No CRA repository configured (MSYNC_CRA_REPO); ranks from MSYNC_OWNER_MEMBER_IDS only"),
+        (None, _) => info!(
+            "No CRA repository configured (MSYNC_CRA_REPO); ranks from MSYNC_OWNER_MEMBER_IDS only"
+        ),
     }
-    tokio::spawn(crate::cra::loader::run_merit_refresher(cra_ctx.clone(), std::time::Duration::from_secs(60)));
+    tokio::spawn(crate::cra::loader::run_merit_refresher(
+        cra_ctx.clone(),
+        std::time::Duration::from_secs(60),
+    ));
 
     // The shared chat commands (contract 12.2): one context for the Discord bot and the Slack app.
     let chat_ctx = Arc::new(crate::chat::ChatContext {
@@ -193,17 +212,28 @@ pub async fn serve() -> Result<()> {
         let platform = crate::discord::sync::DiscordPlatform {
             http: discord_http.clone(),
             cra: cra_handle.clone(),
-            fallback_guild: std::env::var("DISCORD_GUILD_ID").ok().and_then(|v| v.trim().parse::<u64>().ok()),
+            fallback_guild: std::env::var("DISCORD_GUILD_ID")
+                .ok()
+                .and_then(|v| v.trim().parse::<u64>().ok()),
             token_set: true,
         };
-        let runner = Arc::new(crate::chat::sync::SyncRunner::new(Arc::new(platform), db_pool.clone(), cra_handle.clone()));
+        let runner = Arc::new(crate::chat::sync::SyncRunner::new(
+            Arc::new(platform),
+            db_pool.clone(),
+            cra_handle.clone(),
+        ));
         crate::chat::sync::spawn(runner, role_sync_every)
     });
 
     // Discord: started only when DISCORD_TOKEN is set.
     let discord_handle = match config.discord.clone() {
         Some(dc) => {
-            let bot = DiscordBot::new(db_pool.clone(), merit_tracker.clone(), chat_ctx.clone(), discord_sync.clone());
+            let bot = DiscordBot::new(
+                db_pool.clone(),
+                merit_tracker.clone(),
+                chat_ctx.clone(),
+                discord_sync.clone(),
+            );
             Some(tokio::spawn(async move {
                 let intents = GatewayIntents::GUILDS
                     | GatewayIntents::GUILD_MEMBERS
@@ -212,7 +242,7 @@ pub async fn serve() -> Result<()> {
 
                 let mut client = match Client::builder(&dc.token, intents)
                     .application_id(dc.application_id.into())
-                    .event_handler(bot)
+                    .event_handler(bot)
                     .await
                 {
                     Ok(c) => c,
@@ -240,7 +270,10 @@ pub async fn serve() -> Result<()> {
         config.slack.bot_token.clone(),
     ));
     let slack_runner = Arc::new(crate::chat::sync::SyncRunner::new(
-        Arc::new(crate::slack::sync::SlackPlatform::new(slack_api.clone(), cra_handle.clone())),
+        Arc::new(crate::slack::sync::SlackPlatform::new(
+            slack_api.clone(),
+            cra_handle.clone(),
+        )),
         db_pool.clone(),
         cra_handle.clone(),
     ));
@@ -255,7 +288,10 @@ pub async fn serve() -> Result<()> {
         sync: slack_runner,
     };
     if slack_state.enabled() {
-        info!("Slack enabled: POST /slack/commands (team {:?} plus the CRA's [slack] team)", config.slack.team_id);
+        info!(
+            "Slack enabled: POST /slack/commands (team {:?} plus the CRA's [slack] team)",
+            config.slack.team_id
+        );
         if config.slack.bot_token.is_none() {
             info!("MSYNC_SLACK_BOT_TOKEN unset: Slack admin checks fail closed and /msync-sync cannot update user groups");
         }
@@ -269,9 +305,14 @@ pub async fn serve() -> Result<()> {
         stripe: stripe_api.clone(),
         directory: directory.clone(),
     };
-    let scheduler_secs: u64 = crate::config::env_var("MSYNC_PAYOUT_SCHEDULER_SECS").and_then(|v| v.parse().ok()).unwrap_or(60);
+    let scheduler_secs: u64 = crate::config::env_var("MSYNC_PAYOUT_SCHEDULER_SECS")
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(60);
     if scheduler_secs > 0 {
-        tokio::spawn(payments::schedule::run_scheduler(api_ctx.clone(), std::time::Duration::from_secs(scheduler_secs)));
+        tokio::spawn(payments::schedule::run_scheduler(
+            api_ctx.clone(),
+            std::time::Duration::from_secs(scheduler_secs),
+        ));
     } else {
         info!("Payout scheduler disabled (MSYNC_PAYOUT_SCHEDULER_SECS=0)");
     }
@@ -293,8 +334,14 @@ pub async fn serve() -> Result<()> {
 
     // Portal sync API (contract 13.2): consumers from the active CRA, secrets from
     // MSYNC_CONSUMER_SECRET_<KEY>_<KEYID>, pairwise subjects from MSYNC_SUBJECT_KEY.
-    let portal_data = web::Data::new(crate::portal::PortalContext::from_env(db_pool.clone(), cra_handle.clone()));
-    info!("Portal sync API: subject key configured: {}", portal_data.subject_key_configured());
+    let portal_data = web::Data::new(crate::portal::PortalContext::from_env(
+        db_pool.clone(),
+        cra_handle.clone(),
+    ));
+    info!(
+        "Portal sync API: subject key configured: {}",
+        portal_data.subject_key_configured()
+    );
 
     // v1 merit/leaderboard REST and the MCP server share one MeritContext. Registry and rules
     // are read per request through the routes seams (foundry_registry, merit_rules).
@@ -304,28 +351,49 @@ pub async fn serve() -> Result<()> {
     };
     let allow_mcp_execute = mcp::McpContext::allow_execute_from_env();
     info!("MCP payouts_run_execute enabled: {}", allow_mcp_execute);
-    let mcp_data = web::Data::new(mcp::McpContext::new(mcp_api_ctx, merit_ctx.clone(), allow_mcp_execute));
+    let mcp_data = web::Data::new(mcp::McpContext::new(
+        mcp_api_ctx,
+        merit_ctx.clone(),
+        allow_mcp_execute,
+    ));
     let merit_data = web::Data::new(merit_ctx);
 
     // Accounts and sign-in (contract 13.4), and MSync as an OAuth/OIDC provider (12.3).
-    let accounts_ctx =
-        crate::accounts::AccountsContext::from_env(db_pool.clone(), &payment_config_public_url, cra_handle.clone());
-    let mut sign_in: Vec<crate::accounts::Provider> = accounts_ctx.providers.keys().copied().collect();
+    let accounts_ctx = crate::accounts::AccountsContext::from_env(
+        db_pool.clone(),
+        &payment_config_public_url,
+        cra_handle.clone(),
+    );
+    let mut sign_in: Vec<crate::accounts::Provider> =
+        accounts_ctx.providers.keys().copied().collect();
     sign_in.sort_by_key(|p| p.as_str());
     if sign_in.is_empty() {
         info!("No sign-in provider enabled (set MSYNC_OAUTH_<PROVIDER>_CLIENT_ID and _CLIENT_SECRET; docs/SIGN_IN.md)");
     } else {
-        info!("Sign-in providers: {:?}", sign_in.iter().map(|p| p.as_str()).collect::<Vec<_>>());
+        info!(
+            "Sign-in providers: {:?}",
+            sign_in.iter().map(|p| p.as_str()).collect::<Vec<_>>()
+        );
     }
-    let oauth_ctx = crate::oauth::OAuthContext::from_env(db_pool.clone(), &payment_config_public_url, cra_handle.clone(), sign_in);
+    let oauth_ctx = crate::oauth::OAuthContext::from_env(
+        db_pool.clone(),
+        &payment_config_public_url,
+        cra_handle.clone(),
+        sign_in,
+    );
     if oauth_ctx.kek.is_none() {
-        info!("MSync OAuth provider disabled (MSYNC_KEY_ENCRYPTION_KEY unset); /oauth/* answers 503");
+        info!(
+            "MSync OAuth provider disabled (MSYNC_KEY_ENCRYPTION_KEY unset); /oauth/* answers 503"
+        );
     }
     let accounts_data = web::Data::new(accounts_ctx);
     let oauth_data = web::Data::new(oauth_ctx);
 
     // Start Actix web server
-    info!("Starting web server on {}:{}", config.server.host, config.server.port);
+    info!(
+        "Starting web server on {}:{}",
+        config.server.host, config.server.port
+    );
 
     HttpServer::new(move || {
         App::new()
@@ -343,7 +411,12 @@ pub async fn serve() -> Result<()> {
             .configure(configure_routes)
     })
     .bind((config.server.host.as_str(), config.server.port))
-    .with_context(|| format!("could not listen on {}:{}", config.server.host, config.server.port))?
+    .with_context(|| {
+        format!(
+            "could not listen on {}:{}",
+            config.server.host, config.server.port
+        )
+    })?
     .run()
     .await?;
 

@@ -124,7 +124,15 @@ pub struct Rate {
     pub merit_multiplier: f64,
 }
 
-pub const WEEKDAYS: &[&str] = &["monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"];
+pub const WEEKDAYS: &[&str] = &[
+    "monday",
+    "tuesday",
+    "wednesday",
+    "thursday",
+    "friday",
+    "saturday",
+    "sunday",
+];
 
 impl PayoutPolicy {
     /// The effective policy when none is stored: today's behaviour.
@@ -203,7 +211,9 @@ impl PayoutPolicy {
             Cadence::Weekly | Cadence::Biweekly => {
                 match &s.day {
                     Some(ScheduleDay::Weekday(d)) if WEEKDAYS.contains(&d.as_str()) => {}
-                    _ => errs.push("schedule.day must be a lowercase weekday name for weekly/biweekly".into()),
+                    _ => errs.push(
+                        "schedule.day must be a lowercase weekday name for weekly/biweekly".into(),
+                    ),
                 }
                 if !hour_ok {
                     errs.push("schedule.hour_utc must be 0..=23".into());
@@ -225,7 +235,10 @@ impl PayoutPolicy {
         for (name, v) in [
             ("min_payout_cents", l.min_payout_cents),
             ("max_per_payout_cents", l.max_per_payout_cents),
-            ("max_per_member_per_period_cents", l.max_per_member_per_period_cents),
+            (
+                "max_per_member_per_period_cents",
+                l.max_per_member_per_period_cents,
+            ),
             ("max_per_run_cents", l.max_per_run_cents),
             ("hold_days", l.hold_days),
         ] {
@@ -269,10 +282,16 @@ impl PayoutPolicy {
                 seen.push(&r.branch);
             }
             if r.base_cents < 0 {
-                errs.push(format!("rate '{}': base_cents must be non-negative", r.branch));
+                errs.push(format!(
+                    "rate '{}': base_cents must be non-negative",
+                    r.branch
+                ));
             }
             if !r.merit_multiplier.is_finite() || r.merit_multiplier < 0.0 {
-                errs.push(format!("rate '{}': merit_multiplier must be a non-negative number", r.branch));
+                errs.push(format!(
+                    "rate '{}': merit_multiplier must be a non-negative number",
+                    r.branch
+                ));
             }
         }
         errs
@@ -315,7 +334,11 @@ pub enum PolicyError {
 /// While a CRA snapshot is active for `org`, the policy is its `payouts.toml` (the stored
 /// versions are not consulted, and a snapshot whose `payouts.toml` does not convert is
 /// `Corrupt`). With no active snapshot this is exactly the pre-CRA behaviour.
-pub async fn load_effective(pool: &SqlitePool, org: &str, cfg: &PaymentConfig) -> Result<EffectivePolicy, PolicyError> {
+pub async fn load_effective(
+    pool: &SqlitePool,
+    org: &str,
+    cfg: &PaymentConfig,
+) -> Result<EffectivePolicy, PolicyError> {
     if let Some(eff) = crate::cra::loader::cra_payout_policy(pool, org).await? {
         return Ok(eff);
     }
@@ -333,11 +356,14 @@ pub async fn load_effective(pool: &SqlitePool, org: &str, cfg: &PaymentConfig) -
             updated_at: None,
         }),
         Some((version, json, by, at)) => {
-            let policy: PayoutPolicy =
-                serde_json::from_str(&json).map_err(|e| PolicyError::Corrupt(format!("version {version}: {e}")))?;
+            let policy: PayoutPolicy = serde_json::from_str(&json)
+                .map_err(|e| PolicyError::Corrupt(format!("version {version}: {e}")))?;
             let errs = policy.validate();
             if !errs.is_empty() {
-                return Err(PolicyError::Corrupt(format!("version {version}: {}", errs.join("; "))));
+                return Err(PolicyError::Corrupt(format!(
+                    "version {version}: {}",
+                    errs.join("; ")
+                )));
             }
             Ok(EffectivePolicy {
                 policy,
@@ -350,7 +376,11 @@ pub async fn load_effective(pool: &SqlitePool, org: &str, cfg: &PaymentConfig) -
 }
 
 /// GET policy (`payouts.read`).
-pub async fn get_policy(pool: &SqlitePool, cfg: &PaymentConfig, principal: &Principal) -> Result<EffectivePolicy, PolicyError> {
+pub async fn get_policy(
+    pool: &SqlitePool,
+    cfg: &PaymentConfig,
+    principal: &Principal,
+) -> Result<EffectivePolicy, PolicyError> {
     principal.require(scopes::PAYOUTS_READ)?;
     load_effective(pool, &principal.org_id, cfg).await
 }
@@ -367,19 +397,23 @@ pub async fn put_policy(
     // The CRA authors the policy while a snapshot is active. The HTTP route answers 409
     // before reaching here (`cra::api`); this refuses any other caller.
     if crate::cra::loader::cra_active(pool, &principal.org_id).await? {
-        return Err(PolicyError::Invalid(vec![crate::cra::loader::POLICY_AUTHORED_IN_CRA.to_string()]));
+        return Err(PolicyError::Invalid(vec![
+            crate::cra::loader::POLICY_AUTHORED_IN_CRA.to_string(),
+        ]));
     }
     let errs = policy.validate();
     if !errs.is_empty() {
         return Err(PolicyError::Invalid(errs));
     }
-    let json = serde_json::to_string(policy).map_err(|e| PolicyError::Invalid(vec![e.to_string()]))?;
+    let json =
+        serde_json::to_string(policy).map_err(|e| PolicyError::Invalid(vec![e.to_string()]))?;
 
     let mut tx = pool.begin().await?;
-    let current: Option<i64> = sqlx::query_scalar("SELECT MAX(version) FROM payout_policies WHERE org_id = ?")
-        .bind(&principal.org_id)
-        .fetch_one(&mut *tx)
-        .await?;
+    let current: Option<i64> =
+        sqlx::query_scalar("SELECT MAX(version) FROM payout_policies WHERE org_id = ?")
+            .bind(&principal.org_id)
+            .fetch_one(&mut *tx)
+            .await?;
     if let Some(expected) = expected_version {
         if expected != current {
             return Err(PolicyError::Conflict(current));
@@ -397,7 +431,9 @@ pub async fn put_policy(
     .await;
     match res {
         Ok(_) => {}
-        Err(sqlx::Error::Database(e)) if e.message().contains("UNIQUE") => return Err(PolicyError::Conflict(current)),
+        Err(sqlx::Error::Database(e)) if e.message().contains("UNIQUE") => {
+            return Err(PolicyError::Conflict(current))
+        }
         Err(e) => return Err(e.into()),
     }
     // The new version and its audit entry commit together: no audit entry, no policy change.

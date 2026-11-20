@@ -40,8 +40,15 @@ impl DiscordBot {
         if self.chat.cra.active().is_none() {
             return false;
         }
-        let managed = h.runner().cra().active().and_then(|a| a.snapshot.org.discord.as_ref().map(|d| d.guild_id.clone()));
-        if managed.as_deref().is_none_or(|g| g == guild_id.get().to_string()) {
+        let managed = h
+            .runner()
+            .cra()
+            .active()
+            .and_then(|a| a.snapshot.org.discord.as_ref().map(|d| d.guild_id.clone()));
+        if managed
+            .as_deref()
+            .is_none_or(|g| g == guild_id.get().to_string())
+        {
             h.trigger(t);
         }
         true
@@ -56,7 +63,7 @@ impl DiscordBot {
     ) -> Result<()> {
         // Get all merit roles from database
         let roles = sqlx::query_as::<_, MeritRole>(
-            "SELECT * FROM merit_roles ORDER BY required_merit_points DESC"
+            "SELECT * FROM merit_roles ORDER BY required_merit_points DESC",
         )
         .fetch_all(&self.db_pool)
         .await?;
@@ -107,9 +114,15 @@ impl DiscordBot {
 impl EventHandler for DiscordBot {
     async fn ready(&self, ctx: Context, ready: Ready) {
         info!("MSync bot connected as {}", ready.user.name);
-        match std::env::var("DISCORD_GUILD_ID").ok().and_then(|v| v.trim().parse::<u64>().ok()) {
+        match std::env::var("DISCORD_GUILD_ID")
+            .ok()
+            .and_then(|v| v.trim().parse::<u64>().ok())
+        {
             Some(gid) => {
-                if let Err(e) = crate::discord::framework::register_slash_commands(&ctx, GuildId::new(gid)).await {
+                if let Err(e) =
+                    crate::discord::framework::register_slash_commands(&ctx, GuildId::new(gid))
+                        .await
+                {
                     error!("Failed to register slash commands: {}", e);
                 } else {
                     info!("Registered slash commands for guild {}", gid);
@@ -136,11 +149,14 @@ impl EventHandler for DiscordBot {
             };
 
             if let Err(why) = command
-                .create_response(&ctx.http, CreateInteractionResponse::Message(
-                    CreateInteractionResponseMessage::new()
-                        .content(reply.text)
-                        .ephemeral(reply.private)
-                ))
+                .create_response(
+                    &ctx.http,
+                    CreateInteractionResponse::Message(
+                        CreateInteractionResponseMessage::new()
+                            .content(reply.text)
+                            .ephemeral(reply.private),
+                    ),
+                )
                 .await
             {
                 error!("Cannot respond to slash command: {}", why);
@@ -160,12 +176,11 @@ impl EventHandler for DiscordBot {
             Ok(Some(b)) => b.contributor,
             _ => return,
         };
-        if let Ok(Some(contributor)) = sqlx::query_as::<_, Contributor>(
-            "SELECT * FROM contributors WHERE github_username = ?"
-        )
-        .bind(key)
-        .fetch_optional(&self.db_pool)
-        .await
+        if let Ok(Some(contributor)) =
+            sqlx::query_as::<_, Contributor>("SELECT * FROM contributors WHERE github_username = ?")
+                .bind(key)
+                .fetch_optional(&self.db_pool)
+                .await
         {
             // Sync their roles based on merit points
             if let Err(e) = self
@@ -193,10 +208,15 @@ impl EventHandler for DiscordBot {
     async fn message(&self, ctx: Context, msg: Message) {
         // Monitor for help requests or community engagement
         if msg.content.contains("!help") && !msg.author.bot {
-            if let Err(why) = msg.channel_id.say(&ctx.http, 
-                "👋 Welcome to MSync! Use `/link` to connect your GitHub account, \
-                `/stats` to see your contributions, and `/leaderboard` to view top contributors!"
-            ).await {
+            if let Err(why) = msg
+                .channel_id
+                .say(
+                    &ctx.http,
+                    "👋 Welcome to MSync! Use `/link` to connect your GitHub account, \
+                `/stats` to see your contributions, and `/leaderboard` to view top contributors!",
+                )
+                .await
+            {
                 error!("Error sending help message: {:?}", why);
             }
         }

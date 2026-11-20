@@ -2,7 +2,10 @@
 //! and the legacy route. Stripe is the mock from `tests.rs`; nothing here calls live Stripe.
 
 use super::api::{self, ApiContext};
-use super::approvals::{self, counted_approvals, evaluate, ApproverFact, Blocker, LegacyApproveOutcome, RowApproval, RowFacts, Usage};
+use super::approvals::{
+    self, counted_approvals, evaluate, ApproverFact, Blocker, LegacyApproveOutcome, RowApproval,
+    RowFacts, Usage,
+};
 use super::error::PayoutError;
 use super::ledger::{self, ClaimGuard, LedgerEntry, LedgerError, MergeEvent, PAID, PENDING};
 use super::policy::{self, Cadence, PayoutPolicy, Schedule, ScheduleDay, ScheduleMode};
@@ -10,7 +13,8 @@ use super::runs::{self, CreateRunResult};
 use super::schedule::{self, current_slot, run_due, TickOutcome};
 use super::tests::{add_contributor, cfg, pool, MockStripe};
 use crate::auth::{
-    authenticate_token, create_token, scopes, AuthError, EnvDirectory, NewToken, Principal, TokenCreator,
+    authenticate_token, create_token, scopes, AuthError, EnvDirectory, NewToken, Principal,
+    TokenCreator,
 };
 use actix_web::{test as atest, web, App};
 use chrono::{DateTime, Duration, TimeZone, Utc};
@@ -47,10 +51,17 @@ fn base_policy() -> PayoutPolicy {
 }
 
 async fn store(pool: &SqlitePool, p: &PayoutPolicy) {
-    policy::put_policy(pool, &Principal::legacy_admin(), p, None).await.unwrap();
+    policy::put_policy(pool, &Principal::legacy_admin(), p, None)
+        .await
+        .unwrap();
 }
 
-async fn member(pool: &SqlitePool, id: &str, scopes: &[&str], payee: &[&str]) -> (Principal, String) {
+async fn member(
+    pool: &SqlitePool,
+    id: &str,
+    scopes: &[&str],
+    payee: &[&str],
+) -> (Principal, String) {
     let t = create_token(
         pool,
         &dir(),
@@ -66,7 +77,12 @@ async fn member(pool: &SqlitePool, id: &str, scopes: &[&str], payee: &[&str]) ->
     )
     .await
     .unwrap();
-    (authenticate_token(pool, &t.token, Utc::now()).await.unwrap(), t.token)
+    (
+        authenticate_token(pool, &t.token, Utc::now())
+            .await
+            .unwrap(),
+        t.token,
+    )
 }
 
 fn merge_by(pr_id: i64, user: &str) -> MergeEvent {
@@ -83,18 +99,39 @@ fn merge_by(pr_id: i64, user: &str) -> MergeEvent {
 }
 
 async fn row(pool: &SqlitePool, pr_id: i64, user: &str) -> LedgerEntry {
-    ledger::record_merge(pool, &cfg(), &merge_by(pr_id, user)).await.unwrap().unwrap()
+    ledger::record_merge(pool, &cfg(), &merge_by(pr_id, user))
+        .await
+        .unwrap()
+        .unwrap()
 }
 
 async fn prepare(pool: &SqlitePool, now: DateTime<Utc>) -> String {
-    match runs::create_run(pool, &cfg(), &dir(), &Principal::legacy_admin(), false, now).await.unwrap() {
+    match runs::create_run(pool, &cfg(), &dir(), &Principal::legacy_admin(), false, now)
+        .await
+        .unwrap()
+    {
         CreateRunResult::Created { run, .. } => run.run.id,
         CreateRunResult::DryRun(_) => panic!("expected a persisted run"),
     }
 }
 
-async fn execute(pool: &SqlitePool, stripe: &MockStripe, run_id: &str, now: DateTime<Utc>) -> runs::ExecuteReport {
-    runs::execute_run(pool, stripe, &cfg(), &dir(), &Principal::legacy_admin(), run_id, now).await.unwrap()
+async fn execute(
+    pool: &SqlitePool,
+    stripe: &MockStripe,
+    run_id: &str,
+    now: DateTime<Utc>,
+) -> runs::ExecuteReport {
+    runs::execute_run(
+        pool,
+        stripe,
+        &cfg(),
+        &dir(),
+        &Principal::legacy_admin(),
+        run_id,
+        now,
+    )
+    .await
+    .unwrap()
 }
 
 async fn status(pool: &SqlitePool, id: &str) -> String {
@@ -102,8 +139,15 @@ async fn status(pool: &SqlitePool, id: &str) -> String {
 }
 
 async fn plan_blockers(pool: &SqlitePool, now: DateTime<Utc>) -> Vec<(String, Vec<Blocker>)> {
-    match runs::create_run(pool, &cfg(), &dir(), &Principal::legacy_admin(), true, now).await.unwrap() {
-        CreateRunResult::DryRun(plan) => plan.items.into_iter().map(|i| (i.ledger_id, i.blockers)).collect(),
+    match runs::create_run(pool, &cfg(), &dir(), &Principal::legacy_admin(), true, now)
+        .await
+        .unwrap()
+    {
+        CreateRunResult::DryRun(plan) => plan
+            .items
+            .into_iter()
+            .map(|i| (i.ledger_id, i.blockers))
+            .collect(),
         CreateRunResult::Created { .. } => panic!("dry run persisted"),
     }
 }
@@ -121,8 +165,19 @@ fn default_policy_reproduces_env_amounts() {
     assert!(p.validate().is_empty());
     assert_eq!(p.approval.approvals_required, 1);
     assert_eq!(p.hold_days(), 0);
-    for (branch, merit) in [("main", 50), ("main", 0), ("main", 1000), ("upcoming", 0), ("upcoming", 7), ("feature/x", 50)] {
-        assert_eq!(p.amount_for(branch, merit), c.amount_for(branch, merit), "{branch} {merit}");
+    for (branch, merit) in [
+        ("main", 50),
+        ("main", 0),
+        ("main", 1000),
+        ("upcoming", 0),
+        ("upcoming", 7),
+        ("feature/x", 50),
+    ] {
+        assert_eq!(
+            p.amount_for(branch, merit),
+            c.amount_for(branch, merit),
+            "{branch} {merit}"
+        );
     }
 }
 
@@ -131,19 +186,32 @@ fn policy_validation_rejects_bad_values_and_unknown_keys() {
     assert!(base_policy().validate().is_empty());
     let mut p = base_policy();
     p.approval.approvals_required = 0;
-    assert!(p.validate().iter().any(|e| e.contains("approvals_required")));
+    assert!(p
+        .validate()
+        .iter()
+        .any(|e| e.contains("approvals_required")));
 
     let mut p = base_policy();
     p.limits.max_per_run_cents = Some(-1);
     assert!(p.validate().iter().any(|e| e.contains("max_per_run_cents")));
 
     let mut p = base_policy();
-    p.schedule = Schedule { cadence: Cadence::Weekly, day: Some(ScheduleDay::Weekday("funday".into())), hour_utc: Some(17), mode: ScheduleMode::Prepare };
+    p.schedule = Schedule {
+        cadence: Cadence::Weekly,
+        day: Some(ScheduleDay::Weekday("funday".into())),
+        hour_utc: Some(17),
+        mode: ScheduleMode::Prepare,
+    };
     assert!(p.validate().iter().any(|e| e.contains("weekday")));
     p.schedule.day = Some(ScheduleDay::Weekday("friday".into()));
     p.schedule.hour_utc = Some(24);
     assert!(p.validate().iter().any(|e| e.contains("hour_utc")));
-    p.schedule = Schedule { cadence: Cadence::Monthly, day: Some(ScheduleDay::MonthDay(29)), hour_utc: Some(0), mode: ScheduleMode::Auto };
+    p.schedule = Schedule {
+        cadence: Cadence::Monthly,
+        day: Some(ScheduleDay::MonthDay(29)),
+        hour_utc: Some(0),
+        mode: ScheduleMode::Auto,
+    };
     assert!(p.validate().iter().any(|e| e.contains("1..=28")));
 
     // unknown key anywhere is an error (fail closed)
@@ -168,19 +236,37 @@ fn policy_validation_rejects_bad_values_and_unknown_keys() {
 #[tokio::test]
 async fn policy_is_versioned_and_stored_rates_drive_new_rows() {
     let pool = pool().await;
-    let eff = policy::load_effective(&pool, "default", &cfg()).await.unwrap();
+    let eff = policy::load_effective(&pool, "default", &cfg())
+        .await
+        .unwrap();
     assert!(!eff.is_stored());
 
     let mut p = base_policy();
-    p.rate = vec![policy::Rate { branch: "main".into(), base_cents: 100, merit_multiplier: 0.0 }];
-    assert_eq!(policy::put_policy(&pool, &Principal::legacy_admin(), &p, Some(None)).await.unwrap(), 1);
+    p.rate = vec![policy::Rate {
+        branch: "main".into(),
+        base_cents: 100,
+        merit_multiplier: 0.0,
+    }];
+    assert_eq!(
+        policy::put_policy(&pool, &Principal::legacy_admin(), &p, Some(None))
+            .await
+            .unwrap(),
+        1
+    );
     // stale expected version is refused
     assert!(matches!(
         policy::put_policy(&pool, &Principal::legacy_admin(), &p, Some(None)).await,
         Err(policy::PolicyError::Conflict(Some(1)))
     ));
-    assert_eq!(policy::put_policy(&pool, &Principal::legacy_admin(), &p, Some(Some(1))).await.unwrap(), 2);
-    let eff = policy::load_effective(&pool, "default", &cfg()).await.unwrap();
+    assert_eq!(
+        policy::put_policy(&pool, &Principal::legacy_admin(), &p, Some(Some(1)))
+            .await
+            .unwrap(),
+        2
+    );
+    let eff = policy::load_effective(&pool, "default", &cfg())
+        .await
+        .unwrap();
     assert_eq!(eff.version, Some(2));
 
     let e = row(&pool, 1, "alice").await;
@@ -188,14 +274,23 @@ async fn policy_is_versioned_and_stored_rates_drive_new_rows() {
     // a branch the stored policy has no rate for records nothing
     let mut ev = merge_by(2, "alice");
     ev.branch = "upcoming".into();
-    assert!(ledger::record_merge(&pool, &cfg(), &ev).await.unwrap().is_none());
+    assert!(ledger::record_merge(&pool, &cfg(), &ev)
+        .await
+        .unwrap()
+        .is_none());
 
     // writing needs payouts.policy; invalid policies are refused
     let (reader, _) = member(&pool, "bob", &[scopes::PAYOUTS_READ], &[]).await;
-    assert!(matches!(policy::put_policy(&pool, &reader, &p, None).await, Err(policy::PolicyError::Auth(AuthError::MissingScope(_)))));
+    assert!(matches!(
+        policy::put_policy(&pool, &reader, &p, None).await,
+        Err(policy::PolicyError::Auth(AuthError::MissingScope(_)))
+    ));
     let mut bad = base_policy();
     bad.approval.approvals_required = 0;
-    assert!(matches!(policy::put_policy(&pool, &Principal::legacy_admin(), &bad, None).await, Err(policy::PolicyError::Invalid(_))));
+    assert!(matches!(
+        policy::put_policy(&pool, &Principal::legacy_admin(), &bad, None).await,
+        Err(policy::PolicyError::Invalid(_))
+    ));
 }
 
 // ------------------------------------------------------------------ approvals
@@ -205,14 +300,23 @@ async fn payee_cannot_approve_own_row_directly() {
     let pool = pool().await;
     let e = row(&pool, 1, "Alice").await;
     let (alice, _) = member(&pool, "alice-m", &[scopes::PAYOUTS_APPROVE], &["alice"]).await;
-    assert!(matches!(approvals::approve_row(&pool, &dir(), &alice, &e.id).await, Err(PayoutError::PayeeCannotApprove)));
+    assert!(matches!(
+        approvals::approve_row(&pool, &dir(), &alice, &e.id).await,
+        Err(PayoutError::PayeeCannotApprove)
+    ));
 
     // A second token for the same member without payee_keys cannot hide it.
     let (alice2, _) = member(&pool, "alice-m", &[scopes::PAYOUTS_APPROVE], &[]).await;
     assert!(alice2.payee_keys.is_empty());
-    assert!(matches!(approvals::approve_row(&pool, &dir(), &alice2, &e.id).await, Err(PayoutError::PayeeCannotApprove)));
+    assert!(matches!(
+        approvals::approve_row(&pool, &dir(), &alice2, &e.id).await,
+        Err(PayoutError::PayeeCannotApprove)
+    ));
 
-    let n: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM payout_approvals").fetch_one(&pool).await.unwrap();
+    let n: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM payout_approvals")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
     assert_eq!(n, 0);
 }
 
@@ -223,7 +327,9 @@ async fn payee_cannot_approve_own_row_through_a_run() {
     let other = row(&pool, 2, "dave").await;
     let run_id = prepare(&pool, Utc::now()).await;
     let (alice, _) = member(&pool, "alice-m", &[scopes::PAYOUTS_APPROVE], &["alice"]).await;
-    let report = runs::approve_run(&pool, &dir(), &alice, &run_id).await.unwrap();
+    let report = runs::approve_run(&pool, &dir(), &alice, &run_id)
+        .await
+        .unwrap();
     assert_eq!(report.skipped_payee, vec![own.id.clone()]);
     assert_eq!(report.approved, vec![other.id.clone()]);
     let mine: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM payout_approvals WHERE ledger_id = ?")
@@ -237,8 +343,16 @@ async fn payee_cannot_approve_own_row_through_a_run() {
 #[test]
 fn a_payee_approval_never_counts() {
     let p = base_policy();
-    let payee = ApproverFact { member_id: "alice-m".into(), rank: Some(1000), is_payee: true };
-    let other = ApproverFact { member_id: "bob".into(), rank: None, is_payee: false };
+    let payee = ApproverFact {
+        member_id: "alice-m".into(),
+        rank: Some(1000),
+        is_payee: true,
+    };
+    let other = ApproverFact {
+        member_id: "bob".into(),
+        rank: None,
+        is_payee: false,
+    };
     assert_eq!(counted_approvals(&p, &[payee.clone()]), 0);
     assert_eq!(counted_approvals(&p, &[payee, other]), 1);
 }
@@ -252,12 +366,31 @@ async fn one_member_approving_twice_counts_once() {
     store(&pool, &p).await;
     let e = row(&pool, 1, "alice").await;
     let (bob, _) = member(&pool, "bob", &[scopes::PAYOUTS_APPROVE], &[]).await;
-    assert_eq!(approvals::approve_row(&pool, &dir(), &bob, &e.id).await.unwrap(), RowApproval::Recorded);
-    assert_eq!(approvals::approve_row(&pool, &dir(), &bob, &e.id).await.unwrap(), RowApproval::AlreadyApproved);
+    assert_eq!(
+        approvals::approve_row(&pool, &dir(), &bob, &e.id)
+            .await
+            .unwrap(),
+        RowApproval::Recorded
+    );
+    assert_eq!(
+        approvals::approve_row(&pool, &dir(), &bob, &e.id)
+            .await
+            .unwrap(),
+        RowApproval::AlreadyApproved
+    );
     // The same member through another token is still the same approver.
     let (bob2, _) = member(&pool, "bob", &[scopes::PAYOUTS_APPROVE], &[]).await;
-    assert_eq!(approvals::approve_row(&pool, &dir(), &bob2, &e.id).await.unwrap(), RowApproval::AlreadyApproved);
-    let n: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM payout_approvals WHERE ledger_id = ?").bind(&e.id).fetch_one(&pool).await.unwrap();
+    assert_eq!(
+        approvals::approve_row(&pool, &dir(), &bob2, &e.id)
+            .await
+            .unwrap(),
+        RowApproval::AlreadyApproved
+    );
+    let n: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM payout_approvals WHERE ledger_id = ?")
+        .bind(&e.id)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
     assert_eq!(n, 1);
 
     let stripe = MockStripe::default();
@@ -270,7 +403,11 @@ async fn one_member_approving_twice_counts_once() {
 #[test]
 fn duplicate_approver_facts_count_once() {
     let p = base_policy();
-    let bob = ApproverFact { member_id: "bob".into(), rank: None, is_payee: false };
+    let bob = ApproverFact {
+        member_id: "bob".into(),
+        rank: None,
+        is_payee: false,
+    };
     assert_eq!(counted_approvals(&p, &[bob.clone(), bob]), 1);
 }
 
@@ -284,7 +421,9 @@ async fn fewer_approvals_than_required_pays_nothing() {
     let e = row(&pool, 1, "alice").await;
     let run_id = prepare(&pool, Utc::now()).await;
     let (bob, _) = member(&pool, "bob", &[scopes::PAYOUTS_APPROVE], &[]).await;
-    runs::approve_run(&pool, &dir(), &bob, &run_id).await.unwrap();
+    runs::approve_run(&pool, &dir(), &bob, &run_id)
+        .await
+        .unwrap();
 
     let stripe = MockStripe::default();
     let r = execute(&pool, &stripe, &run_id, Utc::now()).await;
@@ -294,7 +433,9 @@ async fn fewer_approvals_than_required_pays_nothing() {
     assert_eq!(status(&pool, &e.id).await, PENDING);
 
     let (carol, _) = member(&pool, "carol", &[scopes::PAYOUTS_APPROVE], &[]).await;
-    runs::approve_run(&pool, &dir(), &carol, &run_id).await.unwrap();
+    runs::approve_run(&pool, &dir(), &carol, &run_id)
+        .await
+        .unwrap();
     let r = execute(&pool, &stripe, &run_id, Utc::now()).await;
     assert_eq!(r.items[0].outcome, "paid");
     assert_eq!(transfers(&stripe), 1);
@@ -310,7 +451,9 @@ async fn approver_below_min_rank_does_not_count() {
     let e = row(&pool, 1, "alice").await;
     let run_id = prepare(&pool, Utc::now()).await;
     let (bob, _) = member(&pool, "bob", &[scopes::PAYOUTS_APPROVE], &[]).await; // unranked
-    runs::approve_run(&pool, &dir(), &bob, &run_id).await.unwrap();
+    runs::approve_run(&pool, &dir(), &bob, &run_id)
+        .await
+        .unwrap();
 
     let stripe = MockStripe::default();
     let r = execute(&pool, &stripe, &run_id, Utc::now()).await;
@@ -318,7 +461,9 @@ async fn approver_below_min_rank_does_not_count() {
     assert_eq!(transfers(&stripe), 0);
 
     let (owner, _) = member(&pool, "owner1", &[scopes::PAYOUTS_APPROVE], &[]).await; // rank 1000
-    runs::approve_run(&pool, &dir(), &owner, &run_id).await.unwrap();
+    runs::approve_run(&pool, &dir(), &owner, &run_id)
+        .await
+        .unwrap();
     let r = execute(&pool, &stripe, &run_id, Utc::now()).await;
     assert_eq!(r.items[0].outcome, "paid");
     assert_eq!(status(&pool, &e.id).await, PAID);
@@ -329,17 +474,21 @@ async fn approver_below_min_rank_does_not_count() {
 async fn approved_row(pool: &SqlitePool, pr: i64, user: &str) -> LedgerEntry {
     let e = row(pool, pr, user).await;
     let (bob, _) = member(pool, "bob", &[scopes::PAYOUTS_APPROVE], &[]).await;
-    approvals::approve_row(pool, &dir(), &bob, &e.id).await.unwrap();
+    approvals::approve_row(pool, &dir(), &bob, &e.id)
+        .await
+        .unwrap();
     e
 }
 
 /// Make `id` sort after rows recorded in the same second (runs evaluate oldest first).
 async fn make_later(pool: &SqlitePool, id: &str) {
-    sqlx::query("UPDATE payout_ledger SET created_at = datetime(created_at, '+1 second') WHERE id = ?")
-        .bind(id)
-        .execute(pool)
-        .await
-        .unwrap();
+    sqlx::query(
+        "UPDATE payout_ledger SET created_at = datetime(created_at, '+1 second') WHERE id = ?",
+    )
+    .bind(id)
+    .execute(pool)
+    .await
+    .unwrap();
 }
 
 #[tokio::test]
@@ -352,13 +501,29 @@ async fn hold_not_passed_pays_nothing() {
     let e = approved_row(&pool, 1, "alice").await;
     let now = Utc::now();
     let b = plan_blockers(&pool, now).await;
-    assert!(matches!(b[0].1.as_slice(), [Blocker::Hold { .. }]), "{:?}", b);
+    assert!(
+        matches!(b[0].1.as_slice(), [Blocker::Hold { .. }]),
+        "{:?}",
+        b
+    );
 
     let run_id = prepare(&pool, now).await;
     let stripe = MockStripe::default();
-    assert_eq!(execute(&pool, &stripe, &run_id, now + Duration::days(6)).await.items[0].outcome, "not_payable");
+    assert_eq!(
+        execute(&pool, &stripe, &run_id, now + Duration::days(6))
+            .await
+            .items[0]
+            .outcome,
+        "not_payable"
+    );
     assert_eq!(transfers(&stripe), 0);
-    assert_eq!(execute(&pool, &stripe, &run_id, now + Duration::days(8)).await.items[0].outcome, "paid");
+    assert_eq!(
+        execute(&pool, &stripe, &run_id, now + Duration::days(8))
+            .await
+            .items[0]
+            .outcome,
+        "paid"
+    );
     assert_eq!(status(&pool, &e.id).await, PAID);
 }
 
@@ -377,12 +542,23 @@ async fn disabled_policy_pays_nothing() {
     assert!(b[0].1.contains(&Blocker::PolicyDisabled));
     // nothing is prepared...
     assert!(matches!(
-        runs::create_run(&pool, &cfg(), &dir(), &Principal::legacy_admin(), false, Utc::now()).await,
+        runs::create_run(
+            &pool,
+            &cfg(),
+            &dir(),
+            &Principal::legacy_admin(),
+            false,
+            Utc::now()
+        )
+        .await,
         Err(PayoutError::PolicyDisabled)
     ));
     // ...or paid
     let stripe = MockStripe::default();
-    assert_eq!(execute(&pool, &stripe, &run_id, Utc::now()).await.items[0].outcome, "not_payable");
+    assert_eq!(
+        execute(&pool, &stripe, &run_id, Utc::now()).await.items[0].outcome,
+        "not_payable"
+    );
     assert_eq!(transfers(&stripe), 0);
     assert_eq!(status(&pool, &e.id).await, PENDING);
 }
@@ -393,27 +569,49 @@ async fn blocked_payee_is_not_paid() {
     add_contributor(&pool, "alice", Some("acct_1"), true).await;
     store(&pool, &base_policy()).await;
     let e = approved_row(&pool, 1, "alice").await;
-    approvals::block_payee(&pool, &Principal::legacy_admin(), "ALICE", "chargeback review").await.unwrap();
+    approvals::block_payee(
+        &pool,
+        &Principal::legacy_admin(),
+        "ALICE",
+        "chargeback review",
+    )
+    .await
+    .unwrap();
     let b = plan_blockers(&pool, Utc::now()).await;
     assert!(b[0].1.contains(&Blocker::PayeeBlocked), "{:?}", b);
 
     let run_id = prepare(&pool, Utc::now()).await;
     let stripe = MockStripe::default();
-    assert_eq!(execute(&pool, &stripe, &run_id, Utc::now()).await.items[0].outcome, "not_payable");
+    assert_eq!(
+        execute(&pool, &stripe, &run_id, Utc::now()).await.items[0].outcome,
+        "not_payable"
+    );
     assert_eq!(transfers(&stripe), 0);
 
-    assert!(approvals::unblock_payee(&pool, &Principal::legacy_admin(), "alice").await.unwrap());
-    assert_eq!(execute(&pool, &stripe, &run_id, Utc::now()).await.items[0].outcome, "paid");
+    assert!(
+        approvals::unblock_payee(&pool, &Principal::legacy_admin(), "alice")
+            .await
+            .unwrap()
+    );
+    assert_eq!(
+        execute(&pool, &stripe, &run_id, Utc::now()).await.items[0].outcome,
+        "paid"
+    );
     assert_eq!(status(&pool, &e.id).await, PAID);
 
     // Contract 13.1: the block and the unblock are both in the audit log; an unblock of a
     // payee that was not blocked records nothing.
-    assert!(!approvals::unblock_payee(&pool, &Principal::legacy_admin(), "nobody").await.unwrap());
-    let rows: Vec<(String, String)> =
-        sqlx::query_as("SELECT action, target FROM audit_log WHERE action LIKE 'payee.%block%' ORDER BY seq")
-            .fetch_all(&pool)
+    assert!(
+        !approvals::unblock_payee(&pool, &Principal::legacy_admin(), "nobody")
             .await
-            .unwrap();
+            .unwrap()
+    );
+    let rows: Vec<(String, String)> = sqlx::query_as(
+        "SELECT action, target FROM audit_log WHERE action LIKE 'payee.%block%' ORDER BY seq",
+    )
+    .fetch_all(&pool)
+    .await
+    .unwrap();
     assert_eq!(
         rows,
         vec![
@@ -438,7 +636,10 @@ async fn limit_min_payout() {
     assert_eq!(b[0].1, vec![Blocker::BelowMinimum { min: 3001 }]);
     let run_id = prepare(&pool, Utc::now()).await;
     let stripe = MockStripe::default();
-    assert_eq!(execute(&pool, &stripe, &run_id, Utc::now()).await.items[0].outcome, "not_payable");
+    assert_eq!(
+        execute(&pool, &stripe, &run_id, Utc::now()).await.items[0].outcome,
+        "not_payable"
+    );
     assert_eq!(transfers(&stripe), 0);
 }
 
@@ -455,7 +656,10 @@ async fn limit_max_per_payout() {
     assert_eq!(b[0].1, vec![Blocker::AboveMaxPerPayout { max: 2999 }]);
     let run_id = prepare(&pool, Utc::now()).await;
     let stripe = MockStripe::default();
-    assert_eq!(execute(&pool, &stripe, &run_id, Utc::now()).await.items[0].outcome, "not_payable");
+    assert_eq!(
+        execute(&pool, &stripe, &run_id, Utc::now()).await.items[0].outcome,
+        "not_payable"
+    );
     assert_eq!(transfers(&stripe), 0);
 }
 
@@ -470,10 +674,18 @@ async fn limit_max_per_member_per_period() {
     let second = approved_row(&pool, 2, "alice").await;
     make_later(&pool, &second.id).await;
     let b = plan_blockers(&pool, Utc::now()).await;
-    assert!(b.iter().find(|(id, _)| *id == first.id).unwrap().1.is_empty());
+    assert!(b
+        .iter()
+        .find(|(id, _)| *id == first.id)
+        .unwrap()
+        .1
+        .is_empty());
     assert_eq!(
         b.iter().find(|(id, _)| *id == second.id).unwrap().1,
-        vec![Blocker::MemberPeriodLimit { used: 3000, max: 5000 }]
+        vec![Blocker::MemberPeriodLimit {
+            used: 3000,
+            max: 5000
+        }]
     );
     let run_id = prepare(&pool, Utc::now()).await;
     let stripe = MockStripe::default();
@@ -495,10 +707,18 @@ async fn limit_max_per_run() {
     let second = approved_row(&pool, 2, "dave").await;
     make_later(&pool, &second.id).await;
     let b = plan_blockers(&pool, Utc::now()).await;
-    assert!(b.iter().find(|(id, _)| *id == first.id).unwrap().1.is_empty());
+    assert!(b
+        .iter()
+        .find(|(id, _)| *id == first.id)
+        .unwrap()
+        .1
+        .is_empty());
     assert_eq!(
         b.iter().find(|(id, _)| *id == second.id).unwrap().1,
-        vec![Blocker::RunLimit { used: 3000, max: 5000 }]
+        vec![Blocker::RunLimit {
+            used: 3000,
+            max: 5000
+        }]
     );
     let run_id = prepare(&pool, Utc::now()).await;
     let stripe = MockStripe::default();
@@ -519,19 +739,79 @@ async fn claim_guard_enforces_limits_and_blocks_in_sql() {
     let stripe = MockStripe::default();
     let a = row(&pool, 1, "alice").await; // 3000
     let b = row(&pool, 2, "alice").await; // 3000
-    let refused = |r: Result<LedgerEntry, LedgerError>| matches!(r, Err(LedgerError::NotPayable(_)));
+    let refused =
+        |r: Result<LedgerEntry, LedgerError>| matches!(r, Err(LedgerError::NotPayable(_)));
 
-    assert!(refused(ledger::pay_guarded(&pool, &stripe, &a.id, "t", &ClaimGuard { min_cents: Some(3001), ..Default::default() }).await));
-    assert!(refused(ledger::pay_guarded(&pool, &stripe, &a.id, "t", &ClaimGuard { max_cents: Some(2999), ..Default::default() }).await));
-    sqlx::query("INSERT INTO payout_blocks (payee_key, reason, created_by) VALUES ('alice', 'x', 't')").execute(&pool).await.unwrap();
-    assert!(refused(ledger::pay_guarded(&pool, &stripe, &a.id, "t", &ClaimGuard { check_blocks: true, ..Default::default() }).await));
-    sqlx::query("DELETE FROM payout_blocks").execute(&pool).await.unwrap();
+    assert!(refused(
+        ledger::pay_guarded(
+            &pool,
+            &stripe,
+            &a.id,
+            "t",
+            &ClaimGuard {
+                min_cents: Some(3001),
+                ..Default::default()
+            }
+        )
+        .await
+    ));
+    assert!(refused(
+        ledger::pay_guarded(
+            &pool,
+            &stripe,
+            &a.id,
+            "t",
+            &ClaimGuard {
+                max_cents: Some(2999),
+                ..Default::default()
+            }
+        )
+        .await
+    ));
+    sqlx::query(
+        "INSERT INTO payout_blocks (payee_key, reason, created_by) VALUES ('alice', 'x', 't')",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+    assert!(refused(
+        ledger::pay_guarded(
+            &pool,
+            &stripe,
+            &a.id,
+            "t",
+            &ClaimGuard {
+                check_blocks: true,
+                ..Default::default()
+            }
+        )
+        .await
+    ));
+    sqlx::query("DELETE FROM payout_blocks")
+        .execute(&pool)
+        .await
+        .unwrap();
     assert_eq!(transfers(&stripe), 0);
 
-    let window = ("2000-01-01 00:00:00".to_string(), "2100-01-01 00:00:00".to_string(), 5000);
-    let g = ClaimGuard { member_period: Some(window), ..Default::default() };
-    assert_eq!(ledger::pay_guarded(&pool, &stripe, &a.id, "t", &g).await.unwrap().status, PAID);
-    assert!(refused(ledger::pay_guarded(&pool, &stripe, &b.id, "t", &g).await));
+    let window = (
+        "2000-01-01 00:00:00".to_string(),
+        "2100-01-01 00:00:00".to_string(),
+        5000,
+    );
+    let g = ClaimGuard {
+        member_period: Some(window),
+        ..Default::default()
+    };
+    assert_eq!(
+        ledger::pay_guarded(&pool, &stripe, &a.id, "t", &g)
+            .await
+            .unwrap()
+            .status,
+        PAID
+    );
+    assert!(refused(
+        ledger::pay_guarded(&pool, &stripe, &b.id, "t", &g).await
+    ));
     assert_eq!(transfers(&stripe), 1);
 
     // run cap: a is paid inside run r1; b would push it past 5000
@@ -540,7 +820,19 @@ async fn claim_guard_enforces_limits_and_blocks_in_sql() {
         sqlx::query("INSERT INTO payout_run_items (run_id, ledger_id, payee_key, amount_cents, decision) VALUES ('r1', ?, 'alice', 3000, 'include')")
             .bind(id).execute(&pool).await.unwrap();
     }
-    assert!(refused(ledger::pay_guarded(&pool, &stripe, &b.id, "t", &ClaimGuard { run_cap: Some(("r1".into(), 5000)), ..Default::default() }).await));
+    assert!(refused(
+        ledger::pay_guarded(
+            &pool,
+            &stripe,
+            &b.id,
+            "t",
+            &ClaimGuard {
+                run_cap: Some(("r1".into(), 5000)),
+                ..Default::default()
+            }
+        )
+        .await
+    ));
     assert_eq!(transfers(&stripe), 1);
     assert_eq!(status(&pool, &b.id).await, PENDING);
 }
@@ -577,10 +869,28 @@ async fn a_dry_run_persists_nothing() {
     approved_row(&pool, 1, "alice").await;
     let count = |t: &'static str| {
         let pool = pool.clone();
-        async move { sqlx::query_scalar::<_, i64>(&format!("SELECT COUNT(*) FROM {t}")).fetch_one(&pool).await.unwrap() }
+        async move {
+            sqlx::query_scalar::<_, i64>(&format!("SELECT COUNT(*) FROM {t}"))
+                .fetch_one(&pool)
+                .await
+                .unwrap()
+        }
     };
-    let before = (count("payout_runs").await, count("payout_run_items").await, count("payout_approvals").await);
-    let r = runs::create_run(&pool, &cfg(), &dir(), &Principal::legacy_admin(), true, Utc::now()).await.unwrap();
+    let before = (
+        count("payout_runs").await,
+        count("payout_run_items").await,
+        count("payout_approvals").await,
+    );
+    let r = runs::create_run(
+        &pool,
+        &cfg(),
+        &dir(),
+        &Principal::legacy_admin(),
+        true,
+        Utc::now(),
+    )
+    .await
+    .unwrap();
     match r {
         CreateRunResult::DryRun(plan) => {
             assert_eq!(plan.items.len(), 1);
@@ -589,7 +899,11 @@ async fn a_dry_run_persists_nothing() {
         }
         _ => panic!("dry run must not persist"),
     }
-    let after = (count("payout_runs").await, count("payout_run_items").await, count("payout_approvals").await);
+    let after = (
+        count("payout_runs").await,
+        count("payout_run_items").await,
+        count("payout_approvals").await,
+    );
     assert_eq!(before, after);
     assert_eq!(after.0, 0);
 }
@@ -600,14 +914,28 @@ async fn cancelled_runs_cannot_be_approved_or_executed() {
     add_contributor(&pool, "alice", Some("acct_1"), true).await;
     approved_row(&pool, 1, "alice").await;
     let run_id = prepare(&pool, Utc::now()).await;
-    runs::cancel_run(&pool, &Principal::legacy_admin(), &run_id, Utc::now()).await.unwrap();
+    runs::cancel_run(&pool, &Principal::legacy_admin(), &run_id, Utc::now())
+        .await
+        .unwrap();
     let stripe = MockStripe::default();
     assert!(matches!(
-        runs::execute_run(&pool, &stripe, &cfg(), &dir(), &Principal::legacy_admin(), &run_id, Utc::now()).await,
+        runs::execute_run(
+            &pool,
+            &stripe,
+            &cfg(),
+            &dir(),
+            &Principal::legacy_admin(),
+            &run_id,
+            Utc::now()
+        )
+        .await,
         Err(PayoutError::InvalidState(_))
     ));
     let (bob, _) = member(&pool, "bob", &[scopes::PAYOUTS_APPROVE], &[]).await;
-    assert!(matches!(runs::approve_run(&pool, &dir(), &bob, &run_id).await, Err(PayoutError::InvalidState(_))));
+    assert!(matches!(
+        runs::approve_run(&pool, &dir(), &bob, &run_id).await,
+        Err(PayoutError::InvalidState(_))
+    ));
     assert_eq!(transfers(&stripe), 0);
 }
 
@@ -618,13 +946,37 @@ async fn run_functions_require_their_scopes() {
     let run_id = prepare(&pool, Utc::now()).await;
     let (reader, _) = member(&pool, "bob", &[scopes::PAYOUTS_READ], &[]).await;
     let stripe = MockStripe::default();
-    let missing = |r: Result<(), PayoutError>| matches!(r, Err(PayoutError::Auth(AuthError::MissingScope(_))));
-    assert!(missing(runs::create_run(&pool, &cfg(), &dir(), &reader, true, Utc::now()).await.map(|_| ())));
-    assert!(missing(runs::approve_run(&pool, &dir(), &reader, &run_id).await.map(|_| ())));
-    assert!(missing(runs::execute_run(&pool, &stripe, &cfg(), &dir(), &reader, &run_id, Utc::now()).await.map(|_| ())));
-    assert!(missing(runs::cancel_run(&pool, &reader, &run_id, Utc::now()).await.map(|_| ())));
-    assert!(missing(approvals::approve_row(&pool, &dir(), &reader, &e.id).await.map(|_| ())));
-    assert!(missing(approvals::block_payee(&pool, &reader, "alice", "x").await));
+    let missing = |r: Result<(), PayoutError>| {
+        matches!(r, Err(PayoutError::Auth(AuthError::MissingScope(_))))
+    };
+    assert!(missing(
+        runs::create_run(&pool, &cfg(), &dir(), &reader, true, Utc::now())
+            .await
+            .map(|_| ())
+    ));
+    assert!(missing(
+        runs::approve_run(&pool, &dir(), &reader, &run_id)
+            .await
+            .map(|_| ())
+    ));
+    assert!(missing(
+        runs::execute_run(&pool, &stripe, &cfg(), &dir(), &reader, &run_id, Utc::now())
+            .await
+            .map(|_| ())
+    ));
+    assert!(missing(
+        runs::cancel_run(&pool, &reader, &run_id, Utc::now())
+            .await
+            .map(|_| ())
+    ));
+    assert!(missing(
+        approvals::approve_row(&pool, &dir(), &reader, &e.id)
+            .await
+            .map(|_| ())
+    ));
+    assert!(missing(
+        approvals::block_payee(&pool, &reader, "alice", "x").await
+    ));
     assert!(runs::get_run(&pool, &reader, &run_id).await.is_ok());
     assert_eq!(transfers(&stripe), 0);
 }
@@ -632,7 +984,12 @@ async fn run_functions_require_their_scopes() {
 // ------------------------------------------------------------------ schedule
 
 fn weekly_friday_17() -> Schedule {
-    Schedule { cadence: Cadence::Weekly, day: Some(ScheduleDay::Weekday("friday".into())), hour_utc: Some(17), mode: ScheduleMode::Prepare }
+    Schedule {
+        cadence: Cadence::Weekly,
+        day: Some(ScheduleDay::Weekday("friday".into())),
+        hour_utc: Some(17),
+        mode: ScheduleMode::Prepare,
+    }
 }
 
 fn at(y: i32, m: u32, d: u32, h: u32, min: u32) -> DateTime<Utc> {
@@ -643,27 +1000,67 @@ fn at(y: i32, m: u32, d: u32, h: u32, min: u32) -> DateTime<Utc> {
 fn schedule_period_keys_are_pure_and_stable() {
     let s = weekly_friday_17();
     // 2026-11-13 is a Friday.
-    assert_eq!(current_slot(&s, at(2026, 11, 13, 16, 59)).unwrap().key, "weekly-2026-11-06");
-    assert_eq!(current_slot(&s, at(2026, 11, 13, 17, 0)).unwrap().key, "weekly-2026-11-13");
-    assert_eq!(current_slot(&s, at(2026, 11, 19, 23, 0)).unwrap().key, "weekly-2026-11-13");
-    assert_eq!(current_slot(&s, at(2026, 11, 20, 17, 0)).unwrap().key, "weekly-2026-11-20");
+    assert_eq!(
+        current_slot(&s, at(2026, 11, 13, 16, 59)).unwrap().key,
+        "weekly-2026-11-06"
+    );
+    assert_eq!(
+        current_slot(&s, at(2026, 11, 13, 17, 0)).unwrap().key,
+        "weekly-2026-11-13"
+    );
+    assert_eq!(
+        current_slot(&s, at(2026, 11, 19, 23, 0)).unwrap().key,
+        "weekly-2026-11-13"
+    );
+    assert_eq!(
+        current_slot(&s, at(2026, 11, 20, 17, 0)).unwrap().key,
+        "weekly-2026-11-20"
+    );
     let slot = current_slot(&s, at(2026, 11, 15, 0, 0)).unwrap();
-    assert_eq!((slot.start, slot.end), (at(2026, 11, 13, 17, 0), at(2026, 11, 20, 17, 0)));
+    assert_eq!(
+        (slot.start, slot.end),
+        (at(2026, 11, 13, 17, 0), at(2026, 11, 20, 17, 0))
+    );
 
-    let bi = Schedule { cadence: Cadence::Biweekly, ..weekly_friday_17() };
+    let bi = Schedule {
+        cadence: Cadence::Biweekly,
+        ..weekly_friday_17()
+    };
     let k1 = current_slot(&bi, at(2026, 11, 13, 18, 0)).unwrap();
     let k2 = current_slot(&bi, at(2026, 11, 20, 18, 0)).unwrap();
     let k3 = current_slot(&bi, at(2026, 11, 27, 18, 0)).unwrap();
     assert_eq!(k1.end - k1.start, Duration::days(14));
-    assert!(k1.key == k2.key || k2.key == k3.key, "a biweekly key spans two weeks");
+    assert!(
+        k1.key == k2.key || k2.key == k3.key,
+        "a biweekly key spans two weeks"
+    );
     assert_ne!(k1.key, k3.key);
 
-    let mo = Schedule { cadence: Cadence::Monthly, day: Some(ScheduleDay::MonthDay(1)), hour_utc: Some(9), mode: ScheduleMode::Auto };
-    assert_eq!(current_slot(&mo, at(2026, 11, 1, 8, 0)).unwrap().key, "monthly-2026-10");
-    assert_eq!(current_slot(&mo, at(2026, 11, 1, 9, 0)).unwrap().key, "monthly-2026-11");
-    assert_eq!(current_slot(&mo, at(2027, 1, 1, 0, 0)).unwrap().key, "monthly-2026-12");
+    let mo = Schedule {
+        cadence: Cadence::Monthly,
+        day: Some(ScheduleDay::MonthDay(1)),
+        hour_utc: Some(9),
+        mode: ScheduleMode::Auto,
+    };
+    assert_eq!(
+        current_slot(&mo, at(2026, 11, 1, 8, 0)).unwrap().key,
+        "monthly-2026-10"
+    );
+    assert_eq!(
+        current_slot(&mo, at(2026, 11, 1, 9, 0)).unwrap().key,
+        "monthly-2026-11"
+    );
+    assert_eq!(
+        current_slot(&mo, at(2027, 1, 1, 0, 0)).unwrap().key,
+        "monthly-2026-12"
+    );
 
-    let manual = Schedule { cadence: Cadence::Manual, day: None, hour_utc: None, mode: ScheduleMode::Prepare };
+    let manual = Schedule {
+        cadence: Cadence::Manual,
+        day: None,
+        hour_utc: None,
+        mode: ScheduleMode::Prepare,
+    };
     assert!(current_slot(&manual, at(2026, 11, 13, 17, 0)).is_none());
 }
 
@@ -673,7 +1070,10 @@ fn run_is_due_once_per_period_and_never_when_disabled_or_manual() {
     p.schedule = weekly_friday_17();
     let now = at(2026, 11, 13, 17, 5);
     assert_eq!(run_due(&p, now, None).as_deref(), Some("weekly-2026-11-13"));
-    assert_eq!(run_due(&p, now, Some("weekly-2026-11-06")).as_deref(), Some("weekly-2026-11-13"));
+    assert_eq!(
+        run_due(&p, now, Some("weekly-2026-11-06")).as_deref(),
+        Some("weekly-2026-11-13")
+    );
     assert_eq!(run_due(&p, now, Some("weekly-2026-11-13")), None);
     p.enabled = false;
     assert_eq!(run_due(&p, now, None), None);
@@ -683,7 +1083,12 @@ fn run_is_due_once_per_period_and_never_when_disabled_or_manual() {
 }
 
 fn ctx_with(pool: &SqlitePool, stripe: Arc<MockStripe>) -> ApiContext {
-    ApiContext { pool: pool.clone(), payments: Arc::new(cfg()), stripe, directory: Arc::new(dir()) }
+    ApiContext {
+        pool: pool.clone(),
+        payments: Arc::new(cfg()),
+        stripe,
+        directory: Arc::new(dir()),
+    }
 }
 
 #[tokio::test]
@@ -691,7 +1096,10 @@ async fn one_scheduled_run_per_period() {
     let pool = pool().await;
     add_contributor(&pool, "alice", Some("acct_1"), true).await;
     let mut p = base_policy();
-    p.schedule = Schedule { mode: ScheduleMode::Auto, ..weekly_friday_17() };
+    p.schedule = Schedule {
+        mode: ScheduleMode::Auto,
+        ..weekly_friday_17()
+    };
     store(&pool, &p).await;
     let e = approved_row(&pool, 1, "alice").await;
     let stripe = Arc::new(MockStripe::default());
@@ -699,20 +1107,45 @@ async fn one_scheduled_run_per_period() {
 
     let t0 = at(2026, 11, 13, 17, 1);
     let first = schedule::scheduler_tick(&ctx, t0).await.unwrap();
-    assert!(matches!(&first, TickOutcome::Created { period_key, executed: true, .. } if period_key == "weekly-2026-11-13"));
-    assert_eq!(schedule::scheduler_tick(&ctx, t0 + Duration::minutes(1)).await.unwrap(), TickOutcome::Idle);
-    assert_eq!(schedule::scheduler_tick(&ctx, t0 + Duration::days(3)).await.unwrap(), TickOutcome::Idle);
+    assert!(
+        matches!(&first, TickOutcome::Created { period_key, executed: true, .. } if period_key == "weekly-2026-11-13")
+    );
+    assert_eq!(
+        schedule::scheduler_tick(&ctx, t0 + Duration::minutes(1))
+            .await
+            .unwrap(),
+        TickOutcome::Idle
+    );
+    assert_eq!(
+        schedule::scheduler_tick(&ctx, t0 + Duration::days(3))
+            .await
+            .unwrap(),
+        TickOutcome::Idle
+    );
     // auto mode paid the already-approved row, exactly once
     assert_eq!(status(&pool, &e.id).await, PAID);
     assert_eq!(transfers(&stripe), 1);
 
     // even bypassing run_due, the period key is unique per org
     let system = Principal::system("scheduler", &[scopes::PAYOUTS_PREPARE]);
-    assert!(runs::create_scheduled_run(&pool, &cfg(), &dir(), &system, "weekly-2026-11-13", t0).await.unwrap().is_none());
+    assert!(
+        runs::create_scheduled_run(&pool, &cfg(), &dir(), &system, "weekly-2026-11-13", t0)
+            .await
+            .unwrap()
+            .is_none()
+    );
 
-    let next = schedule::scheduler_tick(&ctx, at(2026, 11, 20, 17, 0)).await.unwrap();
-    assert!(matches!(&next, TickOutcome::Created { period_key, .. } if period_key == "weekly-2026-11-20"));
-    let n: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM payout_runs WHERE period_key IS NOT NULL").fetch_one(&pool).await.unwrap();
+    let next = schedule::scheduler_tick(&ctx, at(2026, 11, 20, 17, 0))
+        .await
+        .unwrap();
+    assert!(
+        matches!(&next, TickOutcome::Created { period_key, .. } if period_key == "weekly-2026-11-20")
+    );
+    let n: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM payout_runs WHERE period_key IS NOT NULL")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
     assert_eq!(n, 2);
     assert_eq!(transfers(&stripe), 1);
 }
@@ -726,15 +1159,36 @@ async fn prepare_mode_schedule_pays_nothing_by_itself() {
     store(&pool, &p).await;
     approved_row(&pool, 1, "alice").await;
     let stripe = Arc::new(MockStripe::default());
-    let out = schedule::scheduler_tick(&ctx_with(&pool, stripe.clone()), at(2026, 11, 13, 17, 1)).await.unwrap();
-    assert!(matches!(out, TickOutcome::Created { executed: false, .. }));
+    let out = schedule::scheduler_tick(&ctx_with(&pool, stripe.clone()), at(2026, 11, 13, 17, 1))
+        .await
+        .unwrap();
+    assert!(matches!(
+        out,
+        TickOutcome::Created {
+            executed: false,
+            ..
+        }
+    ));
     assert_eq!(transfers(&stripe), 0);
 }
 
 // ------------------------------------------------------------------ legacy route
 
-async fn legacy(pool: &SqlitePool, stripe: &MockStripe, id: &str) -> Result<LegacyApproveOutcome, PayoutError> {
-    approvals::legacy_admin_approve(pool, stripe, &cfg(), &dir(), id, "body-says-mallory", Utc::now()).await
+async fn legacy(
+    pool: &SqlitePool,
+    stripe: &MockStripe,
+    id: &str,
+) -> Result<LegacyApproveOutcome, PayoutError> {
+    approvals::legacy_admin_approve(
+        pool,
+        stripe,
+        &cfg(),
+        &dir(),
+        id,
+        "body-says-mallory",
+        Utc::now(),
+    )
+    .await
 }
 
 #[tokio::test]
@@ -759,27 +1213,43 @@ async fn legacy_route_obeys_the_policy() {
     two.approval.approvals_required = 2;
     store(&pool, &two).await;
     let b = row(&pool, 2, "alice").await;
-    assert!(matches!(legacy(&pool, &stripe, &b.id).await.unwrap(), LegacyApproveOutcome::ApprovalRecorded { .. }));
+    assert!(matches!(
+        legacy(&pool, &stripe, &b.id).await.unwrap(),
+        LegacyApproveOutcome::ApprovalRecorded { .. }
+    ));
     assert_eq!(transfers(&stripe), 1);
-    let approver: String = sqlx::query_scalar("SELECT approver_member_id FROM payout_approvals WHERE ledger_id = ?")
-        .bind(&b.id).fetch_one(&pool).await.unwrap();
+    let approver: String =
+        sqlx::query_scalar("SELECT approver_member_id FROM payout_approvals WHERE ledger_id = ?")
+            .bind(&b.id)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
     assert_eq!(approver, "admin-token", "the body cannot name the approver");
 
     // Single approver but a hold: still nothing.
     let mut hold = base_policy();
     hold.limits.hold_days = Some(3);
     store(&pool, &hold).await;
-    assert!(matches!(legacy(&pool, &stripe, &b.id).await.unwrap(), LegacyApproveOutcome::ApprovalRecorded { .. }));
+    assert!(matches!(
+        legacy(&pool, &stripe, &b.id).await.unwrap(),
+        LegacyApproveOutcome::ApprovalRecorded { .. }
+    ));
     // Single approver with a rank floor: admin-token has no rank, so nothing.
     let mut ranked = base_policy();
     ranked.approval.min_approver_rank = 1;
     store(&pool, &ranked).await;
-    assert!(matches!(legacy(&pool, &stripe, &b.id).await.unwrap(), LegacyApproveOutcome::ApprovalRecorded { .. }));
+    assert!(matches!(
+        legacy(&pool, &stripe, &b.id).await.unwrap(),
+        LegacyApproveOutcome::ApprovalRecorded { .. }
+    ));
     // Disabled: nothing.
     let mut off = base_policy();
     off.enabled = false;
     store(&pool, &off).await;
-    assert!(matches!(legacy(&pool, &stripe, &b.id).await.unwrap(), LegacyApproveOutcome::ApprovalRecorded { .. }));
+    assert!(matches!(
+        legacy(&pool, &stripe, &b.id).await.unwrap(),
+        LegacyApproveOutcome::ApprovalRecorded { .. }
+    ));
     assert_eq!(transfers(&stripe), 1);
     assert_eq!(status(&pool, &b.id).await, PENDING);
 
@@ -799,7 +1269,12 @@ async fn legacy_route_obeys_the_policy() {
 
 macro_rules! app {
     ($ctx:expr) => {
-        atest::init_service(App::new().app_data(web::Data::new($ctx)).configure(api::configure)).await
+        atest::init_service(
+            App::new()
+                .app_data(web::Data::new($ctx))
+                .configure(api::configure),
+        )
+        .await
     };
 }
 
@@ -831,7 +1306,10 @@ async fn the_request_body_cannot_name_the_approver_or_actor() {
     assert_eq!(body["run"]["run"]["created_by"], "bob");
 
     // Approve with a body naming someone else: the approver is still the token's member.
-    for uri in [format!("/api/v1/payouts/runs/{run_id}/approve"), format!("/api/v1/payouts/ledger/{}/approve", e.id)] {
+    for uri in [
+        format!("/api/v1/payouts/runs/{run_id}/approve"),
+        format!("/api/v1/payouts/ledger/{}/approve", e.id),
+    ] {
         let req = atest::TestRequest::post()
             .uri(&uri)
             .insert_header(auth.clone())
@@ -839,7 +1317,11 @@ async fn the_request_body_cannot_name_the_approver_or_actor() {
             .to_request();
         assert_eq!(atest::call_service(&app, req).await.status(), 200, "{uri}");
     }
-    let approvers: Vec<String> = sqlx::query_scalar("SELECT approver_member_id FROM payout_approvals").fetch_all(&pool).await.unwrap();
+    let approvers: Vec<String> =
+        sqlx::query_scalar("SELECT approver_member_id FROM payout_approvals")
+            .fetch_all(&pool)
+            .await
+            .unwrap();
     assert_eq!(approvers, vec!["bob".to_string()]);
 }
 
@@ -848,13 +1330,21 @@ async fn every_auth_failure_is_the_same_401_and_missing_scope_is_403() {
     let pool = pool().await;
     let (_, read_token) = member(&pool, "bob", &[scopes::PAYOUTS_READ], &[]).await;
     let (_, revoked_token) = member(&pool, "carol", &[scopes::PAYOUTS_READ], &[]).await;
-    sqlx::query("UPDATE api_tokens SET revoked_at = datetime('now') WHERE member_id = 'carol'").execute(&pool).await.unwrap();
+    sqlx::query("UPDATE api_tokens SET revoked_at = datetime('now') WHERE member_id = 'carol'")
+        .execute(&pool)
+        .await
+        .unwrap();
     let (id, _) = crate::auth::tokens::parse_token(&read_token).unwrap();
     let wrong_secret = format!("msync_{id}_{}", "f".repeat(64));
     let app = app!(ctx_with(&pool, Arc::new(MockStripe::default())));
 
     let mut bodies = Vec::new();
-    for header in [None, Some("Bearer nonsense".to_string()), Some(format!("Bearer {wrong_secret}")), Some(format!("Bearer {revoked_token}"))] {
+    for header in [
+        None,
+        Some("Bearer nonsense".to_string()),
+        Some(format!("Bearer {wrong_secret}")),
+        Some(format!("Bearer {revoked_token}")),
+    ] {
         let mut req = atest::TestRequest::get().uri("/api/v1/payouts/ledger");
         if let Some(h) = header {
             req = req.insert_header(("Authorization", h));
@@ -863,9 +1353,15 @@ async fn every_auth_failure_is_the_same_401_and_missing_scope_is_403() {
         assert_eq!(resp.status(), 401);
         bodies.push(atest::read_body(resp).await);
     }
-    assert!(bodies.windows(2).all(|w| w[0] == w[1]), "identical 401 bodies");
+    assert!(
+        bodies.windows(2).all(|w| w[0] == w[1]),
+        "identical 401 bodies"
+    );
 
-    let ok = atest::TestRequest::get().uri("/api/v1/payouts/ledger").insert_header(("Authorization", format!("Bearer {read_token}"))).to_request();
+    let ok = atest::TestRequest::get()
+        .uri("/api/v1/payouts/ledger")
+        .insert_header(("Authorization", format!("Bearer {read_token}")))
+        .to_request();
     assert_eq!(atest::call_service(&app, ok).await.status(), 200);
     let forbidden = atest::TestRequest::post()
         .uri("/api/v1/payouts/runs")
@@ -880,11 +1376,18 @@ async fn tokens_endpoint_accepts_bootstrap_admin_token_only_as_bootstrap() {
     let pool = pool().await;
     let mut c = cfg();
     c.admin_token = Some("legacy-admin-secret".into());
-    let ctx = ApiContext { payments: Arc::new(c), ..ctx_with(&pool, Arc::new(MockStripe::default())) };
+    let ctx = ApiContext {
+        payments: Arc::new(c),
+        ..ctx_with(&pool, Arc::new(MockStripe::default()))
+    };
     let app = app!(ctx);
     let body = json!({"label": "ci", "member_id": "bob", "scopes": ["payouts.read"], "payee_keys": ["bob"]});
 
-    let bad = atest::TestRequest::post().uri("/api/v1/tokens").insert_header(("Authorization", "Bearer wrong")).set_json(&body).to_request();
+    let bad = atest::TestRequest::post()
+        .uri("/api/v1/tokens")
+        .insert_header(("Authorization", "Bearer wrong"))
+        .set_json(&body)
+        .to_request();
     assert_eq!(atest::call_service(&app, bad).await.status(), 401);
 
     let req = atest::TestRequest::post()
@@ -899,10 +1402,16 @@ async fn tokens_endpoint_accepts_bootstrap_admin_token_only_as_bootstrap() {
     assert!(token.starts_with("msync_"));
 
     // The legacy admin token is NOT accepted on the payouts API.
-    let req = atest::TestRequest::get().uri("/api/v1/payouts/ledger").insert_header(("Authorization", "Bearer legacy-admin-secret")).to_request();
+    let req = atest::TestRequest::get()
+        .uri("/api/v1/payouts/ledger")
+        .insert_header(("Authorization", "Bearer legacy-admin-secret"))
+        .to_request();
     assert_eq!(atest::call_service(&app, req).await.status(), 401);
     // The new token is.
-    let req = atest::TestRequest::get().uri("/api/v1/payouts/ledger").insert_header(("Authorization", format!("Bearer {token}"))).to_request();
+    let req = atest::TestRequest::get()
+        .uri("/api/v1/payouts/ledger")
+        .insert_header(("Authorization", format!("Bearer {token}")))
+        .to_request();
     assert_eq!(atest::call_service(&app, req).await.status(), 200);
 }
 
@@ -935,8 +1444,19 @@ fn evaluate_is_pure_over_facts() {
         payee_id: None,
         pay_after: None,
     };
-    let facts = RowFacts { entry, approvers: vec![], blocked: false, verified_identity: false, payee_rank: None, payee_roles: vec![], payee_inactive: None };
-    assert_eq!(evaluate(&p, &facts, Utc::now(), &Usage::default()), vec![Blocker::Approvals { have: 0, need: 1 }]);
+    let facts = RowFacts {
+        entry,
+        approvers: vec![],
+        blocked: false,
+        verified_identity: false,
+        payee_rank: None,
+        payee_roles: vec![],
+        payee_inactive: None,
+    };
+    assert_eq!(
+        evaluate(&p, &facts, Utc::now(), &Usage::default()),
+        vec![Blocker::Approvals { have: 0, need: 1 }]
+    );
 }
 
 // ------------------------------------------------------------------ verified identity
@@ -961,16 +1481,31 @@ async fn a_typed_in_link_no_longer_makes_a_login_eligible() {
     .await
     .unwrap();
     let e = row(&pool, 1, "alice").await;
-    let unverified = Blocker::Ineligible { reason: "payee identity not verified".into() };
+    let unverified = Blocker::Ineligible {
+        reason: "payee identity not verified".into(),
+    };
 
-    let facts = approvals::load_facts(&pool, &dir(), e.clone()).await.unwrap();
-    assert!(!facts.verified_identity, "a typed-in link must not verify a login");
+    let facts = approvals::load_facts(&pool, &dir(), e.clone())
+        .await
+        .unwrap();
+    assert!(
+        !facts.verified_identity,
+        "a typed-in link must not verify a login"
+    );
     assert!(evaluate(&p, &facts, Utc::now(), &Usage::default()).contains(&unverified));
-    assert!(plan_blockers(&pool, Utc::now()).await.iter().any(|(id, b)| id == &e.id && b.contains(&unverified)));
+    assert!(plan_blockers(&pool, Utc::now())
+        .await
+        .iter()
+        .any(|(id, b)| id == &e.id && b.contains(&unverified)));
 
     // A proven binding (a future OAuth link sets verified = 1) does.
-    sqlx::query("UPDATE chat_identities SET verified = 1").execute(&pool).await.unwrap();
-    let facts = approvals::load_facts(&pool, &dir(), e.clone()).await.unwrap();
+    sqlx::query("UPDATE chat_identities SET verified = 1")
+        .execute(&pool)
+        .await
+        .unwrap();
+    let facts = approvals::load_facts(&pool, &dir(), e.clone())
+        .await
+        .unwrap();
     assert!(facts.verified_identity);
     assert!(!evaluate(&p, &facts, Utc::now(), &Usage::default()).contains(&unverified));
 }
@@ -978,7 +1513,12 @@ async fn a_typed_in_link_no_longer_makes_a_login_eligible() {
 #[tokio::test]
 async fn a_cra_listing_verifies_a_login() {
     let pool = pool().await;
-    assert!(!approvals::payee_identity_verified(&pool, "ada-example").await.unwrap(), "no CRA: nothing attested");
+    assert!(
+        !approvals::payee_identity_verified(&pool, "ada-example")
+            .await
+            .unwrap(),
+        "no CRA: nothing attested"
+    );
     let files = crate::cra::CraFiles {
         org: include_str!("../../examples/cra/eustress-engine/.msync/org.toml").into(),
         roles: include_str!("../../examples/cra/eustress-engine/.msync/roles.toml").into(),
@@ -986,7 +1526,11 @@ async fn a_cra_listing_verifies_a_login() {
         merit: include_str!("../../examples/cra/eustress-engine/.msync/merit.toml").into(),
         payouts: include_str!("../../examples/cra/eustress-engine/.msync/payouts.toml").into(),
     };
-    let repo = crate::cra::CraRepo::new(crate::foundry::FoundryProvider::GitHub, "github.com", "example-eustress/cra");
+    let repo = crate::cra::CraRepo::new(
+        crate::foundry::FoundryProvider::GitHub,
+        "github.com",
+        "example-eustress/cra",
+    );
     let sha = "a".repeat(40);
     let a = crate::cra::store::Attempt {
         org_id: crate::cra::loader::ORG_ID,
@@ -999,14 +1543,46 @@ async fn a_cra_listing_verifies_a_login() {
         plan_markdown: None,
         retryable: false,
     };
-    assert!(matches!(crate::cra::store::activate(&pool, &a, None).await.unwrap(), crate::cra::store::Activation::Activated(_)));
-    assert!(approvals::payee_identity_verified(&pool, "ada-example").await.unwrap());
-    assert!(approvals::payee_identity_verified(&pool, "Ada-Example").await.unwrap(), "logins are case-insensitive");
-    assert!(approvals::payee_identity_verified(&pool, "github:github.com:ada-example").await.unwrap());
-    assert!(!approvals::payee_identity_verified(&pool, "gitlab:ada-example").await.unwrap(), "another provider is another identity");
-    assert!(!approvals::payee_identity_verified(&pool, "mallory").await.unwrap());
+    assert!(matches!(
+        crate::cra::store::activate(&pool, &a, None).await.unwrap(),
+        crate::cra::store::Activation::Activated(_)
+    ));
+    assert!(approvals::payee_identity_verified(&pool, "ada-example")
+        .await
+        .unwrap());
+    assert!(
+        approvals::payee_identity_verified(&pool, "Ada-Example")
+            .await
+            .unwrap(),
+        "logins are case-insensitive"
+    );
+    assert!(
+        approvals::payee_identity_verified(&pool, "github:github.com:ada-example")
+            .await
+            .unwrap()
+    );
+    assert!(
+        !approvals::payee_identity_verified(&pool, "gitlab:ada-example")
+            .await
+            .unwrap(),
+        "another provider is another identity"
+    );
+    assert!(!approvals::payee_identity_verified(&pool, "mallory")
+        .await
+        .unwrap());
     // The activation was audited in its own transaction.
-    let entries = crate::audit::list(&pool, &crate::audit::AuditFilter { action: Some("cra.snapshot.activated".into()), ..Default::default() }).await.unwrap();
+    let entries = crate::audit::list(
+        &pool,
+        &crate::audit::AuditFilter {
+            action: Some("cra.snapshot.activated".into()),
+            ..Default::default()
+        },
+    )
+    .await
+    .unwrap();
     assert_eq!(entries.entries.len(), 1);
-    assert_eq!(entries.entries[0].detail["commit_sha"], serde_json::json!(sha));
+    assert_eq!(
+        entries.entries[0].detail["commit_sha"],
+        serde_json::json!(sha)
+    );
 }

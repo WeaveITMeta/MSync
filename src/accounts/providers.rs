@@ -31,7 +31,9 @@ pub struct ProviderConfig {
 }
 
 /// The provider's own base URLs (`authorize`, `token`, `api`).
-fn default_urls(p: Provider) -> Option<(&'static str, &'static str, &'static str, &'static str, bool)> {
+fn default_urls(
+    p: Provider,
+) -> Option<(&'static str, &'static str, &'static str, &'static str, bool)> {
     Some(match p {
         Provider::Github => (
             "https://github.com/login/oauth/authorize",
@@ -40,7 +42,13 @@ fn default_urls(p: Provider) -> Option<(&'static str, &'static str, &'static str
             "read:user user:email",
             true,
         ),
-        Provider::Gitlab => ("https://gitlab.com/oauth/authorize", "https://gitlab.com/oauth/token", "https://gitlab.com/api/v4", "read_user", true),
+        Provider::Gitlab => (
+            "https://gitlab.com/oauth/authorize",
+            "https://gitlab.com/oauth/token",
+            "https://gitlab.com/api/v4",
+            "read_user",
+            true,
+        ),
         Provider::Discord => (
             "https://discord.com/oauth2/authorize",
             "https://discord.com/api/oauth2/token",
@@ -76,19 +84,33 @@ impl ProviderConfig {
     /// Build from a lookup. `None` unless both the client id and the secret are set and non-empty.
     /// `MSYNC_OAUTH_<P>_AUTHORIZE_URL`, `_TOKEN_URL` and `_API_BASE` override the provider's
     /// URLs (a self-hosted GitLab, or tests).
-    pub fn from_lookup<F: Fn(&str) -> Option<String>>(p: Provider, get: F) -> Option<ProviderConfig> {
+    pub fn from_lookup<F: Fn(&str) -> Option<String>>(
+        p: Provider,
+        get: F,
+    ) -> Option<ProviderConfig> {
         let (auth, token, api, scope, pkce) = default_urls(p)?;
         let stem = env_stem(p);
-        let val = |k: &str| get(&format!("{stem}_{k}")).map(|v| v.trim().to_string()).filter(|v| !v.is_empty());
+        let val = |k: &str| {
+            get(&format!("{stem}_{k}"))
+                .map(|v| v.trim().to_string())
+                .filter(|v| !v.is_empty())
+        };
         let client_id = val("CLIENT_ID")?;
-        let client_secret = if super::mutant::on("provider_needs_only_id") { val("CLIENT_SECRET").unwrap_or_default() } else { val("CLIENT_SECRET")? };
+        let client_secret = if super::mutant::on("provider_needs_only_id") {
+            val("CLIENT_SECRET").unwrap_or_default()
+        } else {
+            val("CLIENT_SECRET")?
+        };
         Some(ProviderConfig {
             provider: p,
             client_id,
             client_secret,
             authorize_url: val("AUTHORIZE_URL").unwrap_or_else(|| auth.to_string()),
             token_url: val("TOKEN_URL").unwrap_or_else(|| token.to_string()),
-            api_base: val("API_BASE").unwrap_or_else(|| api.to_string()).trim_end_matches('/').to_string(),
+            api_base: val("API_BASE")
+                .unwrap_or_else(|| api.to_string())
+                .trim_end_matches('/')
+                .to_string(),
             scope,
             pkce,
         })
@@ -99,7 +121,10 @@ impl ProviderConfig {
         let (auth, token, api, scope, pkce) = default_urls(p).expect("an OAuth provider");
         let path = |u: &str| {
             let after_scheme = u.split_once("://").map(|(_, r)| r).unwrap_or(u);
-            after_scheme.find('/').map(|i| after_scheme[i..].to_string()).unwrap_or_default()
+            after_scheme
+                .find('/')
+                .map(|i| after_scheme[i..].to_string())
+                .unwrap_or_default()
         };
         ProviderConfig {
             provider: p,
@@ -114,7 +139,12 @@ impl ProviderConfig {
     }
 
     /// The browser redirect to the provider.
-    pub fn authorize_redirect(&self, redirect_uri: &str, state: &str, code_challenge: &str) -> String {
+    pub fn authorize_redirect(
+        &self,
+        redirect_uri: &str,
+        state: &str,
+        code_challenge: &str,
+    ) -> String {
         let mut q = vec![
             ("response_type", "code"),
             ("client_id", self.client_id.as_str()),
@@ -130,7 +160,11 @@ impl ProviderConfig {
             // Ask for a fresh login choice rather than silently reusing a provider session.
             q.push(("prompt", "select_account"));
         }
-        let sep = if self.authorize_url.contains('?') { '&' } else { '?' };
+        let sep = if self.authorize_url.contains('?') {
+            '&'
+        } else {
+            '?'
+        };
         format!("{}{sep}{}", self.authorize_url, encode_query(&q))
     }
 }
@@ -145,7 +179,11 @@ pub fn providers_from_env() -> HashMap<Provider, ProviderConfig> {
 
 /// Percent-encode a query string (RFC 3986 unreserved characters pass through).
 pub fn encode_query(pairs: &[(&str, &str)]) -> String {
-    pairs.iter().map(|(k, v)| format!("{}={}", pct(k), pct(v))).collect::<Vec<_>>().join("&")
+    pairs
+        .iter()
+        .map(|(k, v)| format!("{}={}", pct(k), pct(v)))
+        .collect::<Vec<_>>()
+        .join("&")
 }
 
 pub fn pct(s: &str) -> String {
@@ -194,7 +232,13 @@ pub enum ProviderError {
 /// The provider's side of a sign-in: exchange the code and read who signed in.
 #[async_trait]
 pub trait ProviderApi: Send + Sync {
-    async fn complete(&self, cfg: &ProviderConfig, code: &str, verifier: &str, redirect_uri: &str) -> Result<ProviderProfile, ProviderError>;
+    async fn complete(
+        &self,
+        cfg: &ProviderConfig,
+        code: &str,
+        verifier: &str,
+        redirect_uri: &str,
+    ) -> Result<ProviderProfile, ProviderError>;
 }
 
 /// The real implementation over HTTP.
@@ -219,9 +263,15 @@ impl HttpProviderApi {
     }
 
     async fn json(&self, req: reqwest::RequestBuilder) -> Result<Value, ProviderError> {
-        let resp = req.send().await.map_err(|e| ProviderError::Http(e.to_string()))?;
+        let resp = req
+            .send()
+            .await
+            .map_err(|e| ProviderError::Http(e.to_string()))?;
         let status = resp.status();
-        let body: Value = resp.json().await.map_err(|e| ProviderError::Http(e.to_string()))?;
+        let body: Value = resp
+            .json()
+            .await
+            .map_err(|e| ProviderError::Http(e.to_string()))?;
         if !status.is_success() {
             return Err(ProviderError::Refused(format!("HTTP {status}")));
         }
@@ -235,7 +285,13 @@ impl HttpProviderApi {
         Ok(body)
     }
 
-    async fn exchange(&self, cfg: &ProviderConfig, code: &str, verifier: &str, redirect_uri: &str) -> Result<String, ProviderError> {
+    async fn exchange(
+        &self,
+        cfg: &ProviderConfig,
+        code: &str,
+        verifier: &str,
+        redirect_uri: &str,
+    ) -> Result<String, ProviderError> {
         let mut form = vec![
             ("grant_type", "authorization_code"),
             ("code", code),
@@ -247,7 +303,12 @@ impl HttpProviderApi {
             form.push(("code_verifier", verifier));
         }
         let body = self
-            .json(self.http.post(&cfg.token_url).header("Accept", "application/json").form(&form))
+            .json(
+                self.http
+                    .post(&cfg.token_url)
+                    .header("Accept", "application/json")
+                    .form(&form),
+            )
             .await?;
         body.get("access_token")
             .and_then(Value::as_str)
@@ -256,12 +317,21 @@ impl HttpProviderApi {
     }
 
     async fn get(&self, url: String, token: &str) -> Result<Value, ProviderError> {
-        self.json(self.http.get(url).bearer_auth(token).header("Accept", "application/json")).await
+        self.json(
+            self.http
+                .get(url)
+                .bearer_auth(token)
+                .header("Accept", "application/json"),
+        )
+        .await
     }
 }
 
 fn s(v: &Value, k: &str) -> Option<String> {
-    v.get(k).and_then(Value::as_str).map(str::to_string).filter(|x| !x.is_empty())
+    v.get(k)
+        .and_then(Value::as_str)
+        .map(str::to_string)
+        .filter(|x| !x.is_empty())
 }
 
 /// A numeric or string id as text.
@@ -275,7 +345,13 @@ fn id_text(v: &Value, k: &str) -> Option<String> {
 
 #[async_trait]
 impl ProviderApi for HttpProviderApi {
-    async fn complete(&self, cfg: &ProviderConfig, code: &str, verifier: &str, redirect_uri: &str) -> Result<ProviderProfile, ProviderError> {
+    async fn complete(
+        &self,
+        cfg: &ProviderConfig,
+        code: &str,
+        verifier: &str,
+        redirect_uri: &str,
+    ) -> Result<ProviderProfile, ProviderError> {
         let token = self.exchange(cfg, code, verifier, redirect_uri).await?;
         let api = &cfg.api_base;
         Ok(match cfg.provider {
@@ -283,13 +359,18 @@ impl ProviderApi for HttpProviderApi {
                 let u = self.get(format!("{api}/user"), &token).await?;
                 let login = s(&u, "login").ok_or(ProviderError::Missing("login"))?;
                 // Only an address GitHub marks verified; the primary one first.
-                let emails = self.get(format!("{api}/user/emails"), &token).await.unwrap_or(Value::Null);
+                let emails = self
+                    .get(format!("{api}/user/emails"), &token)
+                    .await
+                    .unwrap_or(Value::Null);
                 let mut verified: Vec<(bool, String)> = emails
                     .as_array()
                     .map(|a| {
                         a.iter()
                             .filter(|e| e.get("verified") == Some(&Value::Bool(true)))
-                            .filter_map(|e| Some((e.get("primary") == Some(&Value::Bool(true)), s(e, "email")?)))
+                            .filter_map(|e| {
+                                Some((e.get("primary") == Some(&Value::Bool(true)), s(e, "email")?))
+                            })
                             .collect()
                     })
                     .unwrap_or_default();
@@ -331,22 +412,28 @@ impl ProviderApi for HttpProviderApi {
                     handle: s(&u, "username"),
                     display_name: s(&u, "global_name").or_else(|| s(&u, "username")),
                     email: s(&u, "email"),
-                    email_verified: u.get("verified") == Some(&Value::Bool(true)) && s(&u, "email").is_some(),
+                    email_verified: u.get("verified") == Some(&Value::Bool(true))
+                        && s(&u, "email").is_some(),
                     login: None,
                     team: None,
                 }
             }
             Provider::Slack => {
-                let u = self.get(format!("{api}/openid.connect.userInfo"), &token).await?;
-                let user = s(&u, "https://slack.com/user_id").ok_or(ProviderError::Missing("user_id"))?;
-                let team = s(&u, "https://slack.com/team_id").ok_or(ProviderError::Missing("team_id"))?;
+                let u = self
+                    .get(format!("{api}/openid.connect.userInfo"), &token)
+                    .await?;
+                let user =
+                    s(&u, "https://slack.com/user_id").ok_or(ProviderError::Missing("user_id"))?;
+                let team =
+                    s(&u, "https://slack.com/team_id").ok_or(ProviderError::Missing("team_id"))?;
                 ProviderProfile {
                     provider: Provider::Slack,
                     subject: format!("{team}:{user}"),
                     handle: s(&u, "name"),
                     display_name: s(&u, "name"),
                     email: s(&u, "email"),
-                    email_verified: u.get("email_verified") == Some(&Value::Bool(true)) && s(&u, "email").is_some(),
+                    email_verified: u.get("email_verified") == Some(&Value::Bool(true))
+                        && s(&u, "email").is_some(),
                     login: None,
                     team: Some(team),
                 }
@@ -359,7 +446,8 @@ impl ProviderApi for HttpProviderApi {
                     handle: s(&u, "email"),
                     display_name: s(&u, "name"),
                     email: s(&u, "email"),
-                    email_verified: u.get("email_verified") == Some(&Value::Bool(true)) && s(&u, "email").is_some(),
+                    email_verified: u.get("email_verified") == Some(&Value::Bool(true))
+                        && s(&u, "email").is_some(),
                     login: None,
                     team: None,
                 }
@@ -384,7 +472,10 @@ mod tests {
         };
         let c = ProviderConfig::from_lookup(Provider::Github, both).unwrap();
         assert_eq!(c.token_url, "https://github.com/login/oauth/access_token");
-        let blank = |k: &str| k.starts_with("MSYNC_OAUTH_GITHUB").then(|| "  ".to_string());
+        let blank = |k: &str| {
+            k.starts_with("MSYNC_OAUTH_GITHUB")
+                .then(|| "  ".to_string())
+        };
         assert!(ProviderConfig::from_lookup(Provider::Github, blank).is_none());
         assert!(ProviderConfig::from_lookup(Provider::Email, both).is_none());
     }
@@ -392,13 +483,21 @@ mod tests {
     #[test]
     fn the_authorize_redirect_carries_state_and_pkce() {
         let c = ProviderConfig::for_test(Provider::Github, "http://mock");
-        let url = c.authorize_redirect("https://msync.example/auth/github/callback", "st&ate", "chal");
-        assert!(url.starts_with("http://mock/login/oauth/authorize?response_type=code&client_id=github-client"));
+        let url = c.authorize_redirect(
+            "https://msync.example/auth/github/callback",
+            "st&ate",
+            "chal",
+        );
+        assert!(url.starts_with(
+            "http://mock/login/oauth/authorize?response_type=code&client_id=github-client"
+        ));
         assert!(url.contains("redirect_uri=https%3A%2F%2Fmsync.example%2Fauth%2Fgithub%2Fcallback"));
         assert!(url.contains("state=st%26ate"));
         assert!(url.contains("code_challenge=chal&code_challenge_method=S256"));
         let slack = ProviderConfig::for_test(Provider::Slack, "http://mock");
-        assert!(!slack.authorize_redirect("r", "s", "c").contains("code_challenge"));
+        assert!(!slack
+            .authorize_redirect("r", "s", "c")
+            .contains("code_challenge"));
         assert_eq!(slack.token_url, "http://mock/api/openid.connect.token");
     }
 }

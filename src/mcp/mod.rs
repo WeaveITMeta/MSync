@@ -14,7 +14,10 @@ use crate::auth::{authenticate, Principal};
 use crate::merit::api::MeritContext;
 use crate::payments::api::{auth_error, ApiContext};
 use actix_web::{get, post, web, HttpRequest, HttpResponse};
-use jsonrpc::{error_response, result_response, Incoming, RpcError, INVALID_PARAMS, INVALID_REQUEST, METHOD_NOT_FOUND};
+use jsonrpc::{
+    error_response, result_response, Incoming, RpcError, INVALID_PARAMS, INVALID_REQUEST,
+    METHOD_NOT_FOUND,
+};
 use serde::Deserialize;
 use serde_json::{json, Value};
 use tracing::warn;
@@ -37,7 +40,11 @@ pub struct McpContext {
 
 impl McpContext {
     pub fn new(api: ApiContext, merit: MeritContext, allow_execute: bool) -> Self {
-        Self { api, merit, allow_execute }
+        Self {
+            api,
+            merit,
+            allow_execute,
+        }
     }
 
     /// `MSYNC_MCP_ALLOW_EXECUTE=true` (exactly, case-insensitive) enables execute. Default off.
@@ -47,7 +54,8 @@ impl McpContext {
 }
 
 pub fn parse_allow_execute(v: Option<&str>) -> bool {
-    v.map(|s| s.trim().eq_ignore_ascii_case("true")).unwrap_or(false)
+    v.map(|s| s.trim().eq_ignore_ascii_case("true"))
+        .unwrap_or(false)
 }
 
 #[derive(Debug, Deserialize)]
@@ -64,8 +72,13 @@ struct CallParams {
 }
 
 fn initialize(params: Option<Value>) -> Result<Value, RpcError> {
-    let p: InitializeParams = serde_json::from_value(params.unwrap_or(Value::Null))
-        .map_err(|_| RpcError::new(INVALID_PARAMS, "initialize needs params.protocolVersion (a string)"))?;
+    let p: InitializeParams =
+        serde_json::from_value(params.unwrap_or(Value::Null)).map_err(|_| {
+            RpcError::new(
+                INVALID_PARAMS,
+                "initialize needs params.protocolVersion (a string)",
+            )
+        })?;
     let version = if SUPPORTED_PROTOCOL_VERSIONS.contains(&p.protocol_version.as_str()) {
         p.protocol_version
     } else {
@@ -80,7 +93,12 @@ fn initialize(params: Option<Value>) -> Result<Value, RpcError> {
     }))
 }
 
-async fn dispatch(ctx: &McpContext, p: &Principal, method: &str, params: Option<Value>) -> Result<Value, RpcError> {
+async fn dispatch(
+    ctx: &McpContext,
+    p: &Principal,
+    method: &str,
+    params: Option<Value>,
+) -> Result<Value, RpcError> {
     match method {
         "initialize" => initialize(params),
         "ping" => Ok(json!({})),
@@ -90,7 +108,10 @@ async fn dispatch(ctx: &McpContext, p: &Principal, method: &str, params: Option<
                 .map_err(|_| RpcError::invalid_params("tools/call needs params.name (a string) and optional params.arguments (an object)"))?;
             tools::call(ctx, p, &cp.name, cp.arguments).await
         }
-        other => Err(RpcError::new(METHOD_NOT_FOUND, format!("method not found: {other}"))),
+        other => Err(RpcError::new(
+            METHOD_NOT_FOUND,
+            format!("method not found: {other}"),
+        )),
     }
 }
 
@@ -104,15 +125,26 @@ pub async fn handle(ctx: &McpContext, req: &HttpRequest, body: &[u8]) -> HttpRes
         }
     };
     if let Some(v) = req.headers().get("MCP-Protocol-Version") {
-        let ok = v.to_str().map(|s| SUPPORTED_PROTOCOL_VERSIONS.contains(&s.trim())).unwrap_or(false);
+        let ok = v
+            .to_str()
+            .map(|s| SUPPORTED_PROTOCOL_VERSIONS.contains(&s.trim()))
+            .unwrap_or(false);
         if !ok {
-            let err = RpcError::new(INVALID_REQUEST, format!("unsupported MCP-Protocol-Version; supported: {}", SUPPORTED_PROTOCOL_VERSIONS.join(", ")));
+            let err = RpcError::new(
+                INVALID_REQUEST,
+                format!(
+                    "unsupported MCP-Protocol-Version; supported: {}",
+                    SUPPORTED_PROTOCOL_VERSIONS.join(", ")
+                ),
+            );
             return HttpResponse::BadRequest().json(error_response(Value::Null, &err));
         }
     }
     match jsonrpc::parse(body) {
         Err((id, err)) => HttpResponse::BadRequest().json(error_response(id, &err)),
-        Ok(Incoming::Notification { .. }) | Ok(Incoming::Response) => HttpResponse::Accepted().finish(),
+        Ok(Incoming::Notification { .. }) | Ok(Incoming::Response) => {
+            HttpResponse::Accepted().finish()
+        }
         Ok(Incoming::Request { id, method, params }) => {
             let resp = match dispatch(ctx, &principal, &method, params).await {
                 Ok(result) => result_response(id, result),
@@ -124,14 +156,20 @@ pub async fn handle(ctx: &McpContext, req: &HttpRequest, body: &[u8]) -> HttpRes
 }
 
 #[post("/mcp")]
-pub async fn mcp_post(req: HttpRequest, body: web::Bytes, ctx: web::Data<McpContext>) -> HttpResponse {
+pub async fn mcp_post(
+    req: HttpRequest,
+    body: web::Bytes,
+    ctx: web::Data<McpContext>,
+) -> HttpResponse {
     handle(&ctx, &req, &body).await
 }
 
 /// No SSE stream is offered (stateless server): GET is 405.
 #[get("/mcp")]
 pub async fn mcp_get() -> HttpResponse {
-    HttpResponse::MethodNotAllowed().insert_header(("Allow", "POST")).finish()
+    HttpResponse::MethodNotAllowed()
+        .insert_header(("Allow", "POST"))
+        .finish()
 }
 
 /// Register `/mcp`. Needs `web::Data<McpContext>`.

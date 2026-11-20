@@ -20,12 +20,16 @@ use sqlx::SqlitePool;
 use tracing::{error, info, warn};
 use uuid::Uuid;
 
-use super::model::{Cadence, EventKind, MeritFile, OrgFile, PayoutDay, PayoutsFile, RepoVisibility, RunMode, Scorer};
+use super::model::{
+    Cadence, EventKind, MeritFile, OrgFile, PayoutDay, PayoutsFile, RepoVisibility, RunMode, Scorer,
+};
 use super::source::{normalize_sha, CraRepo, CraSource, SourceError};
-use super::store::{self, Activation, Attempt, RecordedViolation, Recorded, SnapshotRow};
+use super::store::{self, Activation, Attempt, Recorded, RecordedViolation, SnapshotRow};
 use super::{authorize, plan_change, ChangeContext, FoundryIdentity, Snapshot};
 use crate::auth::Directory;
-use crate::foundry::identity::{find_contributor, link_foundry_identity, resolve_contributor, LinkError};
+use crate::foundry::identity::{
+    find_contributor, link_foundry_identity, resolve_contributor, LinkError,
+};
 use crate::foundry::{FoundryEvent, FoundryEventKind, FoundryProvider, RepoEntry, RepoRegistry};
 use crate::merit::scoring::{EventRule, MeritRules, ScorerSource};
 use crate::payments::policy as pay;
@@ -71,7 +75,11 @@ pub enum LoadOutcome {
     /// The commit changes nothing in the CRA (empty plan). Nothing is recorded.
     NoChange { commit_sha: String },
     /// This commit already has a final outcome. Nothing happens.
-    AlreadyProcessed { snapshot_id: i64, commit_sha: String, status: String },
+    AlreadyProcessed {
+        snapshot_id: i64,
+        commit_sha: String,
+        status: String,
+    },
 }
 
 impl LoadOutcome {
@@ -87,10 +95,18 @@ impl LoadOutcome {
 
 /// The audit entry for a snapshot attempt (contract 13.1). The actor is the authenticated
 /// pusher or merger; a reload with no webhook is `system:cra-reload`.
-fn attempt_audit(a: &Attempt<'_>, action: &str, snapshot_id: i64, superseded: Option<i64>) -> crate::audit::AuditEntry {
+fn attempt_audit(
+    a: &Attempt<'_>,
+    action: &str,
+    snapshot_id: i64,
+    superseded: Option<i64>,
+) -> crate::audit::AuditEntry {
     let (kind, actor) = match a.ctx {
         Some(c) => (crate::audit::ActorKind::Foundry, c.actor.to_string()),
-        None => (crate::audit::ActorKind::System, "system:cra-reload".to_string()),
+        None => (
+            crate::audit::ActorKind::System,
+            "system:cra-reload".to_string(),
+        ),
     };
     let mut e = crate::audit::AuditEntry::new(
         kind,
@@ -116,7 +132,11 @@ fn attempt_audit(a: &Attempt<'_>, action: &str, snapshot_id: i64, superseded: Op
 }
 
 /// The audit entry `store::activate` writes in the activation transaction.
-pub(crate) fn activation_audit(a: &Attempt<'_>, snapshot_id: i64, superseded: Option<i64>) -> crate::audit::AuditEntry {
+pub(crate) fn activation_audit(
+    a: &Attempt<'_>,
+    snapshot_id: i64,
+    superseded: Option<i64>,
+) -> crate::audit::AuditEntry {
     attempt_audit(a, "cra.snapshot.activated", snapshot_id, superseded)
 }
 
@@ -125,15 +145,26 @@ fn source_violation(e: &SourceError) -> RecordedViolation {
 }
 
 fn already(row: &SnapshotRow) -> LoadOutcome {
-    LoadOutcome::AlreadyProcessed { snapshot_id: row.id, commit_sha: row.commit_sha.clone(), status: row.status.clone() }
+    LoadOutcome::AlreadyProcessed {
+        snapshot_id: row.id,
+        commit_sha: row.commit_sha.clone(),
+        status: row.status.clone(),
+    }
 }
 
 /// Rebuild the active snapshot from its stored files. The stored content hash must
 /// match: a row that does not reproduce exactly is unusable (fail closed).
 pub fn parse_stored(row: &SnapshotRow) -> Result<Snapshot, String> {
-    let files = row.files.as_ref().ok_or("the active snapshot has no stored files")?;
-    let snap = Snapshot::parse(files)
-        .map_err(|e| e.iter().map(|e| e.to_string()).collect::<Vec<_>>().join("; "))?;
+    let files = row
+        .files
+        .as_ref()
+        .ok_or("the active snapshot has no stored files")?;
+    let snap = Snapshot::parse(files).map_err(|e| {
+        e.iter()
+            .map(|e| e.to_string())
+            .collect::<Vec<_>>()
+            .join("; ")
+    })?;
     if row.content_hash.as_deref() != Some(snap.content_hash.as_str()) {
         return Err("the stored content hash does not match the stored files".into());
     }
@@ -166,7 +197,10 @@ pub async fn load_commit(
                   plan: Option<String>,
                   retryable: bool| async move {
         for v in &violations {
-            warn!("CRA commit {} rejected: {}: {}: {}", sha, v.code, v.item, v.message);
+            warn!(
+                "CRA commit {} rejected: {}: {}: {}",
+                sha, v.code, v.item, v.message
+            );
         }
         let a = Attempt {
             org_id,
@@ -182,8 +216,17 @@ pub async fn load_commit(
         Ok::<LoadOutcome, sqlx::Error>(match store::record_rejected(pool, &a).await? {
             Recorded::Inserted(id) => {
                 // A rejection changes nothing, so its audit entry is best effort (logged on failure).
-                crate::audit::append_best_effort(pool, &attempt_audit(&a, "cra.snapshot.rejected", id, None)).await;
-                LoadOutcome::Rejected { snapshot_id: id, commit_sha: sha.clone(), retryable, violations }
+                crate::audit::append_best_effort(
+                    pool,
+                    &attempt_audit(&a, "cra.snapshot.rejected", id, None),
+                )
+                .await;
+                LoadOutcome::Rejected {
+                    snapshot_id: id,
+                    commit_sha: sha.clone(),
+                    retryable,
+                    violations,
+                }
             }
             Recorded::AlreadyFinal(row) => already(&row),
         })
@@ -191,8 +234,25 @@ pub async fn load_commit(
 
     // 0. The source must be the configured CRA repository.
     if source.repo() != cra_repo {
-        let v = RecordedViolation::new("SourceMismatch", "source", format!("source reads {} but the CRA is {}", source.repo().spec(), cra_repo.spec()));
-        return reject(sha.trim().to_ascii_lowercase(), None, None, None, vec![v], None, false).await;
+        let v = RecordedViolation::new(
+            "SourceMismatch",
+            "source",
+            format!(
+                "source reads {} but the CRA is {}",
+                source.repo().spec(),
+                cra_repo.spec()
+            ),
+        );
+        return reject(
+            sha.trim().to_ascii_lowercase(),
+            None,
+            None,
+            None,
+            vec![v],
+            None,
+            false,
+        )
+        .await;
     }
 
     // 1. An exact commit, never a branch or tag name.
@@ -200,7 +260,16 @@ pub async fn load_commit(
         Ok(s) => s,
         Err(e) => {
             let v = RecordedViolation::new("InvalidCommitSha", "commit", e.to_string());
-            return reject(sha.trim().to_ascii_lowercase(), None, None, None, vec![v], None, false).await;
+            return reject(
+                sha.trim().to_ascii_lowercase(),
+                None,
+                None,
+                None,
+                vec![v],
+                None,
+                false,
+            )
+            .await;
         }
     };
 
@@ -213,13 +282,35 @@ pub async fn load_commit(
     // 3. The files, from the Foundry API at the SHA.
     let files = match source.fetch_files(&sha).await {
         Ok(f) => f,
-        Err(e) => return reject(sha, None, None, None, vec![source_violation(&e)], None, true).await,
+        Err(e) => {
+            return reject(
+                sha,
+                None,
+                None,
+                None,
+                vec![source_violation(&e)],
+                None,
+                true,
+            )
+            .await
+        }
     };
 
     // 4. Who made the change and how it arrived.
     let ctx = match source.change_context(&sha, pusher, today).await {
         Ok(c) => c,
-        Err(e) => return reject(sha, None, Some(files), None, vec![source_violation(&e)], None, true).await,
+        Err(e) => {
+            return reject(
+                sha,
+                None,
+                Some(files),
+                None,
+                vec![source_violation(&e)],
+                None,
+                true,
+            )
+            .await
+        }
     };
 
     // 5. Parse and validate.
@@ -229,7 +320,13 @@ pub async fn load_commit(
             let slug = Snapshot::parse(&files).ok().map(|s| s.org.org.slug);
             let vs = errors
                 .iter()
-                .map(|e| RecordedViolation::new(format!("{:?}", e.code), e.file.file_name(), e.message.clone()))
+                .map(|e| {
+                    RecordedViolation::new(
+                        format!("{:?}", e.code),
+                        e.file.file_name(),
+                        e.message.clone(),
+                    )
+                })
                 .collect();
             return reject(sha, slug, Some(files), Some(ctx), vs, None, false).await;
         }
@@ -259,7 +356,9 @@ pub async fn load_commit(
     if let Err(violations) = authorize(old.as_ref(), &plan, &ctx, owners) {
         let vs = violations
             .iter()
-            .map(|v| RecordedViolation::new(format!("{:?}", v.code), v.item.clone(), v.message.clone()))
+            .map(|v| {
+                RecordedViolation::new(format!("{:?}", v.code), v.item.clone(), v.message.clone())
+            })
             .collect();
         return reject(sha, slug, Some(files), Some(ctx), vs, Some(plan_md), false).await;
     }
@@ -278,7 +377,10 @@ pub async fn load_commit(
     };
     match store::activate(pool, &attempt, active_row.as_ref().map(|r| r.id)).await? {
         Activation::Activated(id) => {
-            info!("CRA commit {} activated as snapshot {} by {}", sha, id, ctx.actor);
+            info!(
+                "CRA commit {} activated as snapshot {} by {}",
+                sha, id, ctx.actor
+            );
             let identity_links = link_member_identities(pool, &new).await;
             // Contract 12.3: a member this snapshot suspends or removes loses their OAuth tokens.
             match crate::oauth::revoke_inactive_member_grants(pool, &new).await {
@@ -301,7 +403,16 @@ pub async fn load_commit(
                 "active",
                 format!("the active snapshot changed to {current:?} while this commit was being checked; it was not activated"),
             );
-            reject(sha, slug, Some(files), Some(ctx), vec![v], Some(plan_md), true).await
+            reject(
+                sha,
+                slug,
+                Some(files),
+                Some(ctx),
+                vec![v],
+                Some(plan_md),
+                true,
+            )
+            .await
         }
     }
 }
@@ -322,7 +433,12 @@ fn hosts_for(org: &OrgFile, provider: FoundryProvider) -> Vec<String> {
         .foundries
         .iter()
         .filter(|f| engine_provider(f.provider) == provider)
-        .map(|f| f.host.clone().unwrap_or_else(|| provider.default_host().to_string()).to_ascii_lowercase())
+        .map(|f| {
+            f.host
+                .clone()
+                .unwrap_or_else(|| provider.default_host().to_string())
+                .to_ascii_lowercase()
+        })
         .collect();
     if hosts.is_empty() {
         hosts.insert(provider.default_host().to_string());
@@ -331,10 +447,18 @@ fn hosts_for(org: &OrgFile, provider: FoundryProvider) -> Vec<String> {
 }
 
 /// Every `(provider, host, login)` a member is attested to hold.
-pub fn member_foundry_logins(snap: &Snapshot, member_id: &str) -> Vec<(FoundryProvider, String, String)> {
-    let Some(m) = snap.member(member_id) else { return Vec::new() };
+pub fn member_foundry_logins(
+    snap: &Snapshot,
+    member_id: &str,
+) -> Vec<(FoundryProvider, String, String)> {
+    let Some(m) = snap.member(member_id) else {
+        return Vec::new();
+    };
     let mut out = Vec::new();
-    for (p, login) in [(FoundryProvider::GitHub, &m.identities.github), (FoundryProvider::GitLab, &m.identities.gitlab)] {
+    for (p, login) in [
+        (FoundryProvider::GitHub, &m.identities.github),
+        (FoundryProvider::GitLab, &m.identities.gitlab),
+    ] {
         if let Some(login) = login {
             for host in hosts_for(&snap.org, p) {
                 out.push((p, host, login.clone()));
@@ -387,15 +511,27 @@ pub async fn link_member_identities(pool: &SqlitePool, snap: &Snapshot) -> Vec<I
         };
         for (p, host, login) in &logins {
             let label = format!("{p}:{host}:{}", login.to_ascii_lowercase());
-            let (result, message) = match link_foundry_identity(pool, primary, *p, host, login).await {
-                Ok(()) => ("linked", String::new()),
-                Err(LinkError::Conflict(x)) => {
-                    warn!("CRA member {}: identity {} belongs to another contributor; not merged", m.id, x);
-                    ("conflict", format!("{x} already belongs to another contributor; not merged"))
-                }
-                Err(e) => ("error", e.to_string()),
-            };
-            reports.push(IdentityLinkReport { member_id: m.id.clone(), identity: label, result: result.into(), message });
+            let (result, message) =
+                match link_foundry_identity(pool, primary, *p, host, login).await {
+                    Ok(()) => ("linked", String::new()),
+                    Err(LinkError::Conflict(x)) => {
+                        warn!(
+                            "CRA member {}: identity {} belongs to another contributor; not merged",
+                            m.id, x
+                        );
+                        (
+                            "conflict",
+                            format!("{x} already belongs to another contributor; not merged"),
+                        )
+                    }
+                    Err(e) => ("error", e.to_string()),
+                };
+            reports.push(IdentityLinkReport {
+                member_id: m.id.clone(),
+                identity: label,
+                result: result.into(),
+                message,
+            });
         }
     }
     reports
@@ -403,7 +539,11 @@ pub async fn link_member_identities(pool: &SqlitePool, snap: &Snapshot) -> Vec<I
 
 /// A member's merit: the total of every contributor their attested identities map to.
 /// All merit counts as vested today.
-pub async fn member_merit(pool: &SqlitePool, snap: &Snapshot, member_id: &str) -> Result<u64, sqlx::Error> {
+pub async fn member_merit(
+    pool: &SqlitePool,
+    snap: &Snapshot,
+    member_id: &str,
+) -> Result<u64, sqlx::Error> {
     let mut seen = BTreeSet::new();
     let mut total: u64 = 0;
     for (p, host, login) in member_foundry_logins(snap, member_id) {
@@ -439,7 +579,9 @@ pub struct CraHandle {
 
 impl std::fmt::Debug for CraHandle {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("CraHandle").field("active", &self.active().map(|a| a.snapshot_id)).finish()
+        f.debug_struct("CraHandle")
+            .field("active", &self.active().map(|a| a.snapshot_id))
+            .finish()
     }
 }
 
@@ -461,19 +603,27 @@ impl CraHandle {
 
     /// Cached vested merit of a CRA member (0 when unknown).
     pub fn merit_of(&self, member_id: &str) -> u64 {
-        self.merits.read().ok().and_then(|m| m.get(member_id).copied()).unwrap_or(0)
+        self.merits
+            .read()
+            .ok()
+            .and_then(|m| m.get(member_id).copied())
+            .unwrap_or(0)
     }
 
     /// Load the active snapshot from the store. A stored active row that does not
     /// reproduce is an error: the caller must not run on a guess.
     pub async fn reload_from_store(&self, pool: &SqlitePool, org_id: &str) -> Result<(), String> {
-        let row = store::active(pool, org_id).await.map_err(|e| e.to_string())?;
+        let row = store::active(pool, org_id)
+            .await
+            .map_err(|e| e.to_string())?;
         let next = match row {
             None => None,
             Some(row) => {
-                let snapshot = parse_stored(&row).map_err(|e| format!("active CRA snapshot {} is unusable: {e}", row.id))?;
+                let snapshot = parse_stored(&row)
+                    .map_err(|e| format!("active CRA snapshot {} is unusable: {e}", row.id))?;
                 let repo = CraRepo::new(
-                    FoundryProvider::parse(&row.provider).ok_or("active CRA snapshot has an unknown provider")?,
+                    FoundryProvider::parse(&row.provider)
+                        .ok_or("active CRA snapshot has an unknown provider")?,
                     &row.host,
                     &row.repo,
                 );
@@ -507,7 +657,10 @@ impl CraHandle {
 
     #[cfg(test)]
     pub fn set_merit_for_test(&self, member_id: &str, merit: u64) {
-        self.merits.write().unwrap().insert(member_id.to_string(), merit);
+        self.merits
+            .write()
+            .unwrap()
+            .insert(member_id.to_string(), merit);
     }
 }
 
@@ -522,7 +675,12 @@ pub fn registry_from_cra(org: &OrgFile) -> RepoRegistry {
                 let provider = engine_provider(f.provider);
                 RepoEntry {
                     provider,
-                    host: f.host.clone().unwrap_or_else(|| provider.default_host().to_string()).trim().to_ascii_lowercase(),
+                    host: f
+                        .host
+                        .clone()
+                        .unwrap_or_else(|| provider.default_host().to_string())
+                        .trim()
+                        .to_ascii_lowercase(),
                     path: f.repo.trim().trim_matches('/').to_ascii_lowercase(),
                     canonical: f.canonical,
                     private: f.visibility == RepoVisibility::Private,
@@ -542,8 +700,14 @@ pub fn merit_rules_from_cra(m: &MeritFile) -> MeritRules {
         m.events
             .iter()
             .find(|e| e.key == k)
-            .map(|e| EventRule { base_points: e.base_points.min(i32::MAX as u32) as i32, max_points: e.max_points.min(i32::MAX as u32) as i32 })
-            .unwrap_or(EventRule { base_points: 0, max_points: 0 })
+            .map(|e| EventRule {
+                base_points: e.base_points.min(i32::MAX as u32) as i32,
+                max_points: e.max_points.min(i32::MAX as u32) as i32,
+            })
+            .unwrap_or(EventRule {
+                base_points: 0,
+                max_points: 0,
+            })
     };
     MeritRules {
         rubric: m.rubric.clone(),
@@ -557,7 +721,10 @@ pub fn merit_rules_from_cra(m: &MeritFile) -> MeritRules {
             .collect(),
         min_scorers: m.min_scorers as usize,
         score_window_days: i64::from(m.score_window_days),
-        pr_opened: EventRule { base_points: 0, max_points: 0 },
+        pr_opened: EventRule {
+            base_points: 0,
+            max_points: 0,
+        },
         pr_merged: rule(EventKind::PrMerged),
         review_approved: rule(EventKind::ReviewApproved),
     }
@@ -607,7 +774,11 @@ pub fn payout_policy_from_cra(p: &PayoutsFile) -> Result<pay::PayoutPolicy, Vec<
         rate: p
             .rates
             .iter()
-            .map(|r| pay::Rate { branch: r.branch.clone(), base_cents: to_i64(r.base_cents), merit_multiplier: r.merit_multiplier })
+            .map(|r| pay::Rate {
+                branch: r.branch.clone(),
+                base_cents: to_i64(r.base_cents),
+                merit_multiplier: r.merit_multiplier,
+            })
             .collect(),
         time_auto_approve: p.time_auto_approve,
     };
@@ -622,17 +793,26 @@ pub fn payout_policy_from_cra(p: &PayoutsFile) -> Result<pay::PayoutPolicy, Vec<
 /// The payout policy from the active snapshot of `org`, read from the store. `Ok(None)`
 /// when no snapshot is active. A stored `payouts.toml` that does not parse or convert is
 /// `Corrupt` (fail closed: never fall back to another policy).
-pub async fn cra_payout_policy(pool: &SqlitePool, org: &str) -> Result<Option<pay::EffectivePolicy>, pay::PolicyError> {
-    let Some(row) = store::active(pool, org).await? else { return Ok(None) };
+pub async fn cra_payout_policy(
+    pool: &SqlitePool,
+    org: &str,
+) -> Result<Option<pay::EffectivePolicy>, pay::PolicyError> {
+    let Some(row) = store::active(pool, org).await? else {
+        return Ok(None);
+    };
     let text = row
         .files
         .as_ref()
         .map(|f| f.payouts.clone())
-        .ok_or_else(|| pay::PolicyError::Corrupt(format!("CRA snapshot {}: no payouts.toml stored", row.id)))?;
-    let file: PayoutsFile = toml::from_str(&text)
-        .map_err(|e| pay::PolicyError::Corrupt(format!("CRA snapshot {}: payouts.toml: {e}", row.id)))?;
-    let policy = payout_policy_from_cra(&file)
-        .map_err(|e| pay::PolicyError::Corrupt(format!("CRA snapshot {}: {}", row.id, e.join("; "))))?;
+        .ok_or_else(|| {
+            pay::PolicyError::Corrupt(format!("CRA snapshot {}: no payouts.toml stored", row.id))
+        })?;
+    let file: PayoutsFile = toml::from_str(&text).map_err(|e| {
+        pay::PolicyError::Corrupt(format!("CRA snapshot {}: payouts.toml: {e}", row.id))
+    })?;
+    let policy = payout_policy_from_cra(&file).map_err(|e| {
+        pay::PolicyError::Corrupt(format!("CRA snapshot {}: {}", row.id, e.join("; ")))
+    })?;
     Ok(Some(pay::EffectivePolicy {
         policy,
         version: Some(row.id),
@@ -688,7 +868,15 @@ impl CraContext {
         settings: Option<CraSettings>,
         source: Option<Arc<dyn CraSource>>,
     ) -> Self {
-        CraContext { pool, handle, directory, owners, settings, source, load_lock: tokio::sync::Mutex::new(()) }
+        CraContext {
+            pool,
+            handle,
+            directory,
+            owners,
+            settings,
+            source,
+            load_lock: tokio::sync::Mutex::new(()),
+        }
     }
 
     /// A context with no CRA repository: everything behaves as before CRA loading.
@@ -698,21 +886,46 @@ impl CraContext {
 
     /// Is this verified push for the CRA repository's configured branch?
     pub fn is_cra_push(&self, ev: &FoundryEvent) -> bool {
-        let Some(s) = &self.settings else { return false };
+        let Some(s) = &self.settings else {
+            return false;
+        };
         ev.kind == FoundryEventKind::Push
-            && ev.repo.as_deref().is_some_and(|r| s.repo.matches(ev.provider, &ev.host, r))
+            && ev
+                .repo
+                .as_deref()
+                .is_some_and(|r| s.repo.matches(ev.provider, &ev.host, r))
             && ev.base_branch.as_deref() == Some(s.branch.as_str())
             && ev.merge_sha.is_some()
     }
 
     /// Run the loader for one commit and, on activation, swap the runtime state.
-    pub async fn load_and_apply(&self, sha: &str, pusher: Option<&FoundryIdentity>, today: NaiveDate) -> Result<LoadOutcome, CraRuntimeError> {
-        let settings = self.settings.as_ref().ok_or(CraRuntimeError::NotConfigured)?;
+    pub async fn load_and_apply(
+        &self,
+        sha: &str,
+        pusher: Option<&FoundryIdentity>,
+        today: NaiveDate,
+    ) -> Result<LoadOutcome, CraRuntimeError> {
+        let settings = self
+            .settings
+            .as_ref()
+            .ok_or(CraRuntimeError::NotConfigured)?;
         let source = self.source.as_ref().ok_or(CraRuntimeError::NotConfigured)?;
         let _guard = self.load_lock.lock().await;
-        let outcome = load_commit(&self.pool, source.as_ref(), &settings.repo, sha, pusher, &self.owners, today).await?;
+        let outcome = load_commit(
+            &self.pool,
+            source.as_ref(),
+            &settings.repo,
+            sha,
+            pusher,
+            &self.owners,
+            today,
+        )
+        .await?;
         if matches!(outcome, LoadOutcome::Activated { .. }) {
-            self.handle.reload_from_store(&self.pool, ORG_ID).await.map_err(CraRuntimeError::State)?;
+            self.handle
+                .reload_from_store(&self.pool, ORG_ID)
+                .await
+                .map_err(CraRuntimeError::State)?;
             crate::chat::sync::snapshot_activated(&self.handle);
         }
         Ok(outcome)
@@ -720,7 +933,11 @@ impl CraContext {
 
     /// The push webhook trigger. `None` when the push is not for the CRA repository's
     /// configured branch: nothing is loaded.
-    pub async fn on_push(&self, ev: &FoundryEvent, today: NaiveDate) -> Option<Result<LoadOutcome, CraRuntimeError>> {
+    pub async fn on_push(
+        &self,
+        ev: &FoundryEvent,
+        today: NaiveDate,
+    ) -> Option<Result<LoadOutcome, CraRuntimeError>> {
         if !self.is_cra_push(ev) {
             return None;
         }
@@ -737,7 +954,10 @@ impl CraContext {
 
     /// Re-run the loader on the configured branch head (no webhook pusher).
     pub async fn reload_head(&self, today: NaiveDate) -> Result<LoadOutcome, CraRuntimeError> {
-        let settings = self.settings.as_ref().ok_or(CraRuntimeError::NotConfigured)?;
+        let settings = self
+            .settings
+            .as_ref()
+            .ok_or(CraRuntimeError::NotConfigured)?;
         let source = self.source.as_ref().ok_or(CraRuntimeError::NotConfigured)?;
         let head = source.branch_head(&settings.branch).await?;
         self.load_and_apply(&head, None, today).await
@@ -755,7 +975,10 @@ impl CraContext {
 
 /// The CRA repository and branch from configuration, if one is configured.
 pub fn settings_from_config(cfg: &crate::config::Config) -> Option<CraSettings> {
-    cfg.cra.repo.clone().map(|repo| CraSettings { repo, branch: cfg.cra.branch.clone() })
+    cfg.cra.repo.clone().map(|repo| CraSettings {
+        repo,
+        branch: cfg.cra.branch.clone(),
+    })
 }
 
 /// The Foundry API source for the configured CRA repository: GitHub with `GITHUB_TOKEN`,
@@ -785,7 +1008,9 @@ pub fn local_from_config(
     cfg: &crate::config::Config,
     owners: &[String],
 ) -> Result<Option<(CraSettings, Arc<dyn CraSource>)>, String> {
-    let Some(dir) = cfg.cra.local_dir.clone() else { return Ok(None) };
+    let Some(dir) = cfg.cra.local_dir.clone() else {
+        return Ok(None);
+    };
     if !cfg.dev_mode {
         return Err("MSYNC_CRA_LOCAL_DIR is refused unless MSYNC_DEV_MODE=true".into());
     }
@@ -795,7 +1020,10 @@ pub fn local_from_config(
             dir.display()
         )
     })?;
-    let settings = CraSettings { repo: src.repo().clone(), branch: super::local::LOCAL_BRANCH.to_string() };
+    let settings = CraSettings {
+        repo: src.repo().clone(),
+        branch: super::local::LOCAL_BRANCH.to_string(),
+    };
     Ok(Some((settings, Arc::new(src) as Arc<dyn CraSource>)))
 }
 

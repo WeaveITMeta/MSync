@@ -90,8 +90,15 @@ pub struct PortalContext {
 }
 
 impl PortalContext {
-    pub fn new(pool: SqlitePool, cra: CraHandle, secrets: SecretLookup, subject_key: Option<String>) -> Self {
-        let subject_key = subject_key.map(|k| k.into_bytes()).filter(|k| k.len() >= MIN_SUBJECT_KEY_BYTES);
+    pub fn new(
+        pool: SqlitePool,
+        cra: CraHandle,
+        secrets: SecretLookup,
+        subject_key: Option<String>,
+    ) -> Self {
+        let subject_key = subject_key
+            .map(|k| k.into_bytes())
+            .filter(|k| k.len() >= MIN_SUBJECT_KEY_BYTES);
         PortalContext {
             pool,
             cra,
@@ -116,11 +123,20 @@ impl PortalContext {
             }
             Some(_) => {}
         }
-        let mut ctx = Self::new(pool, cra, Arc::new(|name: &str| crate::config::env_var(name)), raw_key);
-        if let Some(n) = crate::config::env_var("MSYNC_PORTAL_RATE_PER_MINUTE").and_then(|v| v.trim().parse().ok()) {
+        let mut ctx = Self::new(
+            pool,
+            cra,
+            Arc::new(|name: &str| crate::config::env_var(name)),
+            raw_key,
+        );
+        if let Some(n) = crate::config::env_var("MSYNC_PORTAL_RATE_PER_MINUTE")
+            .and_then(|v| v.trim().parse().ok())
+        {
             ctx.rate_per_minute = n;
         }
-        if let Some(n) = crate::config::env_var("MSYNC_PORTAL_ALERT_LOOKUPS_PER_HOUR").and_then(|v| v.trim().parse().ok()) {
+        if let Some(n) = crate::config::env_var("MSYNC_PORTAL_ALERT_LOOKUPS_PER_HOUR")
+            .and_then(|v| v.trim().parse().ok())
+        {
             ctx.alert_lookups_per_hour = n;
         }
         ctx
@@ -136,12 +152,18 @@ impl PortalContext {
 
     /// Sliding one-minute window per consumer. True when the request is within the limit.
     fn rate_ok(&self, consumer: &str, now: i64) -> bool {
-        let Ok(mut m) = self.limiter.lock() else { return false };
+        let Ok(mut m) = self.limiter.lock() else {
+            return false;
+        };
         let q = m.entry(consumer.to_string()).or_default();
         while q.front().is_some_and(|t| *t <= now - 60) {
             q.pop_front();
         }
-        let limit = if audit::mutant("portal_no_rate_limit") { usize::MAX } else { self.rate_per_minute };
+        let limit = if audit::mutant("portal_no_rate_limit") {
+            usize::MAX
+        } else {
+            self.rate_per_minute
+        };
         if q.len() >= limit {
             return false;
         }
@@ -172,9 +194,22 @@ pub fn secret_env_name(consumer: &str, key_id: &str) -> String {
 /// ```
 ///
 /// The path and query are signed exactly as sent, without decoding or reordering.
-pub fn string_to_sign(method: &str, path_and_query: &str, timestamp: &str, nonce: &str, body: &[u8]) -> String {
+pub fn string_to_sign(
+    method: &str,
+    path_and_query: &str,
+    timestamp: &str,
+    nonce: &str,
+    body: &[u8],
+) -> String {
     if audit::mutant("portal_sts_no_version") {
-        return format!("{}\n{}\n{}\n{}\n{}", method.to_ascii_uppercase(), path_and_query, timestamp, nonce, hex::encode(Sha256::digest(body)));
+        return format!(
+            "{}\n{}\n{}\n{}\n{}",
+            method.to_ascii_uppercase(),
+            path_and_query,
+            timestamp,
+            nonce,
+            hex::encode(Sha256::digest(body))
+        );
     }
     format!(
         "{SIGNATURE_VERSION}\n{}\n{}\n{}\n{}\n{}",
@@ -190,7 +225,10 @@ pub fn string_to_sign(method: &str, path_and_query: &str, timestamp: &str, nonce
 pub fn sign(secret: &[u8], string_to_sign: &str) -> String {
     let mut mac = HmacSha256::new_from_slice(secret).expect("HMAC accepts any key length");
     mac.update(string_to_sign.as_bytes());
-    format!("{SIGNATURE_VERSION}={}", hex::encode(mac.finalize().into_bytes()))
+    format!(
+        "{SIGNATURE_VERSION}={}",
+        hex::encode(mac.finalize().into_bytes())
+    )
 }
 
 /// The pairwise subject id a consumer sees for a member: `sub_` plus the first 32 hex
@@ -270,16 +308,23 @@ fn unavailable() -> HttpResponse {
 }
 
 fn header<'a>(req: &'a HttpRequest, name: &str) -> Option<&'a str> {
-    req.headers().get(name).and_then(|v| v.to_str().ok()).map(str::trim)
+    req.headers()
+        .get(name)
+        .and_then(|v| v.to_str().ok())
+        .map(str::trim)
 }
 
 fn valid_key_id(k: &str) -> bool {
-    (1..=16).contains(&k.len()) && k.bytes().all(|b| b.is_ascii_lowercase() || b.is_ascii_digit())
+    (1..=16).contains(&k.len())
+        && k.bytes()
+            .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit())
 }
 
 /// 22 to 128 base64url characters (128 random bits encode to 22).
 fn valid_nonce(n: &str) -> bool {
-    (22..=128).contains(&n.len()) && n.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_')
+    (22..=128).contains(&n.len())
+        && n.bytes()
+            .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_')
 }
 
 /// Why a request was refused. Never shown to the caller: every variant is the same 401.
@@ -319,20 +364,33 @@ pub async fn authenticate<'a>(
     let path_and_query = if audit::mutant("portal_sts_drop_query") {
         req.uri().path()
     } else {
-        req.uri().path_and_query().map(|p| p.as_str()).unwrap_or("/")
+        req.uri()
+            .path_and_query()
+            .map(|p| p.as_str())
+            .unwrap_or("/")
     };
     let sts = string_to_sign(req.method().as_str(), path_and_query, ts, nonce, body);
 
     // 1. The consumer is in the active CRA and this key id has a usable secret. An unknown
     //    consumer or key still costs one HMAC, so timing does not tell them apart.
-    let mut found = active.snapshot.org.consumers.iter().find(|c| c.key == consumer);
+    let mut found = active
+        .snapshot
+        .org
+        .consumers
+        .iter()
+        .find(|c| c.key == consumer);
     if found.is_none() && audit::mutant("portal_unknown_consumer_uses_first") {
         found = active.snapshot.org.consumers.first();
     }
-    let key_for_lookup = if audit::mutant("portal_any_key_id") { "k1" } else { key_id };
+    let key_for_lookup = if audit::mutant("portal_any_key_id") {
+        "k1"
+    } else {
+        key_id
+    };
     let secret = match found {
         Some(c) if valid_key_id(key_for_lookup) => {
-            (ctx.secrets)(&secret_env_name(&c.key, key_for_lookup)).filter(|s| s.len() >= MIN_SECRET_BYTES)
+            (ctx.secrets)(&secret_env_name(&c.key, key_for_lookup))
+                .filter(|s| s.len() >= MIN_SECRET_BYTES)
         }
         _ => None,
     };
@@ -346,14 +404,17 @@ pub async fn authenticate<'a>(
     };
 
     // 2. Timestamp within the window.
-    let Ok(t) = ts.parse::<i64>() else { return Err(Refusal::StaleTimestamp) };
+    let Ok(t) = ts.parse::<i64>() else {
+        return Err(Refusal::StaleTimestamp);
+    };
     if !audit::mutant("portal_no_timestamp_check") && (now - t).abs() > MAX_SKEW_SECS {
         return Err(Refusal::StaleTimestamp);
     }
 
     // 3. Signature, constant time.
     let presented = sig.strip_prefix("v1=").and_then(|h| hex::decode(h).ok());
-    let mut mac = HmacSha256::new_from_slice(secret.as_bytes()).expect("HMAC accepts any key length");
+    let mut mac =
+        HmacSha256::new_from_slice(secret.as_bytes()).expect("HMAC accepts any key length");
     mac.update(sts.as_bytes());
     let good = match presented {
         Some(p) => mac.verify_slice(&p).is_ok(),
@@ -368,16 +429,21 @@ pub async fn authenticate<'a>(
         return Err(Refusal::ReplayedNonce);
     }
     let fresh = async {
-        sqlx::query("DELETE FROM consumer_nonces WHERE seen_at < ?").bind(now - NONCE_TTL_SECS).execute(&ctx.pool).await?;
+        sqlx::query("DELETE FROM consumer_nonces WHERE seen_at < ?")
+            .bind(now - NONCE_TTL_SECS)
+            .execute(&ctx.pool)
+            .await?;
         if audit::mutant("portal_no_nonce_check") {
             return Ok::<bool, sqlx::Error>(true);
         }
-        let res = sqlx::query("INSERT OR IGNORE INTO consumer_nonces (consumer, nonce, seen_at) VALUES (?, ?, ?)")
-            .bind(&c.key)
-            .bind(nonce)
-            .bind(now)
-            .execute(&ctx.pool)
-            .await?;
+        let res = sqlx::query(
+            "INSERT OR IGNORE INTO consumer_nonces (consumer, nonce, seen_at) VALUES (?, ?, ?)",
+        )
+        .bind(&c.key)
+        .bind(nonce)
+        .bind(now)
+        .execute(&ctx.pool)
+        .await?;
         Ok(res.rows_affected() == 1)
     }
     .await;
@@ -395,7 +461,10 @@ pub async fn authenticate<'a>(
     if !ctx.rate_ok(&c.key, now) {
         return Err(Refusal::RateLimited);
     }
-    Ok(Authenticated { consumer: c, key_id: key_id.to_string() })
+    Ok(Authenticated {
+        consumer: c,
+        key_id: key_id.to_string(),
+    })
 }
 
 // ------------------------------------------------------------------ lookups
@@ -419,17 +488,29 @@ impl Lookup {
 }
 
 /// The member a lookup names, if this consumer may see them.
-fn find_member<'a>(active: &'a ActiveCra, subject_key: &[u8], consumer: &str, lookup: &Lookup) -> Option<&'a Member> {
+fn find_member<'a>(
+    active: &'a ActiveCra,
+    subject_key: &[u8],
+    consumer: &str,
+    lookup: &Lookup,
+) -> Option<&'a Member> {
     let snap = &active.snapshot;
     match lookup {
-        Lookup::Discord(id) => snap.members.members.iter().find(|m| m.identities.discord.as_deref() == Some(id.as_str())),
+        Lookup::Discord(id) => snap
+            .members
+            .members
+            .iter()
+            .find(|m| m.identities.discord.as_deref() == Some(id.as_str())),
         Lookup::Slack { team, user } => {
             // The Slack identity is valid only in the team the CRA names.
             let sl = snap.org.slack.as_ref()?;
             if &sl.team_id != team {
                 return None;
             }
-            snap.members.members.iter().find(|m| m.identities.slack.as_deref() == Some(user.as_str()))
+            snap.members
+                .members
+                .iter()
+                .find(|m| m.identities.slack.as_deref() == Some(user.as_str()))
         }
         Lookup::Subject(s) => {
             if !s.starts_with(SUBJECT_PREFIX) || s.len() != SUBJECT_PREFIX.len() + 32 {
@@ -468,11 +549,17 @@ pub fn member_view(
         if let Some(st) = &st {
             if allowed("tier") {
                 if let Some(t) = &st.tier {
-                    o.insert("tier".into(), json!({"key": t.key, "label": t.title, "rank": t.rank}));
+                    o.insert(
+                        "tier".into(),
+                        json!({"key": t.key, "label": t.title, "rank": t.rank}),
+                    );
                 }
             }
             let pos_fields: Vec<&str> =
-                ["positions.title", "positions.rank", "positions.expires_at"].into_iter().filter(|f| allowed(f)).collect();
+                ["positions.title", "positions.rank", "positions.expires_at"]
+                    .into_iter()
+                    .filter(|f| allowed(f))
+                    .collect();
             if !pos_fields.is_empty() {
                 let list: Vec<Value> = st
                     .positions
@@ -486,7 +573,10 @@ pub fn member_view(
                             x.insert("rank".into(), json!(p.rank));
                         }
                         if pos_fields.contains(&"positions.expires_at") {
-                            x.insert("expires_at".into(), json!(p.expires.map(|d| d.format("%Y-%m-%d").to_string())));
+                            x.insert(
+                                "expires_at".into(),
+                                json!(p.expires.map(|d| d.format("%Y-%m-%d").to_string())),
+                            );
                         }
                         Value::Object(x)
                     })
@@ -499,14 +589,20 @@ pub fn member_view(
         }
     }
     if allowed("permissions") {
-        let perms: Vec<String> = match (&st, status, audit::mutant("portal_suspended_keeps_permissions")) {
-            (Some(st), MemberStatus::Active, _) | (Some(st), _, true) => {
-                st.permissions
-                    .iter()
-                    .filter(|p| permission_in_scopes(p, granted) || audit::mutant("portal_permissions_unfiltered"))
-                    .cloned()
-                    .collect()
-            }
+        let perms: Vec<String> = match (
+            &st,
+            status,
+            audit::mutant("portal_suspended_keeps_permissions"),
+        ) {
+            (Some(st), MemberStatus::Active, _) | (Some(st), _, true) => st
+                .permissions
+                .iter()
+                .filter(|p| {
+                    permission_in_scopes(p, granted)
+                        || audit::mutant("portal_permissions_unfiltered")
+                })
+                .cloned()
+                .collect(),
             _ => Vec::new(),
         };
         o.insert("permissions".into(), json!(perms));
@@ -536,10 +632,17 @@ async fn record_lookup(
     granted: &[String],
     now: i64,
 ) -> Result<(), sqlx::Error> {
-    let result = if member.is_some() { "found" } else { "not_found" };
+    let result = if member.is_some() {
+        "found"
+    } else {
+        "not_found"
+    };
     let refused: Vec<&String> = requested.iter().filter(|r| !granted.contains(r)).collect();
     if !refused.is_empty() {
-        warn!("portal consumer {} asked for scopes outside its allowlist: {:?}", auth.consumer.key, refused);
+        warn!(
+            "portal consumer {} asked for scopes outside its allowlist: {:?}",
+            auth.consumer.key, refused
+        );
     }
     let mut tx = ctx.pool.begin().await?;
     sqlx::query(
@@ -563,7 +666,9 @@ async fn record_lookup(
             ActorKind::Consumer,
             format!("consumer:{}", auth.consumer.key),
             "portal.lookup",
-            subject.map(|s| format!("subject:{s}")).unwrap_or_else(|| lookup.label()),
+            subject
+                .map(|s| format!("subject:{s}"))
+                .unwrap_or_else(|| lookup.label()),
             json!({
                 "consumer": auth.consumer.key,
                 "key_id": auth.key_id,
@@ -586,11 +691,13 @@ async fn record_lookup(
 /// Raise the lookup-rate alert once an hour per consumer when its distinct lookups in the last
 /// hour exceed the threshold.
 async fn check_alert(ctx: &PortalContext, consumer: &str, now: i64) {
-    let n: Result<i64, _> = sqlx::query_scalar("SELECT COUNT(DISTINCT lookup) FROM consumer_lookups WHERE consumer = ? AND at > ?")
-        .bind(consumer)
-        .bind(now - 3600)
-        .fetch_one(&ctx.pool)
-        .await;
+    let n: Result<i64, _> = sqlx::query_scalar(
+        "SELECT COUNT(DISTINCT lookup) FROM consumer_lookups WHERE consumer = ? AND at > ?",
+    )
+    .bind(consumer)
+    .bind(now - 3600)
+    .fetch_one(&ctx.pool)
+    .await;
     let Ok(n) = n else { return };
     if n <= ctx.alert_lookups_per_hour {
         return;
@@ -629,52 +736,107 @@ async fn check_alert(ctx: &PortalContext, consumer: &str, now: i64) {
 pub async fn handle(ctx: &PortalContext, req: &HttpRequest, lookup: Lookup) -> HttpResponse {
     let now = Utc::now().timestamp();
     // No snapshot: no consumers and no members. The same answer as an unknown member.
-    let Some(active) = ctx.cra.active() else { return not_found() };
+    let Some(active) = ctx.cra.active() else {
+        return not_found();
+    };
     let auth = match authenticate(ctx, &active, req, b"", now).await {
         Ok(a) => a,
         Err(why) => {
-            warn!("portal request refused ({why:?}) for consumer {:?}", header(req, HEADER_CONSUMER));
+            warn!(
+                "portal request refused ({why:?}) for consumer {:?}",
+                header(req, HEADER_CONSUMER)
+            );
             return unauthorized();
         }
     };
     let Some(subject_key) = ctx.subject_key.as_deref() else {
-        error!("portal lookup by {} refused: MSYNC_SUBJECT_KEY is not configured", auth.consumer.key);
+        error!(
+            "portal lookup by {} refused: MSYNC_SUBJECT_KEY is not configured",
+            auth.consumer.key
+        );
         return unavailable();
     };
-    let q = web::Query::<ScopesQuery>::from_query(req.query_string()).map(|q| q.into_inner()).unwrap_or_default();
+    let q = web::Query::<ScopesQuery>::from_query(req.query_string())
+        .map(|q| q.into_inner())
+        .unwrap_or_default();
     let requested = parse_scopes(q.scopes.as_deref());
     let granted = effective_scopes(&requested, &auth.consumer.scopes);
     let member = find_member(&active, subject_key, &auth.consumer.key, &lookup);
     let subject = member.map(|m| subject_for(subject_key, ORG_ID, &auth.consumer.key, &m.id));
-    if let Err(e) = record_lookup(ctx, &auth, &lookup, member, subject.as_deref(), &requested, &granted, now).await {
-        error!("portal lookup by {} could not be recorded; refusing to answer: {e}", auth.consumer.key);
+    if let Err(e) = record_lookup(
+        ctx,
+        &auth,
+        &lookup,
+        member,
+        subject.as_deref(),
+        &requested,
+        &granted,
+        now,
+    )
+    .await
+    {
+        error!(
+            "portal lookup by {} could not be recorded; refusing to answer: {e}",
+            auth.consumer.key
+        );
         return unavailable();
     }
     check_alert(ctx, &auth.consumer.key, now).await;
-    if member.is_none() && matches!(lookup, Lookup::Subject(_)) && audit::mutant("portal_hidden_403") {
+    if member.is_none()
+        && matches!(lookup, Lookup::Subject(_))
+        && audit::mutant("portal_hidden_403")
+    {
         return HttpResponse::Forbidden().json(json!({"error": "forbidden"}));
     }
-    let (Some(member), Some(subject)) = (member, subject) else { return not_found() };
+    let (Some(member), Some(subject)) = (member, subject) else {
+        return not_found();
+    };
     let issued_at = Utc::now().to_rfc3339_opts(SecondsFormat::Secs, true);
     let merit = ctx.cra.merit_of(&member.id);
-    HttpResponse::Ok().json(member_view(&active, auth.consumer, member, &subject, merit, &granted, ctx.today(), &issued_at))
+    HttpResponse::Ok().json(member_view(
+        &active,
+        auth.consumer,
+        member,
+        &subject,
+        merit,
+        &granted,
+        ctx.today(),
+        &issued_at,
+    ))
 }
 
-async fn by_discord(req: HttpRequest, path: web::Path<String>, ctx: web::Data<PortalContext>) -> HttpResponse {
+async fn by_discord(
+    req: HttpRequest,
+    path: web::Path<String>,
+    ctx: web::Data<PortalContext>,
+) -> HttpResponse {
     handle(&ctx, &req, Lookup::Discord(path.into_inner())).await
 }
 
-async fn by_slack(req: HttpRequest, path: web::Path<(String, String)>, ctx: web::Data<PortalContext>) -> HttpResponse {
+async fn by_slack(
+    req: HttpRequest,
+    path: web::Path<(String, String)>,
+    ctx: web::Data<PortalContext>,
+) -> HttpResponse {
     let (team, user) = path.into_inner();
     handle(&ctx, &req, Lookup::Slack { team, user }).await
 }
 
-async fn by_subject(req: HttpRequest, path: web::Path<String>, ctx: web::Data<PortalContext>) -> HttpResponse {
+async fn by_subject(
+    req: HttpRequest,
+    path: web::Path<String>,
+    ctx: web::Data<PortalContext>,
+) -> HttpResponse {
     handle(&ctx, &req, Lookup::Subject(path.into_inner())).await
 }
 
 pub fn configure(cfg: &mut web::ServiceConfig) {
-    cfg.service(web::resource("/api/v1/members/by-discord/{discord_id}").route(web::get().to(by_discord)))
-        .service(web::resource("/api/v1/members/by-slack/{team_id}/{user_id}").route(web::get().to(by_slack)))
-        .service(web::resource("/api/v1/members/{subject}").route(web::get().to(by_subject)));
+    cfg.service(
+        web::resource("/api/v1/members/by-discord/{discord_id}").route(web::get().to(by_discord)),
+    )
+    .service(
+        web::resource("/api/v1/members/by-slack/{team_id}/{user_id}")
+            .route(web::get().to(by_slack)),
+    )
+    .service(web::resource("/api/v1/members/{subject}").route(web::get().to(by_subject)));
 }

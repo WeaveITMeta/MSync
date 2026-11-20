@@ -28,13 +28,22 @@ pub fn coderabbit_scorer() -> Scorer {
 
 /// Build a CodeRabbit submission from a real review result. Validation happens in
 /// `submit_score`.
-pub fn coderabbit_submission(subject: Subject, total_score: f32, evidence: String, ci_passed: bool, reverted: bool) -> Submission {
+pub fn coderabbit_submission(
+    subject: Subject,
+    total_score: f32,
+    evidence: String,
+    ci_passed: bool,
+    reverted: bool,
+) -> Submission {
     Submission {
         subject,
         rubric_id: RUBRIC_ID.to_string(),
         rubric_hash: RUBRIC_SHA256.to_string(),
         ci_passed,
         reverted,
-        assessment: Assessment::Total { score: total_score, evidence },
+        assessment: Assessment::Total {
+            score: total_score,
+            evidence,
+        },
     }
 }

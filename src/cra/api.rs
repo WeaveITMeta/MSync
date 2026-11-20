@@ -21,7 +21,9 @@ use serde_json::json;
 use sqlx::SqlitePool;
 use tracing::{error, warn};
 
-use super::loader::{member_merit, CraContext, CraHandle, CraRuntimeError, ORG_ID, POLICY_AUTHORED_IN_CRA};
+use super::loader::{
+    member_merit, CraContext, CraHandle, CraRuntimeError, ORG_ID, POLICY_AUTHORED_IN_CRA,
+};
 use super::model::RoleKind;
 use super::store::{self, RecordedViolation};
 use super::{standing, Mode, Standing};
@@ -108,10 +110,16 @@ pub async fn standing_get(
     member_id: &str,
     today: NaiveDate,
 ) -> Result<Option<MemberStandingView>, sqlx::Error> {
-    let Some(a) = handle.active() else { return Ok(None) };
-    let Some(m) = a.snapshot.member(member_id) else { return Ok(None) };
+    let Some(a) = handle.active() else {
+        return Ok(None);
+    };
+    let Some(m) = a.snapshot.member(member_id) else {
+        return Ok(None);
+    };
     let merit = member_merit(pool, &a.snapshot, member_id).await?;
-    let Some(st) = standing(&a.snapshot, member_id, merit, today) else { return Ok(None) };
+    let Some(st) = standing(&a.snapshot, member_id, merit, today) else {
+        return Ok(None);
+    };
     let effective_rank = directory.rank_of(member_id);
     Ok(Some(MemberStandingView {
         member_id: m.id.clone(),
@@ -144,7 +152,10 @@ pub struct SnapshotSummary {
 }
 
 /// Recent load attempts, newest first, with status and violations.
-pub async fn snapshots_list(pool: &SqlitePool, limit: i64) -> Result<Vec<SnapshotSummary>, sqlx::Error> {
+pub async fn snapshots_list(
+    pool: &SqlitePool,
+    limit: i64,
+) -> Result<Vec<SnapshotSummary>, sqlx::Error> {
     Ok(store::recent(pool, ORG_ID, limit)
         .await?
         .into_iter()
@@ -174,7 +185,11 @@ fn err(status: StatusCode, msg: impl Into<String>) -> HttpResponse {
     HttpResponse::build(status).json(json!({"status": "error", "message": msg.into()}))
 }
 
-async fn principal(req: &HttpRequest, ctx: &CraContext, scope: &str) -> Result<Principal, HttpResponse> {
+async fn principal(
+    req: &HttpRequest,
+    ctx: &CraContext,
+    scope: &str,
+) -> Result<Principal, HttpResponse> {
     let p = authenticate(req, &ctx.pool).await.map_err(|e| {
         warn!("cra api auth refused: {}", e);
         auth_error(&e)
@@ -197,16 +212,31 @@ pub async fn get_hierarchy(req: HttpRequest, ctx: web::Data<CraContext>) -> Http
     }
 }
 
-pub async fn get_member(req: HttpRequest, path: web::Path<String>, ctx: web::Data<CraContext>) -> HttpResponse {
+pub async fn get_member(
+    req: HttpRequest,
+    path: web::Path<String>,
+    ctx: web::Data<CraContext>,
+) -> HttpResponse {
     if let Err(r) = principal(&req, &ctx, scopes::HIERARCHY_READ).await {
         return r;
     }
     if ctx.handle.active().is_none() {
         return err(StatusCode::NOT_FOUND, "no CRA snapshot is active");
     }
-    match standing_get(&ctx.pool, &ctx.handle, ctx.directory.as_ref(), &path, today()).await {
+    match standing_get(
+        &ctx.pool,
+        &ctx.handle,
+        ctx.directory.as_ref(),
+        &path,
+        today(),
+    )
+    .await
+    {
         Ok(Some(v)) => HttpResponse::Ok().json(json!({"status": "success", "member": v})),
-        Ok(None) => err(StatusCode::NOT_FOUND, "member not found in the active CRA snapshot"),
+        Ok(None) => err(
+            StatusCode::NOT_FOUND,
+            "member not found in the active CRA snapshot",
+        ),
         Err(e) => {
             error!("standing lookup failed: {}", e);
             err(StatusCode::INTERNAL_SERVER_ERROR, "database error")
@@ -219,7 +249,11 @@ pub struct SnapshotsQuery {
     pub limit: Option<i64>,
 }
 
-pub async fn get_snapshots(req: HttpRequest, q: web::Query<SnapshotsQuery>, ctx: web::Data<CraContext>) -> HttpResponse {
+pub async fn get_snapshots(
+    req: HttpRequest,
+    q: web::Query<SnapshotsQuery>,
+    ctx: web::Data<CraContext>,
+) -> HttpResponse {
     if let Err(r) = principal(&req, &ctx, scopes::HIERARCHY_READ).await {
         return r;
     }
@@ -238,11 +272,17 @@ pub async fn post_reload(req: HttpRequest, ctx: web::Data<CraContext>) -> HttpRe
         Err(r) => return r,
     };
     if ctx.directory.rank_of(&p.member_id) != Some(OWNER_RANK) {
-        return err(StatusCode::FORBIDDEN, "reloading the CRA needs rank 1000 (an owner)");
+        return err(
+            StatusCode::FORBIDDEN,
+            "reloading the CRA needs rank 1000 (an owner)",
+        );
     }
     match ctx.reload_head(today()).await {
         Ok(outcome) => HttpResponse::Ok().json(json!({"status": "success", "result": outcome})),
-        Err(CraRuntimeError::NotConfigured) => err(StatusCode::CONFLICT, CraRuntimeError::NotConfigured.to_string()),
+        Err(CraRuntimeError::NotConfigured) => err(
+            StatusCode::CONFLICT,
+            CraRuntimeError::NotConfigured.to_string(),
+        ),
         Err(CraRuntimeError::Source(e)) => err(StatusCode::BAD_GATEWAY, e.to_string()),
         Err(e) => {
             error!("CRA reload failed: {}", e);
@@ -267,12 +307,15 @@ pub fn configure(cfg: &mut web::ServiceConfig) {
         web::resource("/api/v1/payouts/policy")
             .guard(guard::Put())
             .guard(guard::fn_guard(|g| {
-                g.app_data::<web::Data<CraContext>>().is_some_and(|c| c.handle.active().is_some())
+                g.app_data::<web::Data<CraContext>>()
+                    .is_some_and(|c| c.handle.active().is_some())
             }))
             .to(put_policy_refused),
     )
     .service(web::resource("/api/v1/hierarchy").route(web::get().to(get_hierarchy)))
-    .service(web::resource("/api/v1/hierarchy/members/{member_id}").route(web::get().to(get_member)))
+    .service(
+        web::resource("/api/v1/hierarchy/members/{member_id}").route(web::get().to(get_member)),
+    )
     .service(web::resource("/api/v1/cra/snapshots").route(web::get().to(get_snapshots)))
     .service(web::resource("/api/v1/cra/reload").route(web::post().to(post_reload)));
 }

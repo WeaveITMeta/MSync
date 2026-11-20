@@ -49,22 +49,34 @@ async fn caller(req: &HttpRequest, ctx: &ApiContext) -> Result<Caller, HttpRespo
 fn token_error(e: TokenError) -> HttpResponse {
     match e {
         TokenError::Auth(a) => auth_error(&a),
-        TokenError::Forbidden(_) => HttpResponse::Forbidden().json(json!({"status": "error", "message": e.to_string()})),
-        TokenError::Invalid(_) => HttpResponse::BadRequest().json(json!({"status": "error", "message": e.to_string()})),
-        TokenError::NotFound => HttpResponse::NotFound().json(json!({"status": "error", "message": "token not found"})),
+        TokenError::Forbidden(_) => {
+            HttpResponse::Forbidden().json(json!({"status": "error", "message": e.to_string()}))
+        }
+        TokenError::Invalid(_) => {
+            HttpResponse::BadRequest().json(json!({"status": "error", "message": e.to_string()}))
+        }
+        TokenError::NotFound => {
+            HttpResponse::NotFound().json(json!({"status": "error", "message": "token not found"}))
+        }
         TokenError::Rng => {
             error!("token creation: random source failed");
-            HttpResponse::InternalServerError().json(json!({"status": "error", "message": "could not create token"}))
+            HttpResponse::InternalServerError()
+                .json(json!({"status": "error", "message": "could not create token"}))
         }
         TokenError::Db(d) => {
             error!("token db error: {}", d);
-            HttpResponse::InternalServerError().json(json!({"status": "error", "message": "database error"}))
+            HttpResponse::InternalServerError()
+                .json(json!({"status": "error", "message": "database error"}))
         }
     }
 }
 
 #[post("/api/v1/tokens")]
-pub async fn create_token(req: HttpRequest, body: web::Json<CreateTokenBody>, ctx: web::Data<ApiContext>) -> HttpResponse {
+pub async fn create_token(
+    req: HttpRequest,
+    body: web::Json<CreateTokenBody>,
+    ctx: web::Data<ApiContext>,
+) -> HttpResponse {
     let caller = match caller(&req, &ctx).await {
         Ok(c) => c,
         Err(r) => return r,
@@ -92,7 +104,11 @@ pub async fn create_token(req: HttpRequest, body: web::Json<CreateTokenBody>, ct
 }
 
 #[post("/api/v1/tokens/{id}/revoke")]
-pub async fn revoke_token(req: HttpRequest, path: web::Path<String>, ctx: web::Data<ApiContext>) -> HttpResponse {
+pub async fn revoke_token(
+    req: HttpRequest,
+    path: web::Path<String>,
+    ctx: web::Data<ApiContext>,
+) -> HttpResponse {
     let caller = match caller(&req, &ctx).await {
         Ok(c) => c,
         Err(r) => return r,
@@ -101,8 +117,18 @@ pub async fn revoke_token(req: HttpRequest, path: web::Path<String>, ctx: web::D
         Caller::Bootstrap => TokenCreator::Bootstrap,
         Caller::Token(p) => TokenCreator::Principal(p),
     };
-    match tokens::revoke_token(&ctx.pool, ctx.directory.as_ref(), creator, &path, Utc::now()).await {
-        Ok(()) => HttpResponse::Ok().json(json!({"status": "success", "revoked": path.into_inner()})),
+    match tokens::revoke_token(
+        &ctx.pool,
+        ctx.directory.as_ref(),
+        creator,
+        &path,
+        Utc::now(),
+    )
+    .await
+    {
+        Ok(()) => {
+            HttpResponse::Ok().json(json!({"status": "success", "revoked": path.into_inner()}))
+        }
         Err(e) => token_error(e),
     }
 }

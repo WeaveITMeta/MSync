@@ -26,7 +26,12 @@ pub fn account_idempotency_key(github_username: &str) -> String {
 #[async_trait]
 pub trait StripeApi: Send + Sync {
     async fn create_express_account(&self, github_username: &str) -> Result<String>;
-    async fn create_account_link(&self, account_id: &str, refresh_url: &str, return_url: &str) -> Result<String>;
+    async fn create_account_link(
+        &self,
+        account_id: &str,
+        refresh_url: &str,
+        return_url: &str,
+    ) -> Result<String>;
     async fn create_transfer(&self, req: &TransferRequest) -> Result<String>;
 }
 
@@ -58,7 +63,12 @@ impl StripeClient {
         self.secret_key.is_some()
     }
 
-    async fn post(&self, path: &str, params: &[(String, String)], idempotency_key: Option<&str>) -> Result<Value> {
+    async fn post(
+        &self,
+        path: &str,
+        params: &[(String, String)],
+        idempotency_key: Option<&str>,
+    ) -> Result<Value> {
         let key = self
             .secret_key
             .as_deref()
@@ -103,10 +113,18 @@ impl StripeApi for StripeClient {
                 Some(&account_idempotency_key(github_username)),
             )
             .await?;
-        v["id"].as_str().map(String::from).ok_or_else(|| anyhow!("Stripe account response missing id"))
+        v["id"]
+            .as_str()
+            .map(String::from)
+            .ok_or_else(|| anyhow!("Stripe account response missing id"))
     }
 
-    async fn create_account_link(&self, account_id: &str, refresh_url: &str, return_url: &str) -> Result<String> {
+    async fn create_account_link(
+        &self,
+        account_id: &str,
+        refresh_url: &str,
+        return_url: &str,
+    ) -> Result<String> {
         let v = self
             .post(
                 "/account_links",
@@ -119,7 +137,10 @@ impl StripeApi for StripeClient {
                 None,
             )
             .await?;
-        v["url"].as_str().map(String::from).ok_or_else(|| anyhow!("Stripe account link response missing url"))
+        v["url"]
+            .as_str()
+            .map(String::from)
+            .ok_or_else(|| anyhow!("Stripe account link response missing url"))
     }
 
     async fn create_transfer(&self, req: &TransferRequest) -> Result<String> {
@@ -136,6 +157,9 @@ impl StripeApi for StripeClient {
                 Some(&req.idempotency_key),
             )
             .await?;
-        v["id"].as_str().map(String::from).ok_or_else(|| anyhow!("Stripe transfer response missing id"))
+        v["id"]
+            .as_str()
+            .map(String::from)
+            .ok_or_else(|| anyhow!("Stripe transfer response missing id"))
     }
 }

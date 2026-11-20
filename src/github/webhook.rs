@@ -65,7 +65,9 @@ pub struct GitHubWebhookHandler {
 impl GitHubWebhookHandler {
     /// Legacy registry (every GitHub repository earns), default merit rules, no payments.
     pub fn new(db_pool: SqlitePool) -> Self {
-        Self { processor: FoundryProcessor::new(db_pool) }
+        Self {
+            processor: FoundryProcessor::new(db_pool),
+        }
     }
 
     pub fn with_payments(mut self, cfg: Arc<PaymentConfig>) -> Self {
@@ -83,15 +85,29 @@ impl GitHubWebhookHandler {
         self
     }
 
-    pub async fn handle_webhook(&self, event_type: &str, payload: GitHubWebhookPayload) -> Result<()> {
-        self.handle_delivery(event_type, payload, None).await.map(|_| ())
+    pub async fn handle_webhook(
+        &self,
+        event_type: &str,
+        payload: GitHubWebhookPayload,
+    ) -> Result<()> {
+        self.handle_delivery(event_type, payload, None)
+            .await
+            .map(|_| ())
     }
 
-    pub async fn handle_delivery(&self, event_type: &str, payload: GitHubWebhookPayload, delivery: Option<&str>) -> Result<Option<ProcessOutcome>> {
+    pub async fn handle_delivery(
+        &self,
+        event_type: &str,
+        payload: GitHubWebhookPayload,
+        delivery: Option<&str>,
+    ) -> Result<Option<ProcessOutcome>> {
         match foundry::github::normalize(event_type, &payload, delivery) {
             Some(ev) => Ok(Some(self.processor.process(&ev).await?)),
             None => {
-                info!("Unhandled webhook event type/action: {} {:?}", event_type, payload.action);
+                info!(
+                    "Unhandled webhook event type/action: {} {:?}",
+                    event_type, payload.action
+                );
                 Ok(None)
             }
         }
@@ -105,7 +121,11 @@ mod dedupe_tests {
     use sqlx::sqlite::SqlitePoolOptions;
 
     async fn pool() -> SqlitePool {
-        let pool = SqlitePoolOptions::new().max_connections(1).connect("sqlite::memory:").await.unwrap();
+        let pool = SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect("sqlite::memory:")
+            .await
+            .unwrap();
         sqlx::migrate!("./migrations").run(&pool).await.unwrap();
         pool
     }
@@ -126,10 +146,20 @@ mod dedupe_tests {
     }
 
     async fn points(pool: &SqlitePool) -> (i64, i64, i64) {
-        let p: i64 = sqlx::query_scalar("SELECT total_merit_points FROM contributors WHERE github_username = 'alice'")
-            .fetch_one(pool).await.unwrap();
-        let acts: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM merit_activities").fetch_one(pool).await.unwrap();
-        let contribs: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM contributions").fetch_one(pool).await.unwrap();
+        let p: i64 = sqlx::query_scalar(
+            "SELECT total_merit_points FROM contributors WHERE github_username = 'alice'",
+        )
+        .fetch_one(pool)
+        .await
+        .unwrap();
+        let acts: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM merit_activities")
+            .fetch_one(pool)
+            .await
+            .unwrap();
+        let contribs: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM contributions")
+            .fetch_one(pool)
+            .await
+            .unwrap();
         (p, acts, contribs)
     }
 
@@ -139,18 +169,37 @@ mod dedupe_tests {
         let cfg = Arc::new(PaymentConfig::from_lookup(|_| None));
         let h = GitHubWebhookHandler::new(pool.clone()).with_payments(cfg);
 
-        h.handle_webhook("pull_request", pr_payload("opened", false)).await.unwrap();
+        h.handle_webhook("pull_request", pr_payload("opened", false))
+            .await
+            .unwrap();
         let after_open = points(&pool).await;
-        h.handle_webhook("pull_request", pr_payload("opened", false)).await.unwrap();
-        assert_eq!(points(&pool).await, after_open, "duplicate open changed state");
+        h.handle_webhook("pull_request", pr_payload("opened", false))
+            .await
+            .unwrap();
+        assert_eq!(
+            points(&pool).await,
+            after_open,
+            "duplicate open changed state"
+        );
 
-        h.handle_webhook("pull_request", pr_payload("closed", true)).await.unwrap();
+        h.handle_webhook("pull_request", pr_payload("closed", true))
+            .await
+            .unwrap();
         let after_merge = points(&pool).await;
         assert!(after_merge.0 > after_open.0);
-        h.handle_webhook("pull_request", pr_payload("closed", true)).await.unwrap();
-        assert_eq!(points(&pool).await, after_merge, "duplicate merge changed state");
+        h.handle_webhook("pull_request", pr_payload("closed", true))
+            .await
+            .unwrap();
+        assert_eq!(
+            points(&pool).await,
+            after_merge,
+            "duplicate merge changed state"
+        );
 
-        let ledger_rows: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM payout_ledger").fetch_one(&pool).await.unwrap();
+        let ledger_rows: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM payout_ledger")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
         assert_eq!(ledger_rows, 1);
     }
 
@@ -159,10 +208,20 @@ mod dedupe_tests {
         let pool = pool().await;
         let h = GitHubWebhookHandler::new(pool.clone());
         let mut payload = pr_payload("submitted", false);
-        payload.review = Some(ReviewPayload { state: "approved".into(), body: None, user: GitHubUser { login: "alice".into() } });
-        h.handle_webhook("pull_request_review", payload.clone()).await.unwrap();
+        payload.review = Some(ReviewPayload {
+            state: "approved".into(),
+            body: None,
+            user: GitHubUser {
+                login: "alice".into(),
+            },
+        });
+        h.handle_webhook("pull_request_review", payload.clone())
+            .await
+            .unwrap();
         let first = points(&pool).await;
-        h.handle_webhook("pull_request_review", payload).await.unwrap();
+        h.handle_webhook("pull_request_review", payload)
+            .await
+            .unwrap();
         assert_eq!(points(&pool).await, first);
     }
 
@@ -176,7 +235,12 @@ mod dedupe_tests {
     }
 
     async fn state_counts(pool: &SqlitePool) -> (i64, i64, i64, i64) {
-        let c = |q: &'static str| async move { sqlx::query_scalar::<_, i64>(q).fetch_one(pool).await.unwrap() };
+        let c = |q: &'static str| async move {
+            sqlx::query_scalar::<_, i64>(q)
+                .fetch_one(pool)
+                .await
+                .unwrap()
+        };
         (
             c("SELECT COALESCE(SUM(total_merit_points), 0) FROM contributors").await,
             c("SELECT COUNT(*) FROM merit_activities").await,
@@ -186,44 +250,80 @@ mod dedupe_tests {
     }
 
     async fn run_full_flow(h: &GitHubWebhookHandler) {
-        h.handle_webhook("pull_request", pr_payload("opened", false)).await.unwrap();
-        h.handle_webhook("pull_request", pr_payload("closed", true)).await.unwrap();
+        h.handle_webhook("pull_request", pr_payload("opened", false))
+            .await
+            .unwrap();
+        h.handle_webhook("pull_request", pr_payload("closed", true))
+            .await
+            .unwrap();
         let mut review = pr_payload("submitted", false);
-        review.review = Some(ReviewPayload { state: "approved".into(), body: None, user: GitHubUser { login: "bob".into() } });
-        h.handle_webhook("pull_request_review", review).await.unwrap();
+        review.review = Some(ReviewPayload {
+            state: "approved".into(),
+            body: None,
+            user: GitHubUser {
+                login: "bob".into(),
+            },
+        });
+        h.handle_webhook("pull_request_review", review)
+            .await
+            .unwrap();
     }
 
     #[tokio::test]
     async fn unlisted_and_mirror_github_repos_earn_nothing() {
         let cfg = Arc::new(PaymentConfig::from_lookup(|_| None));
-        for spec in ["github:github.com:org/other", "github:github.com:org/eustress:mirror"] {
+        for spec in [
+            "github:github.com:org/other",
+            "github:github.com:org/eustress:mirror",
+        ] {
             let pool = pool().await;
             let reg = Arc::new(RepoRegistry::from_spec(spec).unwrap());
-            let h = GitHubWebhookHandler::new(pool.clone()).with_payments(cfg.clone()).with_registry(reg);
+            let h = GitHubWebhookHandler::new(pool.clone())
+                .with_payments(cfg.clone())
+                .with_registry(reg);
             run_full_flow(&h).await;
-            assert_eq!(state_counts(&pool).await, (0, 0, 0, 0), "{spec}: repo must earn nothing and create no ledger row");
+            assert_eq!(
+                state_counts(&pool).await,
+                (0, 0, 0, 0),
+                "{spec}: repo must earn nothing and create no ledger row"
+            );
         }
         // Control: the same flow on a listed canonical repo earns and creates one ledger row.
         let pool = pool().await;
         let reg = Arc::new(RepoRegistry::from_spec("github:github.com:org/eustress").unwrap());
-        let h = GitHubWebhookHandler::new(pool.clone()).with_payments(cfg).with_registry(reg);
+        let h = GitHubWebhookHandler::new(pool.clone())
+            .with_payments(cfg)
+            .with_registry(reg);
         run_full_flow(&h).await;
         let (pts, acts, contribs, ledger) = state_counts(&pool).await;
         assert_eq!((pts, acts, contribs, ledger), (5 + 10 + 10, 3, 1, 1));
     }
 
     #[tokio::test]
-    async fn merge_without_score_earns_base_points_and_same_pr_number_in_two_repos_does_not_collide() {
+    async fn merge_without_score_earns_base_points_and_same_pr_number_in_two_repos_does_not_collide(
+    ) {
         let pool = pool().await;
         let h = GitHubWebhookHandler::new(pool.clone());
         let mut other = pr_payload("opened", false);
-        other.repository = Some(RepositoryPayload { full_name: "org/other".into() });
+        other.repository = Some(RepositoryPayload {
+            full_name: "org/other".into(),
+        });
         other.pull_request.as_mut().unwrap().id = 5555; // same number 7, different repo
         h.handle_webhook("pull_request", other).await.unwrap();
-        h.handle_webhook("pull_request", pr_payload("opened", false)).await.unwrap();
-        h.handle_webhook("pull_request", pr_payload("closed", true)).await.unwrap();
-        let rows: Vec<(String, i64, i64)> = sqlx::query_as("SELECT repo, status, merit_points FROM contributions ORDER BY repo")
-            .fetch_all(&pool).await.unwrap();
-        assert_eq!(rows, vec![("org/eustress".into(), 3, 10), ("org/other".into(), 0, 0)]);
+        h.handle_webhook("pull_request", pr_payload("opened", false))
+            .await
+            .unwrap();
+        h.handle_webhook("pull_request", pr_payload("closed", true))
+            .await
+            .unwrap();
+        let rows: Vec<(String, i64, i64)> =
+            sqlx::query_as("SELECT repo, status, merit_points FROM contributions ORDER BY repo")
+                .fetch_all(&pool)
+                .await
+                .unwrap();
+        assert_eq!(
+            rows,
+            vec![("org/eustress".into(), 3, 10), ("org/other".into(), 0, 0)]
+        );
     }
 }

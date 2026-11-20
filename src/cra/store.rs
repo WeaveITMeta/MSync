@@ -26,8 +26,16 @@ pub struct RecordedViolation {
 }
 
 impl RecordedViolation {
-    pub fn new(code: impl Into<String>, item: impl Into<String>, message: impl Into<String>) -> Self {
-        RecordedViolation { code: code.into(), item: item.into(), message: message.into() }
+    pub fn new(
+        code: impl Into<String>,
+        item: impl Into<String>,
+        message: impl Into<String>,
+    ) -> Self {
+        RecordedViolation {
+            code: code.into(),
+            item: item.into(),
+            message: message.into(),
+        }
     }
 }
 
@@ -81,7 +89,9 @@ pub enum Recorded {
 pub enum Activation {
     Activated(i64),
     /// The active snapshot is no longer the one the change was planned against.
-    ActiveChanged { current: Option<i64> },
+    ActiveChanged {
+        current: Option<i64>,
+    },
     AlreadyFinal(Box<SnapshotRow>),
 }
 
@@ -98,9 +108,13 @@ fn row_to_snapshot(r: &sqlx::sqlite::SqliteRow) -> Result<SnapshotRow, sqlx::Err
         r.try_get("payouts_toml")?,
     ];
     let files = match texts {
-        [Some(org), Some(roles), Some(members), Some(merit), Some(payouts)] => {
-            Some(CraFiles { org, roles, members, merit, payouts })
-        }
+        [Some(org), Some(roles), Some(members), Some(merit), Some(payouts)] => Some(CraFiles {
+            org,
+            roles,
+            members,
+            merit,
+            payouts,
+        }),
         _ => None,
     };
     let approvers: String = r.try_get("approvers")?;
@@ -125,8 +139,13 @@ fn row_to_snapshot(r: &sqlx::sqlite::SqliteRow) -> Result<SnapshotRow, sqlx::Err
         // A row that does not decode reads as "no approvers" / an explicit marker,
         // never as an approval.
         approvers: serde_json::from_str(&approvers).unwrap_or_default(),
-        violations: serde_json::from_str(&violations)
-            .unwrap_or_else(|_| vec![RecordedViolation::new("Unreadable", "violations", violations.clone())]),
+        violations: serde_json::from_str(&violations).unwrap_or_else(|_| {
+            vec![RecordedViolation::new(
+                "Unreadable",
+                "violations",
+                violations.clone(),
+            )]
+        }),
         plan_markdown: r.try_get("plan_markdown")?,
         loaded_at: r.try_get("loaded_at")?,
         superseded_at: r.try_get("superseded_at")?,
@@ -141,9 +160,19 @@ pub async fn active(pool: &SqlitePool, org_id: &str) -> Result<Option<SnapshotRo
 }
 
 /// The final (non-retryable) outcome recorded for a commit, if any.
-pub async fn final_for_commit(pool: &SqlitePool, org_id: &str, sha: &str) -> Result<Option<SnapshotRow>, sqlx::Error> {
-    let q = format!("SELECT {COLUMNS} FROM cra_snapshots WHERE org_id = ? AND commit_sha = ? AND retryable = 0");
-    let row = sqlx::query(&q).bind(org_id).bind(sha).fetch_optional(pool).await?;
+pub async fn final_for_commit(
+    pool: &SqlitePool,
+    org_id: &str,
+    sha: &str,
+) -> Result<Option<SnapshotRow>, sqlx::Error> {
+    let q = format!(
+        "SELECT {COLUMNS} FROM cra_snapshots WHERE org_id = ? AND commit_sha = ? AND retryable = 0"
+    );
+    let row = sqlx::query(&q)
+        .bind(org_id)
+        .bind(sha)
+        .fetch_optional(pool)
+        .await?;
     row.as_ref().map(row_to_snapshot).transpose()
 }
 
@@ -154,9 +183,18 @@ pub async fn get(pool: &SqlitePool, id: i64) -> Result<Option<SnapshotRow>, sqlx
 }
 
 /// Most recent attempts first.
-pub async fn recent(pool: &SqlitePool, org_id: &str, limit: i64) -> Result<Vec<SnapshotRow>, sqlx::Error> {
-    let q = format!("SELECT {COLUMNS} FROM cra_snapshots WHERE org_id = ? ORDER BY id DESC LIMIT ?");
-    let rows = sqlx::query(&q).bind(org_id).bind(limit.clamp(1, 200)).fetch_all(pool).await?;
+pub async fn recent(
+    pool: &SqlitePool,
+    org_id: &str,
+    limit: i64,
+) -> Result<Vec<SnapshotRow>, sqlx::Error> {
+    let q =
+        format!("SELECT {COLUMNS} FROM cra_snapshots WHERE org_id = ? ORDER BY id DESC LIMIT ?");
+    let rows = sqlx::query(&q)
+        .bind(org_id)
+        .bind(limit.clamp(1, 200))
+        .fetch_all(pool)
+        .await?;
     rows.iter().map(row_to_snapshot).collect()
 }
 
@@ -217,10 +255,12 @@ where
 pub async fn record_rejected(pool: &SqlitePool, a: &Attempt<'_>) -> Result<Recorded, sqlx::Error> {
     match insert(pool, a, REJECTED).await {
         Ok(id) => Ok(Recorded::Inserted(id)),
-        Err(e) if is_unique_violation(&e) => match final_for_commit(pool, a.org_id, a.commit_sha).await? {
-            Some(row) => Ok(Recorded::AlreadyFinal(Box::new(row))),
-            None => Err(e),
-        },
+        Err(e) if is_unique_violation(&e) => {
+            match final_for_commit(pool, a.org_id, a.commit_sha).await? {
+                Some(row) => Ok(Recorded::AlreadyFinal(Box::new(row))),
+                None => Err(e),
+            }
+        }
         Err(e) => Err(e),
     }
 }
@@ -228,12 +268,17 @@ pub async fn record_rejected(pool: &SqlitePool, a: &Attempt<'_>) -> Result<Recor
 /// Make `a` the active snapshot in one transaction: the current active row (which must
 /// be `expected_active`, the one the change was planned and authorized against) becomes
 /// superseded and the new row becomes active. Anything else changes nothing.
-pub async fn activate(pool: &SqlitePool, a: &Attempt<'_>, expected_active: Option<i64>) -> Result<Activation, sqlx::Error> {
+pub async fn activate(
+    pool: &SqlitePool,
+    a: &Attempt<'_>,
+    expected_active: Option<i64>,
+) -> Result<Activation, sqlx::Error> {
     let mut tx = pool.begin().await?;
-    let current: Option<i64> = sqlx::query_scalar("SELECT id FROM cra_snapshots WHERE org_id = ? AND status = 'active'")
-        .bind(a.org_id)
-        .fetch_optional(&mut *tx)
-        .await?;
+    let current: Option<i64> =
+        sqlx::query_scalar("SELECT id FROM cra_snapshots WHERE org_id = ? AND status = 'active'")
+            .bind(a.org_id)
+            .fetch_optional(&mut *tx)
+            .await?;
     if current != expected_active {
         return Ok(Activation::ActiveChanged { current });
     }
@@ -257,10 +302,12 @@ pub async fn activate(pool: &SqlitePool, a: &Attempt<'_>, expected_active: Optio
             return match final_for_commit(pool, a.org_id, a.commit_sha).await? {
                 Some(row) => Ok(Activation::AlreadyFinal(Box::new(row))),
                 None => {
-                    let current = sqlx::query_scalar("SELECT id FROM cra_snapshots WHERE org_id = ? AND status = 'active'")
-                        .bind(a.org_id)
-                        .fetch_optional(pool)
-                        .await?;
+                    let current = sqlx::query_scalar(
+                        "SELECT id FROM cra_snapshots WHERE org_id = ? AND status = 'active'",
+                    )
+                    .bind(a.org_id)
+                    .fetch_optional(pool)
+                    .await?;
                     Ok(Activation::ActiveChanged { current })
                 }
             };

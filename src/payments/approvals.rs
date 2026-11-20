@@ -10,7 +10,10 @@ use super::ledger::{self, ClaimGuard, LedgerEntry, FAILED, PENDING};
 use super::policy::{self, PayoutPolicy};
 use super::schedule::period_window;
 use super::stripe::StripeApi;
-use crate::auth::{is_payee, scopes, tokens::format_db_time, tokens::parse_db_time, Directory, Principal, LEGACY_ADMIN_MEMBER};
+use crate::auth::{
+    is_payee, scopes, tokens::format_db_time, tokens::parse_db_time, Directory, Principal,
+    LEGACY_ADMIN_MEMBER,
+};
 use chrono::{DateTime, Duration, Utc};
 use serde::Serialize;
 use sqlx::SqlitePool;
@@ -36,7 +39,11 @@ pub enum RowApproval {
 
 /// Record `approver`'s approval of one ledger row. A new approval and its audit entry commit
 /// together: no audit entry, no approval.
-async fn insert_approval(pool: &SqlitePool, entry: &LedgerEntry, approver: &Principal) -> Result<RowApproval, sqlx::Error> {
+async fn insert_approval(
+    pool: &SqlitePool,
+    entry: &LedgerEntry,
+    approver: &Principal,
+) -> Result<RowApproval, sqlx::Error> {
     let mut tx = pool.begin().await?;
     let res = sqlx::query(
         "INSERT OR IGNORE INTO payout_approvals (ledger_id, approver_member_id, org_id, token_id) VALUES (?, ?, ?, ?)",
@@ -66,7 +73,11 @@ async fn insert_approval(pool: &SqlitePool, entry: &LedgerEntry, approver: &Prin
         .await?;
     }
     tx.commit().await?;
-    Ok(if res.rows_affected() == 0 { RowApproval::AlreadyApproved } else { RowApproval::Recorded })
+    Ok(if res.rows_affected() == 0 {
+        RowApproval::AlreadyApproved
+    } else {
+        RowApproval::Recorded
+    })
 }
 
 /// Is the principal the payee of this row? Checks the token's own payee keys and every payee key
@@ -88,8 +99,13 @@ pub async fn principal_is_payee(
 }
 
 /// The CRA member id recorded on the payee record of a pay order or invoice row, if any.
-async fn row_payee_member(pool: &SqlitePool, entry: &LedgerEntry) -> Result<Option<String>, sqlx::Error> {
-    let Some(pid) = &entry.payee_id else { return Ok(None) };
+async fn row_payee_member(
+    pool: &SqlitePool,
+    entry: &LedgerEntry,
+) -> Result<Option<String>, sqlx::Error> {
+    let Some(pid) = &entry.payee_id else {
+        return Ok(None);
+    };
     let m: Option<Option<String>> = sqlx::query_scalar("SELECT member_id FROM payees WHERE id = ?")
         .bind(pid)
         .fetch_optional(pool)
@@ -106,12 +122,17 @@ pub async fn approve_row(
     ledger_id: &str,
 ) -> Result<RowApproval, PayoutError> {
     principal.require(scopes::PAYOUTS_APPROVE)?;
-    let entry = ledger::get(pool, ledger_id).await?.ok_or(PayoutError::NotFound("ledger entry"))?;
+    let entry = ledger::get(pool, ledger_id)
+        .await?
+        .ok_or(PayoutError::NotFound("ledger entry"))?;
     if principal_is_payee(pool, directory, principal, &entry).await? {
         return Err(PayoutError::PayeeCannotApprove);
     }
     if !is_open(&entry.status) {
-        return Err(PayoutError::InvalidState(format!("ledger entry is '{}' and cannot be approved", entry.status)));
+        return Err(PayoutError::InvalidState(format!(
+            "ledger entry is '{}' and cannot be approved",
+            entry.status
+        )));
     }
     Ok(insert_approval(pool, &entry, principal).await?)
 }
@@ -122,7 +143,10 @@ pub struct ApprovalView {
     pub created_at: String,
 }
 
-pub async fn approvals_for(pool: &SqlitePool, ledger_id: &str) -> Result<Vec<ApprovalView>, sqlx::Error> {
+pub async fn approvals_for(
+    pool: &SqlitePool,
+    ledger_id: &str,
+) -> Result<Vec<ApprovalView>, sqlx::Error> {
     let rows: Vec<(String, String)> = sqlx::query_as(
         "SELECT approver_member_id, created_at FROM payout_approvals WHERE ledger_id = ? ORDER BY created_at, approver_member_id",
     )
@@ -131,18 +155,28 @@ pub async fn approvals_for(pool: &SqlitePool, ledger_id: &str) -> Result<Vec<App
     .await?;
     Ok(rows
         .into_iter()
-        .map(|(approver_member_id, created_at)| ApprovalView { approver_member_id, created_at })
+        .map(|(approver_member_id, created_at)| ApprovalView {
+            approver_member_id,
+            created_at,
+        })
         .collect())
 }
 
 // ---------------------------------------------------------------- blocks
 
 /// Block a payee (`payouts.policy`). A blocked payee is never paid.
-pub async fn block_payee(pool: &SqlitePool, principal: &Principal, payee: &str, reason: &str) -> Result<(), PayoutError> {
+pub async fn block_payee(
+    pool: &SqlitePool,
+    principal: &Principal,
+    payee: &str,
+    reason: &str,
+) -> Result<(), PayoutError> {
     principal.require(scopes::PAYOUTS_POLICY)?;
     let key = payee.trim().to_lowercase();
     if key.is_empty() || reason.trim().is_empty() {
-        return Err(PayoutError::Invalid(vec!["payee_key and reason are required".into()]));
+        return Err(PayoutError::Invalid(vec![
+            "payee_key and reason are required".into(),
+        ]));
     }
     // The block and its audit entry commit together (contract 13.1): a block that is not
     // recorded is not applied.
@@ -169,12 +203,19 @@ pub async fn block_payee(pool: &SqlitePool, principal: &Principal, payee: &str, 
 }
 
 /// Remove a block (`payouts.policy`). Returns whether a block existed.
-pub async fn unblock_payee(pool: &SqlitePool, principal: &Principal, payee: &str) -> Result<bool, PayoutError> {
+pub async fn unblock_payee(
+    pool: &SqlitePool,
+    principal: &Principal,
+    payee: &str,
+) -> Result<bool, PayoutError> {
     principal.require(scopes::PAYOUTS_POLICY)?;
     let key = payee.trim().to_lowercase();
     // Lifting a block makes a payee payable again, so it is recorded in the same transaction.
     let mut tx = pool.begin().await?;
-    let res = sqlx::query("DELETE FROM payout_blocks WHERE payee_key = ?").bind(&key).execute(&mut *tx).await?;
+    let res = sqlx::query("DELETE FROM payout_blocks WHERE payee_key = ?")
+        .bind(&key)
+        .execute(&mut *tx)
+        .await?;
     let existed = res.rows_affected() > 0;
     if existed {
         let entry = crate::audit::AuditEntry::by_principal(
@@ -241,21 +282,47 @@ impl Usage {
 #[serde(tag = "code", rename_all = "snake_case")]
 pub enum Blocker {
     PolicyDisabled,
-    NotOpen { status: String },
+    NotOpen {
+        status: String,
+    },
     ZeroAmount,
-    CurrencyMismatch { row: String, policy: String },
-    Hold { until: String },
+    CurrencyMismatch {
+        row: String,
+        policy: String,
+    },
+    Hold {
+        until: String,
+    },
     PayeeBlocked,
-    Ineligible { reason: String },
-    Approvals { have: i64, need: i64 },
-    BelowMinimum { min: i64 },
-    AboveMaxPerPayout { max: i64 },
-    MemberPeriodLimit { used: i64, max: i64 },
-    RunLimit { used: i64, max: i64 },
+    Ineligible {
+        reason: String,
+    },
+    Approvals {
+        have: i64,
+        need: i64,
+    },
+    BelowMinimum {
+        min: i64,
+    },
+    AboveMaxPerPayout {
+        max: i64,
+    },
+    MemberPeriodLimit {
+        used: i64,
+        max: i64,
+    },
+    RunLimit {
+        used: i64,
+        max: i64,
+    },
     /// The row's pay_after time (occurrence date or invoice due date) has not come yet.
-    NotYet { until: String },
+    NotYet {
+        until: String,
+    },
     /// The payee record is paused or closed, or cannot receive transfers.
-    PayeeInactive { reason: String },
+    PayeeInactive {
+        reason: String,
+    },
 }
 
 impl Blocker {
@@ -269,15 +336,23 @@ impl Blocker {
             Blocker::PolicyDisabled => "payouts are disabled by policy".into(),
             Blocker::NotOpen { status } => format!("ledger entry is '{status}'"),
             Blocker::ZeroAmount => "amount is zero".into(),
-            Blocker::CurrencyMismatch { row, policy } => format!("row currency {row} differs from policy currency {policy}"),
+            Blocker::CurrencyMismatch { row, policy } => {
+                format!("row currency {row} differs from policy currency {policy}")
+            }
             Blocker::Hold { until } => format!("on hold until {until}"),
             Blocker::PayeeBlocked => "payee is blocked".into(),
             Blocker::Ineligible { reason } => format!("payee not eligible: {reason}"),
             Blocker::Approvals { have, need } => format!("{have} of {need} required approvals"),
             Blocker::BelowMinimum { min } => format!("amount below min_payout_cents {min}"),
-            Blocker::AboveMaxPerPayout { max } => format!("amount above max_per_payout_cents {max}"),
-            Blocker::MemberPeriodLimit { used, max } => format!("payee period total {used} + amount exceeds max_per_member_per_period_cents {max}"),
-            Blocker::RunLimit { used, max } => format!("run total {used} + amount exceeds max_per_run_cents {max}"),
+            Blocker::AboveMaxPerPayout { max } => {
+                format!("amount above max_per_payout_cents {max}")
+            }
+            Blocker::MemberPeriodLimit { used, max } => format!(
+                "payee period total {used} + amount exceeds max_per_member_per_period_cents {max}"
+            ),
+            Blocker::RunLimit { used, max } => {
+                format!("run total {used} + amount exceeds max_per_run_cents {max}")
+            }
             Blocker::NotYet { until } => format!("not payable before {until}"),
             Blocker::PayeeInactive { reason } => format!("payee {reason}"),
         }
@@ -305,20 +380,30 @@ pub fn counted_approvals(policy: &PayoutPolicy, approvers: &[ApproverFact]) -> i
 }
 
 /// The payable rule, pure. Empty result = payable now.
-pub fn evaluate(policy: &PayoutPolicy, facts: &RowFacts, now: DateTime<Utc>, usage: &Usage) -> Vec<Blocker> {
+pub fn evaluate(
+    policy: &PayoutPolicy,
+    facts: &RowFacts,
+    now: DateTime<Utc>,
+    usage: &Usage,
+) -> Vec<Blocker> {
     let e = &facts.entry;
     let mut out = Vec::new();
     if !policy.enabled {
         out.push(Blocker::PolicyDisabled);
     }
     if !is_open(&e.status) {
-        out.push(Blocker::NotOpen { status: e.status.clone() });
+        out.push(Blocker::NotOpen {
+            status: e.status.clone(),
+        });
     }
     if e.amount_cents <= 0 {
         out.push(Blocker::ZeroAmount);
     }
     if !e.currency.eq_ignore_ascii_case(&policy.currency) {
-        out.push(Blocker::CurrencyMismatch { row: e.currency.clone(), policy: policy.currency.clone() });
+        out.push(Blocker::CurrencyMismatch {
+            row: e.currency.clone(),
+            policy: policy.currency.clone(),
+        });
     }
     let hold = policy.hold_days();
     if hold > 0 {
@@ -326,37 +411,53 @@ pub fn evaluate(policy: &PayoutPolicy, facts: &RowFacts, now: DateTime<Utc>, usa
             Some(created) => {
                 let until = created + Duration::days(hold);
                 if now < until {
-                    out.push(Blocker::Hold { until: format_db_time(until) });
+                    out.push(Blocker::Hold {
+                        until: format_db_time(until),
+                    });
                 }
             }
             // Unknown merge time: fail closed.
-            None => out.push(Blocker::Hold { until: "unknown".into() }),
+            None => out.push(Blocker::Hold {
+                until: "unknown".into(),
+            }),
         }
     }
     if let Some(after) = &e.pay_after {
         match parse_db_time(after) {
-            Some(t) if now < t => out.push(Blocker::NotYet { until: after.clone() }),
+            Some(t) if now < t => out.push(Blocker::NotYet {
+                until: after.clone(),
+            }),
             Some(_) => {}
             // Unreadable time: fail closed.
-            None => out.push(Blocker::NotYet { until: "unknown".into() }),
+            None => out.push(Blocker::NotYet {
+                until: "unknown".into(),
+            }),
         }
     }
     if facts.blocked {
         out.push(Blocker::PayeeBlocked);
     }
     if let Some(reason) = &facts.payee_inactive {
-        out.push(Blocker::PayeeInactive { reason: reason.clone() });
+        out.push(Blocker::PayeeInactive {
+            reason: reason.clone(),
+        });
     }
 
     let el = &policy.eligibility;
     if el.min_rank > 0 && facts.payee_rank.is_none_or(|r| r < el.min_rank) {
-        out.push(Blocker::Ineligible { reason: format!("payee rank below {}", el.min_rank) });
+        out.push(Blocker::Ineligible {
+            reason: format!("payee rank below {}", el.min_rank),
+        });
     }
     if !el.roles.is_empty() && !facts.payee_roles.iter().any(|r| el.roles.contains(r)) {
-        out.push(Blocker::Ineligible { reason: "payee holds none of the eligible roles".into() });
+        out.push(Blocker::Ineligible {
+            reason: "payee holds none of the eligible roles".into(),
+        });
     }
     if el.require_verified_identity && !facts.verified_identity {
-        out.push(Blocker::Ineligible { reason: "payee identity not verified".into() });
+        out.push(Blocker::Ineligible {
+            reason: "payee identity not verified".into(),
+        });
     }
 
     let have = counted_approvals(policy, &facts.approvers);
@@ -385,14 +486,21 @@ pub fn evaluate(policy: &PayoutPolicy, facts: &RowFacts, now: DateTime<Utc>, usa
     }
     if let Some(max) = l.max_per_run_cents {
         if usage.run_total + amt > max {
-            out.push(Blocker::RunLimit { used: usage.run_total, max });
+            out.push(Blocker::RunLimit {
+                used: usage.run_total,
+                max,
+            });
         }
     }
     out
 }
 
 /// Load the facts the payable rule needs for one row.
-pub async fn load_facts(pool: &SqlitePool, directory: &dyn Directory, entry: LedgerEntry) -> Result<RowFacts, sqlx::Error> {
+pub async fn load_facts(
+    pool: &SqlitePool,
+    directory: &dyn Directory,
+    entry: LedgerEntry,
+) -> Result<RowFacts, sqlx::Error> {
     let key = payee_key(&entry);
     let payee_member = row_payee_member(pool, &entry).await?;
     let mut approvers = Vec::new();
@@ -424,7 +532,10 @@ pub async fn load_facts(pool: &SqlitePool, directory: &dyn Directory, entry: Led
         blocked,
         verified_identity: verified,
         payee_rank: payee_member.as_deref().and_then(|m| directory.rank_of(m)),
-        payee_roles: payee_member.as_deref().map(|m| directory.roles_of(m)).unwrap_or_default(),
+        payee_roles: payee_member
+            .as_deref()
+            .map(|m| directory.roles_of(m))
+            .unwrap_or_default(),
         payee_inactive,
         entry,
     })
@@ -432,19 +543,29 @@ pub async fn load_facts(pool: &SqlitePool, directory: &dyn Directory, entry: Led
 
 /// `(provider, host, login)` of a ledger payee key: a bare GitHub login, `gitlab:<login>`, or
 /// `<provider>:<host>:<login>` (`foundry::legacy_username`).
-fn payee_key_identity(key: &str) -> Option<(crate::foundry::FoundryProvider, Option<String>, String)> {
+fn payee_key_identity(
+    key: &str,
+) -> Option<(crate::foundry::FoundryProvider, Option<String>, String)> {
     let parts: Vec<&str> = key.trim().split(':').collect();
     let (p, host, login) = match parts.as_slice() {
         [login] => (crate::foundry::FoundryProvider::GitHub, None, *login),
         [p, login] => (crate::foundry::FoundryProvider::parse(p)?, None, *login),
-        [p, host, login] => (crate::foundry::FoundryProvider::parse(p)?, Some(host.to_ascii_lowercase()), *login),
+        [p, host, login] => (
+            crate::foundry::FoundryProvider::parse(p)?,
+            Some(host.to_ascii_lowercase()),
+            *login,
+        ),
         _ => return None,
     };
     (!login.is_empty()).then(|| (p, host, login.to_string()))
 }
 
 /// A completed OAuth sign-in marks a code-host identity verified (contract 13.4).
-async fn account_login_verified(pool: &SqlitePool, provider: crate::foundry::FoundryProvider, login: &str) -> Result<bool, sqlx::Error> {
+async fn account_login_verified(
+    pool: &SqlitePool,
+    provider: crate::foundry::FoundryProvider,
+    login: &str,
+) -> Result<bool, sqlx::Error> {
     crate::accounts::login_is_verified(pool, provider, login).await
 }
 
@@ -477,23 +598,34 @@ pub async fn payee_identity_verified(pool: &SqlitePool, key: &str) -> Result<boo
     if chat.is_some() {
         return Ok(true);
     }
-    let Some((provider, host, login)) = payee_key_identity(&key) else { return Ok(false) };
+    let Some((provider, host, login)) = payee_key_identity(&key) else {
+        return Ok(false);
+    };
     if account_login_verified(pool, provider, &login).await? {
         return Ok(true);
     }
-    let Some(row) = crate::cra::store::active(pool, crate::cra::loader::ORG_ID).await? else { return Ok(false) };
+    let Some(row) = crate::cra::store::active(pool, crate::cra::loader::ORG_ID).await? else {
+        return Ok(false);
+    };
     // An active snapshot that does not reproduce attests nothing (fail closed).
-    let Ok(snap) = crate::cra::loader::parse_stored(&row) else { return Ok(false) };
+    let Ok(snap) = crate::cra::loader::parse_stored(&row) else {
+        return Ok(false);
+    };
     let host = host.unwrap_or_else(|| provider.default_host().to_string());
     Ok(snap.members.members.iter().any(|m| {
         crate::cra::loader::member_foundry_logins(&snap, &m.id)
             .iter()
-            .any(|(p, h, l)| *p == provider && h.eq_ignore_ascii_case(&host) && l.eq_ignore_ascii_case(&login))
+            .any(|(p, h, l)| {
+                *p == provider && h.eq_ignore_ascii_case(&host) && l.eq_ignore_ascii_case(&login)
+            })
     }))
 }
 
 /// Why the payee record behind a row cannot be paid now, if it cannot.
-async fn payee_inactive_reason(pool: &SqlitePool, entry: &LedgerEntry) -> Result<Option<String>, sqlx::Error> {
+async fn payee_inactive_reason(
+    pool: &SqlitePool,
+    entry: &LedgerEntry,
+) -> Result<Option<String>, sqlx::Error> {
     let status: Option<String> = sqlx::query_scalar(
         "SELECT p.status FROM payees p WHERE p.status <> 'active' AND (p.id = ? OR p.id IN
          (SELECT k.payee_id FROM payee_keys k WHERE k.payee_key = lower(?))) LIMIT 1",
@@ -506,11 +638,12 @@ async fn payee_inactive_reason(pool: &SqlitePool, entry: &LedgerEntry) -> Result
         return Ok(Some(format!("is {st}")));
     }
     if let Some(pid) = &entry.payee_id {
-        let acct: Option<(Option<String>, i64)> =
-            sqlx::query_as("SELECT stripe_account_id, stripe_payouts_enabled FROM payees WHERE id = ?")
-                .bind(pid)
-                .fetch_optional(pool)
-                .await?;
+        let acct: Option<(Option<String>, i64)> = sqlx::query_as(
+            "SELECT stripe_account_id, stripe_payouts_enabled FROM payees WHERE id = ?",
+        )
+        .bind(pid)
+        .fetch_optional(pool)
+        .await?;
         return Ok(match acct {
             None => Some("record not found".into()),
             Some((None, _)) => Some("has no Stripe account".into()),
@@ -523,7 +656,12 @@ async fn payee_inactive_reason(pool: &SqlitePool, entry: &LedgerEntry) -> Result
 }
 
 /// Sum of this payee's approved/paid rows whose updated_at falls in [start, end).
-pub async fn member_period_usage(pool: &SqlitePool, payee: &str, start: &str, end: &str) -> Result<i64, sqlx::Error> {
+pub async fn member_period_usage(
+    pool: &SqlitePool,
+    payee: &str,
+    start: &str,
+    end: &str,
+) -> Result<i64, sqlx::Error> {
     sqlx::query_scalar(
         "SELECT COALESCE(SUM(amount_cents), 0) FROM payout_ledger
          WHERE lower(github_username) = ? AND status IN ('approved', 'paid') AND updated_at >= ? AND updated_at < ?",
@@ -563,7 +701,10 @@ pub enum LegacyApproveOutcome {
     /// The transfer path ran (the entry is paid, or failed at Stripe).
     Transferred { entry: LedgerEntry },
     /// The admin-token approval was recorded but the row is not payable through this route.
-    ApprovalRecorded { entry: LedgerEntry, blockers: Vec<String> },
+    ApprovalRecorded {
+        entry: LedgerEntry,
+        blockers: Vec<String>,
+    },
 }
 
 /// The legacy admin approve. With no stored policy: exactly `ledger::approve` (today's behaviour,
@@ -584,9 +725,14 @@ pub async fn legacy_admin_approve(
         return Ok(LegacyApproveOutcome::Transferred { entry });
     }
     let p = &eff.policy;
-    let entry = ledger::get(pool, ledger_id).await?.ok_or(PayoutError::NotFound("ledger entry"))?;
+    let entry = ledger::get(pool, ledger_id)
+        .await?
+        .ok_or(PayoutError::NotFound("ledger entry"))?;
     if !is_open(&entry.status) {
-        return Err(PayoutError::Ledger(ledger::LedgerError::InvalidState(entry.status, "approved")));
+        return Err(PayoutError::Ledger(ledger::LedgerError::InvalidState(
+            entry.status,
+            "approved",
+        )));
     }
     let admin = Principal::legacy_admin();
     insert_approval(pool, &entry, &admin).await?;
@@ -609,10 +755,21 @@ pub async fn legacy_admin_approve(
     // Not a run: the per-run cap does not apply here.
     let mut no_run = p.clone();
     no_run.limits.max_per_run_cents = None;
-    blockers.extend(evaluate(&no_run, &facts, now, &usage).iter().map(Blocker::message));
+    blockers.extend(
+        evaluate(&no_run, &facts, now, &usage)
+            .iter()
+            .map(Blocker::message),
+    );
     if !blockers.is_empty() {
         return Ok(LegacyApproveOutcome::ApprovalRecorded { entry, blockers });
     }
-    let entry = ledger::pay_guarded(pool, stripe, ledger_id, LEGACY_ADMIN_MEMBER, &claim_guard(p, now, None)).await?;
+    let entry = ledger::pay_guarded(
+        pool,
+        stripe,
+        ledger_id,
+        LEGACY_ADMIN_MEMBER,
+        &claim_guard(p, now, None),
+    )
+    .await?;
     Ok(LegacyApproveOutcome::Transferred { entry })
 }

@@ -74,13 +74,22 @@ pub fn lines_subtotal(lines: &[InvoiceLine]) -> Result<i64, String> {
     let mut sum: i128 = 0;
     for (i, l) in lines.iter().enumerate() {
         if l.description.trim().is_empty() || l.description.chars().count() > 500 {
-            return Err(format!("line {}: description is required (at most 500 characters)", i + 1));
+            return Err(format!(
+                "line {}: description is required (at most 500 characters)",
+                i + 1
+            ));
         }
         if !(1..=MAX_QUANTITY).contains(&l.quantity) {
-            return Err(format!("line {}: quantity must be between 1 and {MAX_QUANTITY}", i + 1));
+            return Err(format!(
+                "line {}: quantity must be between 1 and {MAX_QUANTITY}",
+                i + 1
+            ));
         }
         if !(0..=MAX_CENTS).contains(&l.unit_amount_cents) {
-            return Err(format!("line {}: unit_amount_cents must be between 0 and {MAX_CENTS}", i + 1));
+            return Err(format!(
+                "line {}: unit_amount_cents must be between 0 and {MAX_CENTS}",
+                i + 1
+            ));
         }
         sum += l.quantity as i128 * l.unit_amount_cents as i128;
     }
@@ -172,11 +181,20 @@ pub struct InvoiceView {
 }
 
 async fn load_row(pool: &SqlitePool, id: &str) -> Result<Option<InvoiceRow>, sqlx::Error> {
-    sqlx::query_as::<_, InvoiceRow>("SELECT * FROM invoices WHERE id = ?").bind(id).fetch_optional(pool).await
+    sqlx::query_as::<_, InvoiceRow>("SELECT * FROM invoices WHERE id = ?")
+        .bind(id)
+        .fetch_optional(pool)
+        .await
 }
 
-async fn load_scoped(pool: &SqlitePool, principal: &Principal, id: &str) -> Result<InvoiceRow, PayoutError> {
-    let row = load_row(pool, id).await?.ok_or(PayoutError::NotFound("invoice"))?;
+async fn load_scoped(
+    pool: &SqlitePool,
+    principal: &Principal,
+    id: &str,
+) -> Result<InvoiceRow, PayoutError> {
+    let row = load_row(pool, id)
+        .await?
+        .ok_or(PayoutError::NotFound("invoice"))?;
     if row.org_id != principal.org_id {
         return Err(PayoutError::NotFound("invoice"));
     }
@@ -184,7 +202,16 @@ async fn load_scoped(pool: &SqlitePool, principal: &Principal, id: &str) -> Resu
 }
 
 #[allow(clippy::too_many_arguments)]
-async fn event(conn: &mut SqliteConnection, id: &str, action: &str, from: Option<&str>, to: &str, actor: &str, note: Option<&str>, now: &str) -> Result<(), sqlx::Error> {
+async fn event(
+    conn: &mut SqliteConnection,
+    id: &str,
+    action: &str,
+    from: Option<&str>,
+    to: &str,
+    actor: &str,
+    note: Option<&str>,
+    now: &str,
+) -> Result<(), sqlx::Error> {
     sqlx::query(
         "INSERT INTO invoice_events (invoice_id, action, from_status, to_status, actor, note, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
     )
@@ -243,8 +270,21 @@ async fn invoice_approvals(
     for (m, at) in rows {
         let is_payee = match &payee {
             Some(p) => {
-                let probe = Principal { token_id: String::new(), org_id: row.org_id.clone(), member_id: m.clone(), scopes: vec![], payee_keys: vec![] };
-                payees::principal_is(pool, directory, &probe, p.row.member_id.as_deref(), &p.payee_keys).await?
+                let probe = Principal {
+                    token_id: String::new(),
+                    org_id: row.org_id.clone(),
+                    member_id: m.clone(),
+                    scopes: vec![],
+                    payee_keys: vec![],
+                };
+                payees::principal_is(
+                    pool,
+                    directory,
+                    &probe,
+                    p.row.member_id.as_deref(),
+                    &p.payee_keys,
+                )
+                .await?
             }
             None => true,
         };
@@ -264,13 +304,23 @@ async fn invoice_approvals(
         if reason.is_none() {
             counted.insert(m.clone());
         }
-        out.push(InvoiceApproval { approver_member_id: m, created_at: at, counts: reason.is_none(), reason });
+        out.push(InvoiceApproval {
+            approver_member_id: m,
+            created_at: at,
+            counts: reason.is_none(),
+            reason,
+        });
     }
     let n = counted.len() as i64;
     Ok((out, n))
 }
 
-async fn view(pool: &SqlitePool, cfg: &PaymentConfig, directory: &dyn Directory, row: InvoiceRow) -> Result<InvoiceView, PayoutError> {
+async fn view(
+    pool: &SqlitePool,
+    cfg: &PaymentConfig,
+    directory: &dyn Directory,
+    row: InvoiceRow,
+) -> Result<InvoiceView, PayoutError> {
     let eff = policy::load_effective(pool, &row.org_id, cfg).await?;
     let (approvals, counted) = invoice_approvals(pool, directory, &eff.policy, &row).await?;
     let events = sqlx::query_as::<_, InvoiceEvent>(
@@ -318,15 +368,27 @@ pub async fn sync_paid(pool: &SqlitePool, now: DateTime<Utc>) -> Result<u64, sql
     let mut n = 0;
     for (id, by) in rows {
         let mut tx = pool.begin().await?;
-        let res = sqlx::query("UPDATE invoices SET status = ?, updated_at = ? WHERE id = ? AND status = ?")
-            .bind(INV_PAID)
-            .bind(&now_s)
-            .bind(&id)
-            .bind(SCHEDULED)
-            .execute(&mut *tx)
-            .await?;
+        let res = sqlx::query(
+            "UPDATE invoices SET status = ?, updated_at = ? WHERE id = ? AND status = ?",
+        )
+        .bind(INV_PAID)
+        .bind(&now_s)
+        .bind(&id)
+        .bind(SCHEDULED)
+        .execute(&mut *tx)
+        .await?;
         if res.rows_affected() > 0 {
-            event(&mut tx, &id, "paid", Some(SCHEDULED), INV_PAID, by.as_deref().unwrap_or("system:ledger"), None, &now_s).await?;
+            event(
+                &mut tx,
+                &id,
+                "paid",
+                Some(SCHEDULED),
+                INV_PAID,
+                by.as_deref().unwrap_or("system:ledger"),
+                None,
+                &now_s,
+            )
+            .await?;
             n += 1;
         }
         tx.commit().await?;
@@ -346,7 +408,14 @@ pub struct InvoiceFilter {
 }
 
 /// GET /api/v1/invoices (`invoices.read`).
-pub async fn list(pool: &SqlitePool, cfg: &PaymentConfig, directory: &dyn Directory, principal: &Principal, f: &InvoiceFilter, now: DateTime<Utc>) -> Result<Vec<InvoiceView>, PayoutError> {
+pub async fn list(
+    pool: &SqlitePool,
+    cfg: &PaymentConfig,
+    directory: &dyn Directory,
+    principal: &Principal,
+    f: &InvoiceFilter,
+    now: DateTime<Utc>,
+) -> Result<Vec<InvoiceView>, PayoutError> {
     principal.require(scopes::INVOICES_READ)?;
     sync_paid(pool, now).await?;
     let rows = sqlx::query_as::<_, InvoiceRow>(
@@ -367,7 +436,14 @@ pub async fn list(pool: &SqlitePool, cfg: &PaymentConfig, directory: &dyn Direct
 }
 
 /// GET /api/v1/invoices/{id} (`invoices.read`).
-pub async fn get(pool: &SqlitePool, cfg: &PaymentConfig, directory: &dyn Directory, principal: &Principal, id: &str, now: DateTime<Utc>) -> Result<InvoiceView, PayoutError> {
+pub async fn get(
+    pool: &SqlitePool,
+    cfg: &PaymentConfig,
+    directory: &dyn Directory,
+    principal: &Principal,
+    id: &str,
+    now: DateTime<Utc>,
+) -> Result<InvoiceView, PayoutError> {
     principal.require(scopes::INVOICES_READ)?;
     sync_paid(pool, now).await?;
     let row = load_scoped(pool, principal, id).await?;
@@ -409,20 +485,30 @@ pub async fn submit(
         }
     };
     let eff = policy::load_effective(pool, &principal.org_id, cfg).await?;
-    let currency = input.currency.as_deref().map(|c| c.trim().to_lowercase()).unwrap_or_else(|| eff.policy.currency.to_lowercase());
+    let currency = input
+        .currency
+        .as_deref()
+        .map(|c| c.trim().to_lowercase())
+        .unwrap_or_else(|| eff.policy.currency.to_lowercase());
     if !currency.eq_ignore_ascii_case(&eff.policy.currency) {
-        errs.push(format!("currency must be the payout policy currency {}", eff.policy.currency));
+        errs.push(format!(
+            "currency must be the payout policy currency {}",
+            eff.policy.currency
+        ));
     }
     if !errs.is_empty() {
         return Err(PayoutError::Invalid(errs));
     }
-    let dup: Option<i64> = sqlx::query_scalar("SELECT 1 FROM invoices WHERE payee_id = ? AND number = ?")
-        .bind(&input.payee_id)
-        .bind(&number)
-        .fetch_optional(pool)
-        .await?;
+    let dup: Option<i64> =
+        sqlx::query_scalar("SELECT 1 FROM invoices WHERE payee_id = ? AND number = ?")
+            .bind(&input.payee_id)
+            .bind(&number)
+            .fetch_optional(pool)
+            .await?;
     if dup.is_some() {
-        return Err(PayoutError::Invalid(vec![format!("invoice number '{number}' already exists for this payee")]));
+        return Err(PayoutError::Invalid(vec![format!(
+            "invoice number '{number}' already exists for this payee"
+        )]));
     }
     let id = Uuid::new_v4().to_string();
     let now_s = format_db_time(now);
@@ -454,19 +540,39 @@ pub async fn submit(
     match res {
         Ok(_) => {}
         Err(sqlx::Error::Database(d)) if d.message().contains("UNIQUE") => {
-            return Err(PayoutError::Invalid(vec![format!("invoice number '{number}' already exists for this payee")]));
+            return Err(PayoutError::Invalid(vec![format!(
+                "invoice number '{number}' already exists for this payee"
+            )]));
         }
         Err(e) => return Err(e.into()),
     }
-    event(&mut tx, &id, "submit", None, SUBMITTED, &principal.member_id, None, &now_s).await?;
+    event(
+        &mut tx,
+        &id,
+        "submit",
+        None,
+        SUBMITTED,
+        &principal.member_id,
+        None,
+        &now_s,
+    )
+    .await?;
     tx.commit().await?;
     let row = load_scoped(pool, principal, &id).await?;
     view(pool, cfg, directory, row).await
 }
 
-async fn refuse_payee(pool: &SqlitePool, directory: &dyn Directory, principal: &Principal, row: &InvoiceRow, verb: &str) -> Result<(), PayoutError> {
+async fn refuse_payee(
+    pool: &SqlitePool,
+    directory: &dyn Directory,
+    principal: &Principal,
+    row: &InvoiceRow,
+    verb: &str,
+) -> Result<(), PayoutError> {
     if payees::principal_is_payee_of(pool, directory, principal, &row.payee_id).await? {
-        return Err(PayoutError::Forbidden(format!("a payee cannot {verb} their own invoice")));
+        return Err(PayoutError::Forbidden(format!(
+            "a payee cannot {verb} their own invoice"
+        )));
     }
     Ok(())
 }
@@ -494,10 +600,15 @@ pub async fn approve(
     let row = load_scoped(pool, principal, id).await?;
     refuse_payee(pool, directory, principal, &row, "approve").await?;
     if principal.member_id == row.submitted_by {
-        return Err(PayoutError::Forbidden("the submitter of an invoice can never approve it".into()));
+        return Err(PayoutError::Forbidden(
+            "the submitter of an invoice can never approve it".into(),
+        ));
     }
     if row.status != SUBMITTED {
-        return Err(PayoutError::InvalidState(format!("invoice is '{}' and cannot be approved", row.status)));
+        return Err(PayoutError::InvalidState(format!(
+            "invoice is '{}' and cannot be approved",
+            row.status
+        )));
     }
     let now_s = format_db_time(now);
     let mut tx = pool.begin().await?;
@@ -513,28 +624,56 @@ pub async fn approve(
     .await?;
     let recorded = res.rows_affected() > 0;
     if recorded {
-        event(&mut tx, id, "approval", Some(SUBMITTED), SUBMITTED, &principal.member_id, None, &now_s).await?;
+        event(
+            &mut tx,
+            id,
+            "approval",
+            Some(SUBMITTED),
+            SUBMITTED,
+            &principal.member_id,
+            None,
+            &now_s,
+        )
+        .await?;
     }
     tx.commit().await?;
 
     let eff = policy::load_effective(pool, &row.org_id, cfg).await?;
     let (approvals, counted) = invoice_approvals(pool, directory, &eff.policy, &row).await?;
     if counted >= eff.policy.approval.approvals_required.max(1) {
-        let payee = payees::load(pool, &row.payee_id).await?.ok_or(PayoutError::NotFound("payee"))?;
-        let approvers: Vec<String> = approvals.into_iter().filter(|a| a.counts).map(|a| a.approver_member_id).collect();
+        let payee = payees::load(pool, &row.payee_id)
+            .await?
+            .ok_or(PayoutError::NotFound("payee"))?;
+        let approvers: Vec<String> = approvals
+            .into_iter()
+            .filter(|a| a.counts)
+            .map(|a| a.approver_member_id)
+            .collect();
         let due = NaiveDate::parse_from_str(&row.due_date, "%Y-%m-%d")
             .map_err(|_| PayoutError::InvalidState("stored due date is unreadable".into()))?;
         let pay_after = format!("{} 00:00:00", due.format("%Y-%m-%d"));
         let mut tx = pool.begin().await?;
-        let moved = sqlx::query("UPDATE invoices SET status = ?, updated_at = ? WHERE id = ? AND status = ?")
-            .bind(APPROVED)
-            .bind(&now_s)
-            .bind(id)
-            .bind(SUBMITTED)
-            .execute(&mut *tx)
-            .await?;
+        let moved = sqlx::query(
+            "UPDATE invoices SET status = ?, updated_at = ? WHERE id = ? AND status = ?",
+        )
+        .bind(APPROVED)
+        .bind(&now_s)
+        .bind(id)
+        .bind(SUBMITTED)
+        .execute(&mut *tx)
+        .await?;
         if moved.rows_affected() == 1 {
-            event(&mut tx, id, "approve", Some(SUBMITTED), APPROVED, &principal.member_id, None, &now_s).await?;
+            event(
+                &mut tx,
+                id,
+                "approve",
+                Some(SUBMITTED),
+                APPROVED,
+                &principal.member_id,
+                None,
+                &now_s,
+            )
+            .await?;
             let contributor_id: Option<String> = sqlx::query_scalar(
                 "SELECT CASE WHEN typeof(c.id) = 'blob' THEN lower(substr(hex(c.id),1,8)||'-'||substr(hex(c.id),9,4)||'-'||substr(hex(c.id),13,4)||'-'||substr(hex(c.id),17,4)||'-'||substr(hex(c.id),21)) ELSE c.id END
                  FROM contributors c JOIN payee_keys k ON k.payee_key = lower(c.github_username) WHERE k.payee_id = ? ORDER BY k.payee_key LIMIT 1",
@@ -556,7 +695,9 @@ pub async fn approve(
             };
             let Some(lid) = ledger::insert_source_row(&mut tx, &src).await? else {
                 tx.rollback().await?;
-                return Err(PayoutError::InvalidState("this invoice already has a ledger row".into()));
+                return Err(PayoutError::InvalidState(
+                    "this invoice already has a ledger row".into(),
+                ));
             };
             for m in &approvers {
                 sqlx::query("INSERT OR IGNORE INTO payout_approvals (ledger_id, approver_member_id, org_id, token_id, created_at) VALUES (?, ?, ?, ?, ?)")
@@ -576,13 +717,27 @@ pub async fn approve(
                 .bind(APPROVED)
                 .execute(&mut *tx)
                 .await?;
-            event(&mut tx, id, "schedule", Some(APPROVED), SCHEDULED, &principal.member_id, Some(&format!("ledger row {lid}")), &now_s).await?;
+            event(
+                &mut tx,
+                id,
+                "schedule",
+                Some(APPROVED),
+                SCHEDULED,
+                &principal.member_id,
+                Some(&format!("ledger row {lid}")),
+                &now_s,
+            )
+            .await?;
         }
         tx.commit().await?;
     }
     let row = load_scoped(pool, principal, id).await?;
     Ok(ApproveInvoiceResult {
-        result: if recorded { "recorded" } else { "already_approved" },
+        result: if recorded {
+            "recorded"
+        } else {
+            "already_approved"
+        },
         approver_member_id: principal.member_id.clone(),
         invoice: view(pool, cfg, directory, row).await?,
     })
@@ -610,17 +765,31 @@ pub async fn reject(
     refuse_payee(pool, directory, principal, &row, "reject").await?;
     let now_s = format_db_time(now);
     let mut tx = pool.begin().await?;
-    let res = sqlx::query("UPDATE invoices SET status = ?, updated_at = ? WHERE id = ? AND status = ?")
-        .bind(REJECTED)
-        .bind(&now_s)
-        .bind(id)
-        .bind(SUBMITTED)
-        .execute(&mut *tx)
-        .await?;
+    let res =
+        sqlx::query("UPDATE invoices SET status = ?, updated_at = ? WHERE id = ? AND status = ?")
+            .bind(REJECTED)
+            .bind(&now_s)
+            .bind(id)
+            .bind(SUBMITTED)
+            .execute(&mut *tx)
+            .await?;
     if res.rows_affected() == 0 {
-        return Err(PayoutError::InvalidState(format!("invoice is '{}' and cannot be rejected", row.status)));
+        return Err(PayoutError::InvalidState(format!(
+            "invoice is '{}' and cannot be rejected",
+            row.status
+        )));
     }
-    event(&mut tx, id, "reject", Some(SUBMITTED), REJECTED, &principal.member_id, reason, &now_s).await?;
+    event(
+        &mut tx,
+        id,
+        "reject",
+        Some(SUBMITTED),
+        REJECTED,
+        &principal.member_id,
+        reason,
+        &now_s,
+    )
+    .await?;
     tx.commit().await?;
     let row = load_scoped(pool, principal, id).await?;
     view(pool, cfg, directory, row).await
@@ -643,29 +812,47 @@ pub async fn void(
     let row = load_scoped(pool, principal, id).await?;
     refuse_payee(pool, directory, principal, &row, "void").await?;
     if ![SUBMITTED, APPROVED, SCHEDULED].contains(&row.status.as_str()) {
-        return Err(PayoutError::InvalidState(format!("invoice is '{}' and cannot be voided", row.status)));
+        return Err(PayoutError::InvalidState(format!(
+            "invoice is '{}' and cannot be voided",
+            row.status
+        )));
     }
     if let Some(lid) = &row.ledger_id {
         if let Err(e) = ledger::reject(pool, lid, &principal.member_id, "invoice voided").await {
             return Err(match e {
-                ledger::LedgerError::InvalidState(st, _) => PayoutError::InvalidState(format!("the invoice's ledger row is '{st}'; it cannot be voided")),
+                ledger::LedgerError::InvalidState(st, _) => PayoutError::InvalidState(format!(
+                    "the invoice's ledger row is '{st}'; it cannot be voided"
+                )),
                 other => other.into(),
             });
         }
     }
     let now_s = format_db_time(now);
     let mut tx = pool.begin().await?;
-    let res = sqlx::query("UPDATE invoices SET status = ?, updated_at = ? WHERE id = ? AND status = ?")
-        .bind(VOID)
-        .bind(&now_s)
-        .bind(id)
-        .bind(&row.status)
-        .execute(&mut *tx)
-        .await?;
+    let res =
+        sqlx::query("UPDATE invoices SET status = ?, updated_at = ? WHERE id = ? AND status = ?")
+            .bind(VOID)
+            .bind(&now_s)
+            .bind(id)
+            .bind(&row.status)
+            .execute(&mut *tx)
+            .await?;
     if res.rows_affected() == 0 {
-        return Err(PayoutError::InvalidState("invoice changed concurrently; read it again".into()));
+        return Err(PayoutError::InvalidState(
+            "invoice changed concurrently; read it again".into(),
+        ));
     }
-    event(&mut tx, id, "void", Some(&row.status), VOID, &principal.member_id, reason, &now_s).await?;
+    event(
+        &mut tx,
+        id,
+        "void",
+        Some(&row.status),
+        VOID,
+        &principal.member_id,
+        reason,
+        &now_s,
+    )
+    .await?;
     tx.commit().await?;
     let row = load_scoped(pool, principal, id).await?;
     view(pool, cfg, directory, row).await

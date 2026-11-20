@@ -16,12 +16,22 @@ fn old() -> Snapshot {
 #[test]
 fn story_outsider_adds_herself_with_a_high_grant_in_the_same_commit() {
     let mallory = "\n[[member]]\nid = \"mallory\"\nname = \"Mallory\"\nstatus = \"active\"\n[member.identities]\ngithub = \"mallory-gh\"\n[[member.grant]]\nrole = \"lead\"\ngranted_by = \"lena\"\nexpires = \"2027-06-01\"\n";
-    let new = add_grant(append(base(), F::Members, mallory), "cal", "reviewer", "lena", None);
+    let new = add_grant(
+        append(base(), F::Members, mallory),
+        "cal",
+        "reviewer",
+        "lena",
+        None,
+    );
     // The new snapshot itself is valid: the files alone cannot tell.
     let r = auth(&old(), &new, &push("mallory-gh"));
     assert_eq!(vcodes(&r), vec![V::UnknownActor], "{r:?}");
     // Through a pull request she approves herself: still nobody.
-    let r = auth(&old(), &new, &pr("mallory-gh", "mallory-gh", &["mallory-gh"]));
+    let r = auth(
+        &old(),
+        &new,
+        &pr("mallory-gh", "mallory-gh", &["mallory-gh"]),
+    );
     assert_eq!(vcodes(&r), vec![V::UnknownActor], "{r:?}");
 }
 
@@ -62,14 +72,18 @@ fn story_two_colluding_juniors_approve_each_others_promotion() {
     let r = auth(&old(), &promote_ria, &pr("rex-gh", "rex-gh", &["ria-gh"]));
     assert_denied(&r, V::InsufficientRank); // 40 is not above 60
     assert_denied(&r, V::NoQualifiedApprover); // Ria benefits and is not above 60
-    // Ria's pull request promotes Rex; Rex approves it; Ria merges.
+                                               // Ria's pull request promotes Rex; Rex approves it; Ria merges.
     let promote_rex = add_grant(base(), "rex", "maintainer", "ria", Some("2027-06-01"));
     let r = auth(&old(), &promote_rex, &pr("ria-gh", "ria-gh", &["rex-gh"]));
     assert_denied(&r, V::InsufficientRank);
     assert_denied(&r, V::NoQualifiedApprover);
     // One combined pull request promoting both, approved by both.
     let both = add_grant(promote_ria, "rex", "maintainer", "ria", Some("2027-06-01"));
-    let r = auth(&old(), &both, &pr("rex-gh", "rex-gh", &["ria-gh", "rex-gh"]));
+    let r = auth(
+        &old(),
+        &both,
+        &pr("rex-gh", "rex-gh", &["ria-gh", "rex-gh"]),
+    );
     assert_denied(&r, V::SelfChange);
     assert_denied(&r, V::InsufficientRank);
     assert_denied(&r, V::NoQualifiedApprover);
@@ -80,22 +94,44 @@ fn story_two_colluding_juniors_approve_each_others_promotion() {
 #[test]
 fn story_attacker_rewrites_his_identity_to_a_senior_members_login() {
     // Taking Lena's login while she still holds it: the snapshot is invalid.
-    let steal = edit(base(), F::Members, "github = \"cal-gh\"", "github = \"Lena-GH\"");
+    let steal = edit(
+        base(),
+        F::Members,
+        "github = \"cal-gh\"",
+        "github = \"Lena-GH\"",
+    );
     assert!(error_codes(&steal).contains(&ErrorCode::DuplicateIdentity));
 
     // So he also moves Lena off her login in the same commit. Now the files
     // are valid, and authorization stops both edits.
-    let swap = edit(steal, F::Members, "github = \"lena-gh\"", "github = \"lena-old\"");
+    let swap = edit(
+        steal,
+        F::Members,
+        "github = \"lena-gh\"",
+        "github = \"lena-old\"",
+    );
     let r = auth(&old(), &swap, &push("cal-gh"));
     let v = r.clone().unwrap_err();
-    assert!(v.iter().any(|x| x.code == V::SelfChange && x.item.contains("`cal` github")), "{v:?}");
-    assert!(v.iter().any(|x| x.code == V::InsufficientRank && x.item.contains("`lena` github")), "{v:?}");
+    assert!(
+        v.iter()
+            .any(|x| x.code == V::SelfChange && x.item.contains("`cal` github")),
+        "{v:?}"
+    );
+    assert!(
+        v.iter()
+            .any(|x| x.code == V::InsufficientRank && x.item.contains("`lena` github")),
+        "{v:?}"
+    );
 
     // Even after pushing, the next commit cal makes as "lena-gh" is resolved
     // through the ACTIVE snapshot, where that login still belongs to Lena.
     // He does not have her login on GitHub, so he cannot act as her; and
     // his own login maps to cal, rank 0.
-    let r = auth(&old(), &add_grant(base(), "cal", "reviewer", "lena", None), &push("cal-gh"));
+    let r = auth(
+        &old(),
+        &add_grant(base(), "cal", "reviewer", "lena", None),
+        &push("cal-gh"),
+    );
     assert_denied(&r, V::InsufficientRank);
 }
 
@@ -109,19 +145,36 @@ fn story_direct_push_switches_mode_from_closed_to_open() {
     let old = load_ok(&closed);
     let open = edit(closed, F::Org, "mode = \"closed\"", "mode = \"open\"");
     // Weave declares a compartment, which open mode disables by default.
-    let open = edit(open, F::Org, "[policy]", "[policy]\n\"compartments.enabled\" = true");
+    let open = edit(
+        open,
+        F::Org,
+        "[policy]",
+        "[policy]\n\"compartments.enabled\" = true",
+    );
     let new = load_ok(&open);
     let plan = plan_change(Some(&old), &new);
     let m = plan.mode_change.as_ref().expect("mode change detected");
     assert_eq!((m.old, m.new), (Some(Mode::Closed), Mode::Open));
-    assert!(plan.policy_changes.iter().any(|c| c.path == "visibility.roster"));
+    assert!(plan
+        .policy_changes
+        .iter()
+        .any(|c| c.path == "visibility.roster"));
 
     let weave_owners = vec!["github:example-founder".to_string()];
-    let ctx = ChangeContext { actor: gh("Simbuilder"), via_pull_request: false, author: None, approvers: vec![], today: today() };
+    let ctx = ChangeContext {
+        actor: gh("Simbuilder"),
+        via_pull_request: false,
+        author: None,
+        approvers: vec![],
+        today: today(),
+    };
     let r = authorize(Some(&old), &plan, &ctx, &weave_owners);
     assert_denied(&r, V::DirectPushNeedsApproval);
     let items: Vec<String> = r.unwrap_err().into_iter().map(|v| v.item).collect();
-    assert!(items.iter().any(|i| i == "mode closed to open"), "{items:?}");
+    assert!(
+        items.iter().any(|i| i == "mode closed to open"),
+        "{items:?}"
+    );
 
     // The preview shows the switch and its impact before anything is merged.
     let md = plan.render_markdown();

@@ -69,20 +69,29 @@ impl EnvDirectory {
     pub fn new<I: IntoIterator<Item = String>>(owners: I) -> Self {
         let mut ids = HashSet::new();
         let mut foundry = Vec::new();
-        for o in owners.into_iter().map(|s| s.trim().to_string()).filter(|s| !s.is_empty()) {
+        for o in owners
+            .into_iter()
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty())
+        {
             if o.contains(':') {
                 match owner_foundry(&o) {
                     Some(f) => {
                         ids.insert(o);
                         foundry.push(f);
                     }
-                    None => tracing::warn!("MSYNC_OWNER_MEMBER_IDS: ignoring malformed entry '{}'", o),
+                    None => {
+                        tracing::warn!("MSYNC_OWNER_MEMBER_IDS: ignoring malformed entry '{}'", o)
+                    }
                 }
             } else {
                 ids.insert(o);
             }
         }
-        Self { owners: ids, foundry_owners: foundry }
+        Self {
+            owners: ids,
+            foundry_owners: foundry,
+        }
     }
 
     pub fn owner_count(&self) -> usize {
@@ -98,7 +107,9 @@ impl EnvDirectory {
 
     /// Is this GitHub or GitLab identity an owner (case-insensitive login)?
     pub fn is_owner_foundry(&self, provider: FoundryProvider, login: &str) -> bool {
-        self.foundry_owners.iter().any(|o| o.matches(provider, login))
+        self.foundry_owners
+            .iter()
+            .any(|o| o.matches(provider, login))
     }
 
     fn is_owner_id(&self, member_id: &str) -> bool {
@@ -137,7 +148,11 @@ pub struct CraDirectory {
 
 impl CraDirectory {
     pub fn new(env: EnvDirectory, cra: CraHandle) -> Self {
-        CraDirectory { env, cra, today: None }
+        CraDirectory {
+            env,
+            cra,
+            today: None,
+        }
     }
 
     /// Fix the evaluation date (tests). Default: today in UTC.
@@ -155,14 +170,23 @@ impl CraDirectory {
     }
 
     fn today(&self) -> NaiveDate {
-        self.today.unwrap_or_else(|| chrono::Utc::now().date_naive())
+        self.today
+            .unwrap_or_else(|| chrono::Utc::now().date_naive())
     }
 
     fn member_is_owner(&self, snap: &crate::cra::Snapshot, member_id: &str) -> bool {
-        let Some(m) = snap.member(member_id) else { return false };
-        [(FoundryProvider::Github, &m.identities.github), (FoundryProvider::Gitlab, &m.identities.gitlab)]
-            .iter()
-            .any(|(p, l)| l.as_deref().is_some_and(|l| self.env.is_owner_foundry(*p, l)))
+        let Some(m) = snap.member(member_id) else {
+            return false;
+        };
+        [
+            (FoundryProvider::Github, &m.identities.github),
+            (FoundryProvider::Gitlab, &m.identities.gitlab),
+        ]
+        .iter()
+        .any(|(p, l)| {
+            l.as_deref()
+                .is_some_and(|l| self.env.is_owner_foundry(*p, l))
+        })
     }
 }
 
@@ -192,13 +216,17 @@ impl Directory for CraDirectory {
         if self.member_is_owner(snap, member_id) {
             return Some(OWNER_RANK);
         }
-        standing(snap, member_id, self.cra.merit_of(member_id), self.today()).map(|s| i64::from(s.rank))
+        standing(snap, member_id, self.cra.merit_of(member_id), self.today())
+            .map(|s| i64::from(s.rank))
     }
 
     fn member_for_payee(&self, payee_key: &str) -> Option<String> {
         let active = self.cra.active()?;
         let (provider, login) = payee_identity(payee_key.trim())?;
-        if let Some(m) = active.snapshot.member_by_foundry(&FoundryIdentity { provider, login: login.to_string() }) {
+        if let Some(m) = active.snapshot.member_by_foundry(&FoundryIdentity {
+            provider,
+            login: login.to_string(),
+        }) {
             return Some(m.id.clone());
         }
         // An owner configured only by GitHub or GitLab identity is the payee of their own login.
@@ -209,8 +237,15 @@ impl Directory for CraDirectory {
     }
 
     fn roles_of(&self, member_id: &str) -> Vec<String> {
-        let Some(active) = self.cra.active() else { return Vec::new() };
-        let Some(st) = standing(&active.snapshot, member_id, self.cra.merit_of(member_id), self.today()) else {
+        let Some(active) = self.cra.active() else {
+            return Vec::new();
+        };
+        let Some(st) = standing(
+            &active.snapshot,
+            member_id,
+            self.cra.merit_of(member_id),
+            self.today(),
+        ) else {
             return Vec::new();
         };
         if st.status != crate::cra::MemberStatus::Active {
@@ -230,22 +265,43 @@ mod tests {
 
     #[test]
     fn owner_list_accepts_member_ids_and_foundry_identities() {
-        let d = EnvDirectory::from_owner_list(" mckale , github:Simbuilder, gitlab:someone, bitbucket:x, github:, github:a:b ");
-        assert_eq!(d.owner_entries(), vec!["github:Simbuilder", "gitlab:someone", "mckale"]);
+        let d = EnvDirectory::from_owner_list(
+            " mckale , github:Simbuilder, gitlab:someone, bitbucket:x, github:, github:a:b ",
+        );
+        assert_eq!(
+            d.owner_entries(),
+            vec!["github:Simbuilder", "gitlab:someone", "mckale"]
+        );
         assert_eq!(d.rank_of("mckale"), Some(OWNER_RANK));
         assert_eq!(d.rank_of("github:simbuilder"), Some(OWNER_RANK));
         assert!(d.is_owner_foundry(FoundryProvider::Github, "SIMBUILDER"));
         assert!(!d.is_owner_foundry(FoundryProvider::Gitlab, "Simbuilder"));
-        assert_eq!(d.rank_of("bitbucket:x"), None, "a malformed entry confers nothing");
+        assert_eq!(
+            d.rank_of("bitbucket:x"),
+            None,
+            "a malformed entry confers nothing"
+        );
         assert_eq!(d.rank_of("someone"), None);
     }
 
     #[test]
     fn payee_keys_map_to_foundry_identities() {
-        assert_eq!(payee_identity("alice"), Some((FoundryProvider::Github, "alice")));
-        assert_eq!(payee_identity("gitlab:alice"), Some((FoundryProvider::Gitlab, "alice")));
-        assert_eq!(payee_identity("gitlab:git.example.org:alice"), Some((FoundryProvider::Gitlab, "alice")));
-        assert_eq!(payee_identity("github:ghe.example.org:alice"), Some((FoundryProvider::Github, "alice")));
+        assert_eq!(
+            payee_identity("alice"),
+            Some((FoundryProvider::Github, "alice"))
+        );
+        assert_eq!(
+            payee_identity("gitlab:alice"),
+            Some((FoundryProvider::Gitlab, "alice"))
+        );
+        assert_eq!(
+            payee_identity("gitlab:git.example.org:alice"),
+            Some((FoundryProvider::Gitlab, "alice"))
+        );
+        assert_eq!(
+            payee_identity("github:ghe.example.org:alice"),
+            Some((FoundryProvider::Github, "alice"))
+        );
         assert_eq!(payee_identity("svn:alice"), None);
         assert_eq!(payee_identity("gitlab:"), None);
     }

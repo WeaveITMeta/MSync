@@ -10,12 +10,17 @@ use crate::payments::api::{auth_error, principal, ApiContext};
 
 fn db_error(e: sqlx::Error) -> HttpResponse {
     error!("audit db error: {e}");
-    HttpResponse::InternalServerError().json(json!({"status": "error", "message": "database error"}))
+    HttpResponse::InternalServerError()
+        .json(json!({"status": "error", "message": "database error"}))
 }
 
 /// `GET /api/v1/audit?actor=&action=&target=&after=&limit=`: one page, oldest first.
 #[get("/api/v1/audit")]
-pub async fn get_audit(req: HttpRequest, q: web::Query<AuditFilter>, ctx: web::Data<ApiContext>) -> HttpResponse {
+pub async fn get_audit(
+    req: HttpRequest,
+    q: web::Query<AuditFilter>,
+    ctx: web::Data<ApiContext>,
+) -> HttpResponse {
     let p = match principal(&req, &ctx).await {
         Ok(p) => p,
         Err(r) => return r,
@@ -24,7 +29,8 @@ pub async fn get_audit(req: HttpRequest, q: web::Query<AuditFilter>, ctx: web::D
         return auth_error(&e);
     }
     match list(&ctx.pool, &q).await {
-        Ok(page) => HttpResponse::Ok().json(json!({"status": "ok", "entries": page.entries, "next_after": page.next_after})),
+        Ok(page) => HttpResponse::Ok()
+            .json(json!({"status": "ok", "entries": page.entries, "next_after": page.next_after})),
         Err(e) => db_error(e),
     }
 }

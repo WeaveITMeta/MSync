@@ -41,12 +41,14 @@ use sha2::{Digest, Sha256};
 
 pub use authz::{authorize, ChangeContext, Violation, ViolationCode};
 pub use catalog::PermissionClass;
+pub use loader::{load_commit, ActiveCra, CraContext, CraHandle, CraSettings, LoadOutcome};
 pub use model::*;
 pub use plan::{plan_change, ChangePlan};
 pub use policy::{effective_policy, mode_defaults, Mode, Policy};
-pub use standing::{discord_projection, slack_projection, standing, DiscordProjection, SlackProjection, Standing};
-pub use loader::{load_commit, ActiveCra, CraContext, CraHandle, CraSettings, LoadOutcome};
 pub use source::{CraRepo, CraSource, GitHubSource, GitLabSource, SourceError};
+pub use standing::{
+    discord_projection, slack_projection, standing, DiscordProjection, SlackProjection, Standing,
+};
 
 /// The schema version this engine reads.
 pub const SCHEMA_VERSION: i64 = 1;
@@ -213,13 +215,23 @@ pub struct CraError {
 
 impl fmt::Display for CraError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{}: {:?}: {}", self.file.file_name(), self.code, self.message)
+        write!(
+            f,
+            "{}: {:?}: {}",
+            self.file.file_name(),
+            self.code,
+            self.message
+        )
     }
 }
 
 impl CraError {
     pub(crate) fn new(file: CraFileKind, code: ErrorCode, message: impl Into<String>) -> Self {
-        CraError { file, code, message: message.into() }
+        CraError {
+            file,
+            code,
+            message: message.into(),
+        }
     }
 }
 
@@ -232,10 +244,16 @@ pub struct FoundryIdentity {
 
 impl FoundryIdentity {
     pub fn github(login: &str) -> Self {
-        FoundryIdentity { provider: FoundryProvider::Github, login: login.to_string() }
+        FoundryIdentity {
+            provider: FoundryProvider::Github,
+            login: login.to_string(),
+        }
     }
     pub fn gitlab(login: &str) -> Self {
-        FoundryIdentity { provider: FoundryProvider::Gitlab, login: login.to_string() }
+        FoundryIdentity {
+            provider: FoundryProvider::Gitlab,
+            login: login.to_string(),
+        }
     }
     /// GitHub and GitLab logins are case-insensitive.
     pub fn matches(&self, provider: FoundryProvider, login: &str) -> bool {
@@ -323,9 +341,11 @@ impl Snapshot {
         let mut errors = Vec::new();
         let org: Option<OrgFile> = parse_file(CraFileKind::Org, &files.org, &mut errors);
         let roles: Option<RolesFile> = parse_file(CraFileKind::Roles, &files.roles, &mut errors);
-        let members: Option<MembersFile> = parse_file(CraFileKind::Members, &files.members, &mut errors);
+        let members: Option<MembersFile> =
+            parse_file(CraFileKind::Members, &files.members, &mut errors);
         let merit: Option<MeritFile> = parse_file(CraFileKind::Merit, &files.merit, &mut errors);
-        let payouts: Option<PayoutsFile> = parse_file(CraFileKind::Payouts, &files.payouts, &mut errors);
+        let payouts: Option<PayoutsFile> =
+            parse_file(CraFileKind::Payouts, &files.payouts, &mut errors);
 
         let mut resolved = None;
         if let Some(org) = &org {
@@ -340,20 +360,23 @@ impl Snapshot {
         }
 
         match (org, roles, members, merit, payouts, resolved) {
-            (Some(org), Some(roles), Some(members), Some(merit), Some(payouts), Some((mode_label, policy)))
-                if errors.is_empty() =>
-            {
-                Ok(Snapshot {
-                    content_hash: files.content_hash(),
-                    org,
-                    roles,
-                    members,
-                    merit,
-                    payouts,
-                    mode_label,
-                    policy,
-                })
-            }
+            (
+                Some(org),
+                Some(roles),
+                Some(members),
+                Some(merit),
+                Some(payouts),
+                Some((mode_label, policy)),
+            ) if errors.is_empty() => Ok(Snapshot {
+                content_hash: files.content_hash(),
+                org,
+                roles,
+                members,
+                merit,
+                payouts,
+                mode_label,
+                policy,
+            }),
             _ => Err(errors),
         }
     }

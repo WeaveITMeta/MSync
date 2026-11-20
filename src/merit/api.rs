@@ -7,7 +7,10 @@
 
 use super::leaderboard::{self, LeaderboardQuery, LeaderboardRow, MemberMerit};
 use super::rubric::{self, CriterionScore, CRITERIA, RUBRIC_ID, RUBRIC_SHA256};
-use super::scoring::{self, Assessment, MeritRules, ScoreAdjustment, ScoreError, ScoreRecord, Scorer, ScorerSource, Submission};
+use super::scoring::{
+    self, Assessment, MeritRules, ScoreAdjustment, ScoreError, ScoreRecord, Scorer, ScorerSource,
+    Submission,
+};
 use crate::auth::{authenticate, member_payee_keys, scopes, AuthError, Principal};
 use crate::foundry::{FoundryProvider, RepoRef, RepoRegistry, Subject};
 use crate::payments::api::auth_error;
@@ -83,7 +86,10 @@ impl MeritApiError {
         match self {
             MeritApiError::Auth(AuthError::MissingScope(s)) => format!("missing scope {s}"),
             MeritApiError::Auth(_) => "unauthorized".into(),
-            MeritApiError::Invalid(m) | MeritApiError::NotFound(m) | MeritApiError::Forbidden(m) | MeritApiError::Conflict(m) => m.clone(),
+            MeritApiError::Invalid(m)
+            | MeritApiError::NotFound(m)
+            | MeritApiError::Forbidden(m)
+            | MeritApiError::Conflict(m) => m.clone(),
             MeritApiError::Internal => "internal error".into(),
         }
     }
@@ -146,7 +152,12 @@ pub struct SubjectInput {
 }
 
 fn parse_provider(p: &str) -> Result<FoundryProvider, MeritApiError> {
-    FoundryProvider::parse(p).ok_or_else(|| MeritApiError::Invalid(format!("unknown provider '{}' (github or gitlab)", p.trim())))
+    FoundryProvider::parse(p).ok_or_else(|| {
+        MeritApiError::Invalid(format!(
+            "unknown provider '{}' (github or gitlab)",
+            p.trim()
+        ))
+    })
 }
 
 fn host_or_default(provider: FoundryProvider, host: Option<&str>) -> String {
@@ -201,7 +212,11 @@ impl CriteriaInput {
             ("communication", self.communication),
         ]
         .into_iter()
-        .map(|(k, l)| CriterionScore { criterion: k.to_string(), level: l.level, evidence: l.evidence })
+        .map(|(k, l)| CriterionScore {
+            criterion: k.to_string(),
+            level: l.level,
+            evidence: l.evidence,
+        })
         .collect()
     }
 }
@@ -266,12 +281,19 @@ pub fn foundry_logins_from_payee_keys(keys: &[String]) -> Vec<(FoundryProvider, 
 /// not recognized as the author of their own work. The CRA supplies identities in a later round.
 pub async fn scorer_for(pool: &SqlitePool, principal: &Principal) -> Result<Scorer, MeritApiError> {
     let mut keys = principal.payee_keys.clone();
-    for k in member_payee_keys(pool, &principal.member_id).await.map_err(|e| internal("payee keys lookup", e))? {
+    for k in member_payee_keys(pool, &principal.member_id)
+        .await
+        .map_err(|e| internal("payee keys lookup", e))?
+    {
         if !keys.contains(&k) {
             keys.push(k);
         }
     }
-    Ok(Scorer { id: principal.member_id.clone(), source: ScorerSource::Agent, foundry_logins: foundry_logins_from_payee_keys(&keys) })
+    Ok(Scorer {
+        id: principal.member_id.clone(),
+        source: ScorerSource::Agent,
+        foundry_logins: foundry_logins_from_payee_keys(&keys),
+    })
 }
 
 // ------------------------------------------------------------------ operations
@@ -340,16 +362,35 @@ pub struct ScoresView {
     pub aggregate: AggregateView,
 }
 
-async fn aggregate_view(pool: &SqlitePool, subject: &Subject, rules: &MeritRules) -> Result<AggregateView, MeritApiError> {
-    let recs = scoring::list_scores(pool, subject).await.map_err(|e| internal("list scores", e))?;
-    let counted = recs.iter().filter(|r| rules.scorers.contains(&r.scorer_source)).count();
-    let score = scoring::aggregate_for_rules(pool, subject, rules).await.map_err(|e| internal("aggregate scores", e))?;
-    Ok(AggregateView { score, counted_scorers: counted, min_scorers: rules.min_scorers })
+async fn aggregate_view(
+    pool: &SqlitePool,
+    subject: &Subject,
+    rules: &MeritRules,
+) -> Result<AggregateView, MeritApiError> {
+    let recs = scoring::list_scores(pool, subject)
+        .await
+        .map_err(|e| internal("list scores", e))?;
+    let counted = recs
+        .iter()
+        .filter(|r| rules.scorers.contains(&r.scorer_source))
+        .count();
+    let score = scoring::aggregate_for_rules(pool, subject, rules)
+        .await
+        .map_err(|e| internal("aggregate scores", e))?;
+    Ok(AggregateView {
+        score,
+        counted_scorers: counted,
+        min_scorers: rules.min_scorers,
+    })
 }
 
 /// Submit a rubric score as the token's member (`merit.score`), then apply the once-only merit
 /// adjustment the score may trigger.
-pub async fn submit_score(ctx: &MeritContext, principal: &Principal, input: ScoreInput) -> Result<ScoreSubmitResult, MeritApiError> {
+pub async fn submit_score(
+    ctx: &MeritContext,
+    principal: &Principal,
+    input: ScoreInput,
+) -> Result<ScoreSubmitResult, MeritApiError> {
     principal.require(scopes::MERIT_SCORE)?;
     let rules = ctx.seams.rules();
     let subject = input.subject.to_subject()?;
@@ -360,22 +401,38 @@ pub async fn submit_score(ctx: &MeritContext, principal: &Principal, input: Scor
         rubric_hash: input.rubric_hash,
         ci_passed: input.ci_passed,
         reverted: input.reverted,
-        assessment: Assessment::Rubric { criteria: input.criteria.into_scores() },
+        assessment: Assessment::Rubric {
+            criteria: input.criteria.into_scores(),
+        },
     };
     let record = scoring::submit_score(&ctx.pool, &sub, &scorer).await?;
     let adjustment = scoring::apply_score_adjustment(&ctx.pool, &subject, &rules).await?;
     let aggregate = aggregate_view(&ctx.pool, &subject, &rules).await?;
-    Ok(ScoreSubmitResult { score: record, aggregate, merit_adjustment: adjustment })
+    Ok(ScoreSubmitResult {
+        score: record,
+        aggregate,
+        merit_adjustment: adjustment,
+    })
 }
 
 /// Every score submitted for a subject, and the aggregate the merit rules use (`merit.read`).
-pub async fn list_scores(ctx: &MeritContext, principal: &Principal, subject: &SubjectInput) -> Result<ScoresView, MeritApiError> {
+pub async fn list_scores(
+    ctx: &MeritContext,
+    principal: &Principal,
+    subject: &SubjectInput,
+) -> Result<ScoresView, MeritApiError> {
     principal.require(scopes::MERIT_READ)?;
     let subject = subject.to_subject()?;
     let rules = ctx.seams.rules();
-    let scores = scoring::list_scores(&ctx.pool, &subject).await.map_err(|e| internal("list scores", e))?;
+    let scores = scoring::list_scores(&ctx.pool, &subject)
+        .await
+        .map_err(|e| internal("list scores", e))?;
     let aggregate = aggregate_view(&ctx.pool, &subject, &rules).await?;
-    Ok(ScoresView { subject, scores, aggregate })
+    Ok(ScoresView {
+        subject,
+        scores,
+        aggregate,
+    })
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -388,33 +445,78 @@ pub struct LeaderboardView {
 }
 
 /// Leaderboard with private repository names (`merit.read`): totals, or one repository's XP.
-pub async fn leaderboard_view(ctx: &MeritContext, principal: &Principal, params: &LeaderboardParams) -> Result<LeaderboardView, MeritApiError> {
+pub async fn leaderboard_view(
+    ctx: &MeritContext,
+    principal: &Principal,
+    params: &LeaderboardParams,
+) -> Result<LeaderboardView, MeritApiError> {
     principal.require(scopes::MERIT_READ)?;
     let limit = params.limit.unwrap_or(DEFAULT_LEADERBOARD_LIMIT);
     if limit == 0 || limit > MAX_LEADERBOARD_LIMIT {
-        return Err(MeritApiError::Invalid(format!("limit must be 1..={MAX_LEADERBOARD_LIMIT}")));
+        return Err(MeritApiError::Invalid(format!(
+            "limit must be 1..={MAX_LEADERBOARD_LIMIT}"
+        )));
     }
-    let nonempty = |o: &Option<String>| o.as_deref().map(str::trim).filter(|s| !s.is_empty()).map(str::to_string);
-    let repo = match (nonempty(&params.provider), nonempty(&params.host), nonempty(&params.repo)) {
+    let nonempty = |o: &Option<String>| {
+        o.as_deref()
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .map(str::to_string)
+    };
+    let repo = match (
+        nonempty(&params.provider),
+        nonempty(&params.host),
+        nonempty(&params.repo),
+    ) {
         (None, None, None) => None,
         (Some(p), h, Some(r)) => {
             let provider = parse_provider(&p)?;
-            Some(RepoRef::new(provider, &host_or_default(provider, h.as_deref()), &r))
+            Some(RepoRef::new(
+                provider,
+                &host_or_default(provider, h.as_deref()),
+                &r,
+            ))
         }
-        (None, _, Some(_)) => return Err(MeritApiError::Invalid("provider is required with repo".into())),
-        (_, _, None) => return Err(MeritApiError::Invalid("repo is required with provider or host".into())),
+        (None, _, Some(_)) => {
+            return Err(MeritApiError::Invalid(
+                "provider is required with repo".into(),
+            ))
+        }
+        (_, _, None) => {
+            return Err(MeritApiError::Invalid(
+                "repo is required with provider or host".into(),
+            ))
+        }
     };
     let registry = ctx.seams.registry();
-    let q = LeaderboardQuery { repo: repo.clone(), limit, include_private_names: true };
-    let rows = leaderboard::leaderboard(&ctx.pool, &registry, q).await.map_err(|e| internal("leaderboard", e))?;
-    Ok(LeaderboardView { repo, limit, include_private_names: true, leaderboard: rows })
+    let q = LeaderboardQuery {
+        repo: repo.clone(),
+        limit,
+        include_private_names: true,
+    };
+    let rows = leaderboard::leaderboard(&ctx.pool, &registry, q)
+        .await
+        .map_err(|e| internal("leaderboard", e))?;
+    Ok(LeaderboardView {
+        repo,
+        limit,
+        include_private_names: true,
+        leaderboard: rows,
+    })
 }
 
 /// One person's XP by repository and by event kind, private names included (`merit.read`).
-pub async fn member_merit(ctx: &MeritContext, principal: &Principal, contributor_id: &str) -> Result<MemberMerit, MeritApiError> {
+pub async fn member_merit(
+    ctx: &MeritContext,
+    principal: &Principal,
+    contributor_id: &str,
+) -> Result<MemberMerit, MeritApiError> {
     principal.require(scopes::MERIT_READ)?;
-    let id = Uuid::parse_str(contributor_id.trim())
-        .map_err(|_| MeritApiError::Invalid("contributor_id must be a UUID (the contributor_id field of a leaderboard row)".into()))?;
+    let id = Uuid::parse_str(contributor_id.trim()).map_err(|_| {
+        MeritApiError::Invalid(
+            "contributor_id must be a UUID (the contributor_id field of a leaderboard row)".into(),
+        )
+    })?;
     let registry = ctx.seams.registry();
     leaderboard::member_merit(&ctx.pool, &registry, id, true)
         .await
@@ -433,7 +535,9 @@ pub fn to_json<T: Serialize>(v: &T) -> Result<Value, MeritApiError> {
 
 fn rest_ok<T: Serialize>(status: actix_web::http::StatusCode, v: &T) -> HttpResponse {
     match to_json(v) {
-        Ok(result) => HttpResponse::build(status).json(json!({"status": "success", "result": result})),
+        Ok(result) => {
+            HttpResponse::build(status).json(json!({"status": "success", "result": result}))
+        }
         Err(e) => merit_error(e),
     }
 }
@@ -468,7 +572,11 @@ pub async fn get_rubric(ctx: web::Data<MeritContext>) -> HttpResponse {
 }
 
 #[post("/api/v1/merit/scores")]
-pub async fn post_score(req: HttpRequest, body: web::Bytes, ctx: web::Data<MeritContext>) -> HttpResponse {
+pub async fn post_score(
+    req: HttpRequest,
+    body: web::Bytes,
+    ctx: web::Data<MeritContext>,
+) -> HttpResponse {
     let p = match rest_principal(&req, &ctx.pool).await {
         Ok(p) => p,
         Err(r) => return r,
@@ -503,7 +611,12 @@ pub async fn get_scores(req: HttpRequest, ctx: web::Data<MeritContext>) -> HttpR
         Ok(q) => q.into_inner(),
         Err(e) => return bad_request(format!("invalid query: {e}")),
     };
-    let subject = SubjectInput { provider: q.provider, host: q.host, repo: q.repo, subject_id: SubjectIdInput::Text(q.subject_id) };
+    let subject = SubjectInput {
+        provider: q.provider,
+        host: q.host,
+        repo: q.repo,
+        subject_id: SubjectIdInput::Text(q.subject_id),
+    };
     match list_scores(&ctx, &p, &subject).await {
         Ok(v) => rest_ok(actix_web::http::StatusCode::OK, &v),
         Err(e) => merit_error(e),
@@ -527,7 +640,11 @@ pub async fn get_leaderboard(req: HttpRequest, ctx: web::Data<MeritContext>) -> 
 }
 
 #[get("/api/v1/members/{contributor_id}/merit")]
-pub async fn get_member_merit(req: HttpRequest, path: web::Path<String>, ctx: web::Data<MeritContext>) -> HttpResponse {
+pub async fn get_member_merit(
+    req: HttpRequest,
+    path: web::Path<String>,
+    ctx: web::Data<MeritContext>,
+) -> HttpResponse {
     let p = match rest_principal(&req, &ctx.pool).await {
         Ok(p) => p,
         Err(r) => return r,
@@ -540,7 +657,11 @@ pub async fn get_member_merit(req: HttpRequest, path: web::Path<String>, ctx: we
 
 /// Register the v1 merit and leaderboard routes. Needs `web::Data<MeritContext>`.
 pub fn configure(cfg: &mut web::ServiceConfig) {
-    cfg.service(get_rubric).service(post_score).service(get_scores).service(get_leaderboard).service(get_member_merit);
+    cfg.service(get_rubric)
+        .service(post_score)
+        .service(get_scores)
+        .service(get_leaderboard)
+        .service(get_member_merit);
 }
 
 #[cfg(test)]
@@ -549,10 +670,18 @@ mod tests {
 
     #[test]
     fn payee_keys_map_to_foundry_logins() {
-        let keys: Vec<String> = ["Alice", "gitlab:Carol", "gitlab:git.example.org:dave", "github:ghe.example.org:erin", "  ", "gitlab:", "alice"]
-            .iter()
-            .map(|s| s.to_string())
-            .collect();
+        let keys: Vec<String> = [
+            "Alice",
+            "gitlab:Carol",
+            "gitlab:git.example.org:dave",
+            "github:ghe.example.org:erin",
+            "  ",
+            "gitlab:",
+            "alice",
+        ]
+        .iter()
+        .map(|s| s.to_string())
+        .collect();
         assert_eq!(
             foundry_logins_from_payee_keys(&keys),
             vec![

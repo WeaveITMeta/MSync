@@ -5,7 +5,9 @@
 //! ledger is written through `payments::ledger::record_merge`, unchanged.
 
 use super::identity::resolve_contributor;
-use super::{FoundryEvent, FoundryEventKind, FoundryProvider, RepoDecision, RepoRef, RepoRegistry, Subject};
+use super::{
+    FoundryEvent, FoundryEventKind, FoundryProvider, RepoDecision, RepoRef, RepoRegistry, Subject,
+};
 use crate::github::dedupe;
 use crate::merit::scoring::{self, MeritRules};
 use crate::models::{ActivityType, ContributionStatus, Contributor};
@@ -67,14 +69,18 @@ impl FoundryProcessor {
 
     /// Would this event's repository earn? (Checked before any state is written.)
     pub fn decide(&self, ev: &FoundryEvent) -> RepoDecision {
-        self.registry.decide(ev.provider, &ev.host, ev.repo.as_deref())
+        self.registry
+            .decide(ev.provider, &ev.host, ev.repo.as_deref())
     }
 
     pub async fn process(&self, ev: &FoundryEvent) -> Result<ProcessOutcome> {
         match self.decide(ev) {
             RepoDecision::Earn => {}
             other => {
-                info!("{} event for {:?} on {} ignored: {:?}", ev.provider, ev.repo, ev.host, other);
+                info!(
+                    "{} event for {:?} on {} ignored: {:?}",
+                    ev.provider, ev.repo, ev.host, other
+                );
                 return Ok(ProcessOutcome::Ignored(format!("{:?}", other)));
             }
         }
@@ -82,13 +88,20 @@ impl FoundryProcessor {
             FoundryEventKind::PrOpened => self.pr_opened(ev).await,
             FoundryEventKind::PrMerged => self.pr_merged(ev).await,
             FoundryEventKind::ReviewApproved => self.review_approved(ev).await,
-            other => Ok(ProcessOutcome::Ignored(format!("{:?} earns nothing yet", other))),
+            other => Ok(ProcessOutcome::Ignored(format!(
+                "{:?} earns nothing yet",
+                other
+            ))),
         }
     }
 
     /// Run `apply` (a lazy future: nothing runs until awaited) under the effect key;
     /// release the key if it fails.
-    async fn once(&self, key: &str, apply: impl std::future::Future<Output = Result<i32>>) -> Result<Option<i32>> {
+    async fn once(
+        &self,
+        key: &str,
+        apply: impl std::future::Future<Output = Result<i32>>,
+    ) -> Result<Option<i32>> {
         if !dedupe::claim(&self.pool, key).await? {
             return Ok(None);
         }
@@ -105,8 +118,13 @@ impl FoundryProcessor {
         let Some(author) = ev.author_login.clone() else {
             return Ok(ProcessOutcome::Ignored("author unknown".into()));
         };
-        info!("Handling opened {} #{} by {}", ev.provider, ev.subject_number, author);
-        let res = self.once(&ev.effect_key, self.apply_opened(ev, &author)).await?;
+        info!(
+            "Handling opened {} #{} by {}",
+            ev.provider, ev.subject_number, author
+        );
+        let res = self
+            .once(&ev.effect_key, self.apply_opened(ev, &author))
+            .await?;
         Ok(match res {
             Some(points) => ProcessOutcome::Applied { points },
             None => {
@@ -123,21 +141,37 @@ impl FoundryProcessor {
             None => self.recorded_author(subject.as_ref()).await?,
         };
         let Some(author) = author else {
-            warn!("{} #{} merged but its author is unknown; no merit, no ledger row", ev.provider, ev.subject_number);
+            warn!(
+                "{} #{} merged but its author is unknown; no merit, no ledger row",
+                ev.provider, ev.subject_number
+            );
             return Ok(ProcessOutcome::Ignored("author unknown".into()));
         };
-        info!("Handling merged {} #{} by {}", ev.provider, ev.subject_number, author);
+        info!(
+            "Handling merged {} #{} by {}",
+            ev.provider, ev.subject_number, author
+        );
 
-        let res = self.once(&ev.effect_key, self.apply_merged(ev, subject.as_ref(), &author)).await?;
+        let res = self
+            .once(
+                &ev.effect_key,
+                self.apply_merged(ev, subject.as_ref(), &author),
+            )
+            .await?;
 
         let (merit_points, outcome) = match res {
             Some(points) => (points, ProcessOutcome::Applied { points }),
             None => {
-                info!("PR #{} merge already processed; merit not re-awarded", ev.subject_number);
+                info!(
+                    "PR #{} merge already processed; merit not re-awarded",
+                    ev.subject_number
+                );
                 (self.recorded_merit(ev).await?, ProcessOutcome::Duplicate)
             }
         };
-        let username = resolve_contributor(&self.pool, ev.provider, &ev.host, &author).await?.github_username;
+        let username = resolve_contributor(&self.pool, ev.provider, &ev.host, &author)
+            .await?
+            .github_username;
         self.record_payout(ev, &username, merit_points).await?;
         Ok(outcome)
     }
@@ -150,11 +184,16 @@ impl FoundryProcessor {
                 Some(a) => Some(a),
                 None => self.recorded_author(ev.subject().as_ref()).await?,
             };
-            if author.map(|a| a.eq_ignore_ascii_case(&reviewer)).unwrap_or(false) {
+            if author
+                .map(|a| a.eq_ignore_ascii_case(&reviewer))
+                .unwrap_or(false)
+            {
                 return Ok(ProcessOutcome::Ignored("self-approval".into()));
             }
         }
-        let res = self.once(&ev.effect_key, self.apply_review(ev, &reviewer)).await?;
+        let res = self
+            .once(&ev.effect_key, self.apply_review(ev, &reviewer))
+            .await?;
         Ok(match res {
             Some(points) => ProcessOutcome::Applied { points },
             None => {
@@ -166,15 +205,35 @@ impl FoundryProcessor {
 
     async fn apply_opened(&self, ev: &FoundryEvent, author: &str) -> Result<i32> {
         let contributor = resolve_contributor(&self.pool, ev.provider, &ev.host, author).await?;
-        self.insert_contribution(ev, &contributor, author, ContributionStatus::Pending, 0, None).await?;
+        self.insert_contribution(
+            ev,
+            &contributor,
+            author,
+            ContributionStatus::Pending,
+            0,
+            None,
+        )
+        .await?;
         let points = self.rules.pr_opened.points(None);
-        self.record_activity(ev, contributor.id, ActivityType::PullRequestOpened, points,
-            format!("Opened PR #{}: {}", ev.subject_number, ev.title)).await?;
-        self.update_contributor_points(contributor.id, points).await?;
+        self.record_activity(
+            ev,
+            contributor.id,
+            ActivityType::PullRequestOpened,
+            points,
+            format!("Opened PR #{}: {}", ev.subject_number, ev.title),
+        )
+        .await?;
+        self.update_contributor_points(contributor.id, points)
+            .await?;
         Ok(points)
     }
 
-    async fn apply_merged(&self, ev: &FoundryEvent, subject: Option<&Subject>, author: &str) -> Result<i32> {
+    async fn apply_merged(
+        &self,
+        ev: &FoundryEvent,
+        subject: Option<&Subject>,
+        author: &str,
+    ) -> Result<i32> {
         let contributor = resolve_contributor(&self.pool, ev.provider, &ev.host, author).await?;
         // The engine never invents a score: a score counts only if scorers already submitted one.
         let score = match subject {
@@ -182,21 +241,39 @@ impl FoundryProcessor {
             None => None,
         };
         let points = self.rules.pr_merged.points(score);
-        self.mark_merged(ev, &contributor, author, points, score).await?;
+        self.mark_merged(ev, &contributor, author, points, score)
+            .await?;
         if let (Some(s), Some(_)) = (subject, score) {
             // Score already priced in at merge: a later adjustment must not apply on top.
             dedupe::claim(&self.pool, &scoring::score_adjust_key(s)).await?;
         }
-        self.record_activity(ev, contributor.id, ActivityType::PullRequestMerged, points,
-            format!("Merged PR #{}: {} (Score: {:?})", ev.subject_number, ev.title, score)).await?;
-        self.update_contributor_points(contributor.id, points).await?;
+        self.record_activity(
+            ev,
+            contributor.id,
+            ActivityType::PullRequestMerged,
+            points,
+            format!(
+                "Merged PR #{}: {} (Score: {:?})",
+                ev.subject_number, ev.title, score
+            ),
+        )
+        .await?;
+        self.update_contributor_points(contributor.id, points)
+            .await?;
         Ok(points)
     }
 
     async fn apply_review(&self, ev: &FoundryEvent, reviewer: &str) -> Result<i32> {
         let c = resolve_contributor(&self.pool, ev.provider, &ev.host, reviewer).await?;
         let points = self.rules.review_approved.points(None);
-        self.record_activity(ev, c.id, ActivityType::CodeReview, points, "Approved a pull request review".to_string()).await?;
+        self.record_activity(
+            ev,
+            c.id,
+            ActivityType::CodeReview,
+            points,
+            "Approved a pull request review".to_string(),
+        )
+        .await?;
         self.update_contributor_points(c.id, points).await?;
         Ok(points)
     }
@@ -216,7 +293,15 @@ impl FoundryProcessor {
         .flatten())
     }
 
-    async fn insert_contribution(&self, ev: &FoundryEvent, c: &Contributor, author: &str, status: ContributionStatus, points: i32, score: Option<f32>) -> Result<()> {
+    async fn insert_contribution(
+        &self,
+        ev: &FoundryEvent,
+        c: &Contributor,
+        author: &str,
+        status: ContributionStatus,
+        points: i32,
+        score: Option<f32>,
+    ) -> Result<()> {
         let s = ev.subject();
         let merged_at = matches!(status, ContributionStatus::Merged).then(Utc::now);
         sqlx::query(
@@ -246,7 +331,14 @@ impl FoundryProcessor {
 
     /// Mark the contribution merged: by subject; for GitHub, fall back to legacy rows
     /// (no subject columns) by PR number; insert a row when none exists.
-    async fn mark_merged(&self, ev: &FoundryEvent, c: &Contributor, author: &str, points: i32, score: Option<f32>) -> Result<()> {
+    async fn mark_merged(
+        &self,
+        ev: &FoundryEvent,
+        c: &Contributor,
+        author: &str,
+        points: i32,
+        score: Option<f32>,
+    ) -> Result<()> {
         let merged = ContributionStatus::Merged as i32;
         let now = Utc::now();
         let mut updated = 0;
@@ -284,7 +376,8 @@ impl FoundryProcessor {
             .rows_affected();
         }
         if updated == 0 {
-            self.insert_contribution(ev, c, author, ContributionStatus::Merged, points, score).await?;
+            self.insert_contribution(ev, c, author, ContributionStatus::Merged, points, score)
+                .await?;
         }
         Ok(())
     }
@@ -318,7 +411,12 @@ impl FoundryProcessor {
         .unwrap_or(0) as i32)
     }
 
-    async fn record_payout(&self, ev: &FoundryEvent, username: &str, merit_points: i32) -> Result<()> {
+    async fn record_payout(
+        &self,
+        ev: &FoundryEvent,
+        username: &str,
+        merit_points: i32,
+    ) -> Result<()> {
         // Payment ledger (pending_approval only; no money moves here; idempotent on pr_id+merge_sha)
         if let Some(cfg) = &self.payments {
             match (ev.merge_sha.clone(), ev.base_branch.clone()) {
@@ -335,13 +433,23 @@ impl FoundryProcessor {
                     };
                     ledger::record_merge(&self.pool, cfg, &le).await?;
                 }
-                _ => warn!("PR #{} merged without id/merge_commit_sha/base; no ledger entry", ev.subject_number),
+                _ => warn!(
+                    "PR #{} merged without id/merge_commit_sha/base; no ledger entry",
+                    ev.subject_number
+                ),
             }
         }
         Ok(())
     }
 
-    async fn record_activity(&self, ev: &FoundryEvent, contributor_id: Uuid, kind: ActivityType, points: i32, description: String) -> Result<()> {
+    async fn record_activity(
+        &self,
+        ev: &FoundryEvent,
+        contributor_id: Uuid,
+        kind: ActivityType,
+        points: i32,
+        description: String,
+    ) -> Result<()> {
         let r: Option<RepoRef> = ev.repo_ref();
         sqlx::query(
             "INSERT INTO merit_activities (id, contributor_id, activity_type, merit_change, description, metadata,

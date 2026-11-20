@@ -100,7 +100,11 @@ pub struct ClaimGuard {
 /// Record a merged PR. Returns Some(entry) when a new row was created, None when the
 /// branch is untracked or this (pr_id, merge_sha) was already recorded (duplicate webhook).
 /// Never moves money.
-pub async fn record_merge(pool: &SqlitePool, cfg: &PaymentConfig, ev: &MergeEvent) -> Result<Option<LedgerEntry>, LedgerError> {
+pub async fn record_merge(
+    pool: &SqlitePool,
+    cfg: &PaymentConfig,
+    ev: &MergeEvent,
+) -> Result<Option<LedgerEntry>, LedgerError> {
     // Rates, cap and currency come from the effective payout policy. With no stored policy that is
     // PayoutPolicy::from_config(cfg), whose amount_for equals cfg.amount_for (tested).
     let effective = policy::load_effective(pool, crate::auth::DEFAULT_ORG, cfg)
@@ -108,7 +112,10 @@ pub async fn record_merge(pool: &SqlitePool, cfg: &PaymentConfig, ev: &MergeEven
         .map_err(|e| LedgerError::Policy(e.to_string()))?;
     let currency = effective.policy.currency.clone();
     let Some((base, amount)) = effective.policy.amount_for(&ev.branch, ev.merit_points) else {
-        info!("PR #{} merged into untracked branch '{}'; no ledger entry", ev.pr_number, ev.branch);
+        info!(
+            "PR #{} merged into untracked branch '{}'; no ledger entry",
+            ev.pr_number, ev.branch
+        );
         return Ok(None);
     };
 
@@ -143,10 +150,16 @@ pub async fn record_merge(pool: &SqlitePool, cfg: &PaymentConfig, ev: &MergeEven
     .await?;
 
     if res.rows_affected() == 0 {
-        info!("Duplicate merge event for PR #{} ({}); ledger unchanged", ev.pr_number, ev.merge_sha);
+        info!(
+            "Duplicate merge event for PR #{} ({}); ledger unchanged",
+            ev.pr_number, ev.merge_sha
+        );
         return Ok(None);
     }
-    info!("Ledger entry {} created: PR #{} by {} on {} = {} {}", id, ev.pr_number, ev.github_username, ev.branch, amount, currency);
+    info!(
+        "Ledger entry {} created: PR #{} by {} on {} = {} {}",
+        id, ev.pr_number, ev.github_username, ev.branch, amount, currency
+    );
     Ok(get(pool, &id).await?)
 }
 
@@ -157,13 +170,18 @@ pub async fn get(pool: &SqlitePool, id: &str) -> Result<Option<LedgerEntry>, sql
         .await
 }
 
-pub async fn list(pool: &SqlitePool, status: Option<&str>) -> Result<Vec<LedgerEntry>, sqlx::Error> {
+pub async fn list(
+    pool: &SqlitePool,
+    status: Option<&str>,
+) -> Result<Vec<LedgerEntry>, sqlx::Error> {
     match status {
         Some(s) => {
-            sqlx::query_as::<_, LedgerEntry>("SELECT * FROM payout_ledger WHERE status = ? ORDER BY created_at DESC")
-                .bind(s)
-                .fetch_all(pool)
-                .await
+            sqlx::query_as::<_, LedgerEntry>(
+                "SELECT * FROM payout_ledger WHERE status = ? ORDER BY created_at DESC",
+            )
+            .bind(s)
+            .fetch_all(pool)
+            .await
         }
         None => {
             sqlx::query_as::<_, LedgerEntry>("SELECT * FROM payout_ledger ORDER BY created_at DESC")
@@ -173,7 +191,12 @@ pub async fn list(pool: &SqlitePool, status: Option<&str>) -> Result<Vec<LedgerE
     }
 }
 
-pub async fn reject(pool: &SqlitePool, id: &str, by: &str, reason: &str) -> Result<LedgerEntry, LedgerError> {
+pub async fn reject(
+    pool: &SqlitePool,
+    id: &str,
+    by: &str,
+    reason: &str,
+) -> Result<LedgerEntry, LedgerError> {
     let entry = get(pool, id).await?.ok_or(LedgerError::NotFound)?;
     let res = sqlx::query(
         "UPDATE payout_ledger SET status = ?, decided_by = ?, failure_reason = ?, updated_at = datetime('now')
@@ -195,7 +218,12 @@ pub async fn reject(pool: &SqlitePool, id: &str, by: &str, reason: &str) -> Resu
 
 /// Approve a pending (or previously failed) entry and pay it via a Stripe Transfer, with no
 /// policy guard (the pre-policy behaviour, used by the legacy route when no policy is stored).
-pub async fn approve(pool: &SqlitePool, stripe: &dyn StripeApi, id: &str, by: &str) -> Result<LedgerEntry, LedgerError> {
+pub async fn approve(
+    pool: &SqlitePool,
+    stripe: &dyn StripeApi,
+    id: &str,
+    by: &str,
+) -> Result<LedgerEntry, LedgerError> {
     claim_and_transfer(pool, stripe, id, by, None).await
 }
 
@@ -250,7 +278,9 @@ async fn claim_and_transfer(
         .unwrap_or_else(|| crate::auth::tokens::format_db_time(chrono::Utc::now()));
     if let Some(after) = &entry.pay_after {
         if after.as_str() > now_s.as_str() {
-            return Err(LedgerError::NotPayable(format!("not payable before {after}")));
+            return Err(LedgerError::NotPayable(format!(
+                "not payable before {after}"
+            )));
         }
     }
     let inactive: Option<String> = sqlx::query_scalar(
@@ -267,19 +297,26 @@ async fn claim_and_transfer(
 
     let destination = if let Some(payee_id) = &entry.payee_id {
         // Pay order and invoice rows are paid to the payee's own Stripe Connect account.
-        let acct: Option<(Option<String>, i64)> =
-            sqlx::query_as("SELECT stripe_account_id, stripe_payouts_enabled FROM payees WHERE id = ?")
-                .bind(payee_id)
-                .fetch_optional(pool)
-                .await?;
+        let acct: Option<(Option<String>, i64)> = sqlx::query_as(
+            "SELECT stripe_account_id, stripe_payouts_enabled FROM payees WHERE id = ?",
+        )
+        .bind(payee_id)
+        .fetch_optional(pool)
+        .await?;
         match acct {
             Some((Some(a), enabled)) if !a.is_empty() => {
                 if enabled == 0 {
-                    return Err(LedgerError::NotPayable("payee's Stripe account cannot receive transfers yet".into()));
+                    return Err(LedgerError::NotPayable(
+                        "payee's Stripe account cannot receive transfers yet".into(),
+                    ));
                 }
                 a
             }
-            Some(_) => return Err(LedgerError::NotPayable("payee has no Stripe account".into())),
+            Some(_) => {
+                return Err(LedgerError::NotPayable(
+                    "payee has no Stripe account".into(),
+                ))
+            }
             None => return Err(LedgerError::NotPayable("payee not found".into())),
         }
     } else {
@@ -293,14 +330,16 @@ async fn claim_and_transfer(
             Some((Some(acct), enabled)) if !acct.is_empty() => {
                 if enabled == 0 {
                     return Err(LedgerError::NotPayable(format!(
-                        "{} has not finished Stripe onboarding", entry.github_username
+                        "{} has not finished Stripe onboarding",
+                        entry.github_username
                     )));
                 }
                 acct
             }
             _ => {
                 return Err(LedgerError::NotPayable(format!(
-                    "{} has no Stripe account; onboard via /api/payouts/onboard", entry.github_username
+                    "{} has no Stripe account; onboard via /api/payouts/onboard",
+                    entry.github_username
                 )))
             }
         }
@@ -470,7 +509,11 @@ async fn claim_and_transfer(
     get(pool, id).await?.ok_or(LedgerError::NotFound)
 }
 
-pub async fn set_stripe_account(pool: &SqlitePool, github_username: &str, account_id: &str) -> Result<(), sqlx::Error> {
+pub async fn set_stripe_account(
+    pool: &SqlitePool,
+    github_username: &str,
+    account_id: &str,
+) -> Result<(), sqlx::Error> {
     // Both updates and their audit entry (contract 13.1: a Stripe account changed) commit
     // together.
     let mut tx = pool.begin().await?;
@@ -509,7 +552,11 @@ pub async fn set_stripe_account(pool: &SqlitePool, github_username: &str, accoun
 }
 
 /// Returns number of contributors updated (0 if the account is unknown).
-pub async fn update_account_status(pool: &SqlitePool, account_id: &str, payouts_enabled: bool) -> Result<u64, sqlx::Error> {
+pub async fn update_account_status(
+    pool: &SqlitePool,
+    account_id: &str,
+    payouts_enabled: bool,
+) -> Result<u64, sqlx::Error> {
     let res = sqlx::query("UPDATE contributors SET stripe_payouts_enabled = ?, updated_at = datetime('now') WHERE stripe_account_id = ?")
         .bind(payouts_enabled as i64)
         .bind(account_id)
@@ -557,7 +604,10 @@ pub fn legacy_columns(source_kind: &str, source_ref: &str, payee_id: &str) -> (i
 
 /// Insert a non-merit row inside the caller's transaction. Returns None when the row for this
 /// (source_kind, source_ref, payee_id) already exists (it is never written twice).
-pub async fn insert_source_row(conn: &mut sqlx::SqliteConnection, row: &SourceRow) -> Result<Option<String>, sqlx::Error> {
+pub async fn insert_source_row(
+    conn: &mut sqlx::SqliteConnection,
+    row: &SourceRow,
+) -> Result<Option<String>, sqlx::Error> {
     let id = Uuid::new_v4().to_string();
     let (pr_id, merge_sha) = legacy_columns(row.source_kind, &row.source_ref, &row.payee_id);
     let res = sqlx::query(
@@ -585,5 +635,9 @@ pub async fn insert_source_row(conn: &mut sqlx::SqliteConnection, row: &SourceRo
     .bind(&row.pay_after)
     .execute(&mut *conn)
     .await?;
-    Ok(if res.rows_affected() == 0 { None } else { Some(id) })
+    Ok(if res.rows_affected() == 0 {
+        None
+    } else {
+        Some(id)
+    })
 }

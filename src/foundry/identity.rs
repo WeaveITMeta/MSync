@@ -23,11 +23,19 @@ pub enum LinkError {
 }
 
 fn norm(host: &str, login: &str) -> (String, String) {
-    (host.trim().to_ascii_lowercase(), login.trim().to_ascii_lowercase())
+    (
+        host.trim().to_ascii_lowercase(),
+        login.trim().to_ascii_lowercase(),
+    )
 }
 
 /// Contributor that owns `(provider, host, login)`, if any.
-pub async fn find_contributor(pool: &SqlitePool, provider: FoundryProvider, host: &str, login: &str) -> Result<Option<Contributor>, sqlx::Error> {
+pub async fn find_contributor(
+    pool: &SqlitePool,
+    provider: FoundryProvider,
+    host: &str,
+    login: &str,
+) -> Result<Option<Contributor>, sqlx::Error> {
     let (host, login_n) = norm(host, login);
     if let Some(c) = sqlx::query_as::<_, Contributor>(
         "SELECT c.* FROM contributors c JOIN foundry_identities f ON f.contributor_id = c.id
@@ -48,7 +56,12 @@ pub async fn find_contributor(pool: &SqlitePool, provider: FoundryProvider, host
 }
 
 /// Get or create the contributor for a GitHub or GitLab login, and record the identity.
-pub async fn resolve_contributor(pool: &SqlitePool, provider: FoundryProvider, host: &str, login: &str) -> Result<Contributor, sqlx::Error> {
+pub async fn resolve_contributor(
+    pool: &SqlitePool,
+    provider: FoundryProvider,
+    host: &str,
+    login: &str,
+) -> Result<Contributor, sqlx::Error> {
     let contributor = match find_contributor(pool, provider, host, login).await? {
         Some(c) => c,
         None => {
@@ -88,7 +101,13 @@ pub async fn resolve_contributor(pool: &SqlitePool, provider: FoundryProvider, h
 /// Idempotent for the same contributor. Refuses (never merges) an identity that
 /// already belongs to a different contributor, through `foundry_identities` or the
 /// legacy `github_username` key.
-pub async fn link_foundry_identity(pool: &SqlitePool, contributor_id: Uuid, provider: FoundryProvider, host: &str, login: &str) -> Result<(), LinkError> {
+pub async fn link_foundry_identity(
+    pool: &SqlitePool,
+    contributor_id: Uuid,
+    provider: FoundryProvider,
+    host: &str,
+    login: &str,
+) -> Result<(), LinkError> {
     let (host_n, login_n) = norm(host, login);
     if login_n.is_empty() || host_n.is_empty() {
         return Err(LinkError::EmptyLogin);
@@ -117,11 +136,12 @@ pub async fn link_foundry_identity(pool: &SqlitePool, contributor_id: Uuid, prov
         None => {}
     }
 
-    let legacy_owner_is_target: Option<bool> = sqlx::query_scalar("SELECT id = ? FROM contributors WHERE github_username = ?")
-        .bind(contributor_id)
-        .bind(legacy_username(provider, &host_n, login.trim()))
-        .fetch_optional(pool)
-        .await?;
+    let legacy_owner_is_target: Option<bool> =
+        sqlx::query_scalar("SELECT id = ? FROM contributors WHERE github_username = ?")
+            .bind(contributor_id)
+            .bind(legacy_username(provider, &host_n, login.trim()))
+            .fetch_optional(pool)
+            .await?;
     if legacy_owner_is_target == Some(false) {
         return Err(LinkError::Conflict(label));
     }

@@ -1,6 +1,9 @@
 use serenity::all::*;
 
-pub async fn register_slash_commands(ctx: &Context, guild_id: GuildId) -> Result<(), serenity::Error> {
+pub async fn register_slash_commands(
+    ctx: &Context,
+    guild_id: GuildId,
+) -> Result<(), serenity::Error> {
     guild_id
         .set_commands(
             &ctx.http,

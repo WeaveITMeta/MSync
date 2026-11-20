@@ -133,9 +133,18 @@ impl Default for MeritRules {
             scorers: vec![ScorerSource::Agent],
             min_scorers: 1,
             score_window_days: 7,
-            pr_opened: EventRule { base_points: 5, max_points: 5 },
-            pr_merged: EventRule { base_points: 10, max_points: 60 },
-            review_approved: EventRule { base_points: 10, max_points: 10 },
+            pr_opened: EventRule {
+                base_points: 5,
+                max_points: 5,
+            },
+            pr_merged: EventRule {
+                base_points: 10,
+                max_points: 60,
+            },
+            review_approved: EventRule {
+                base_points: 10,
+                max_points: 10,
+            },
         }
     }
 }
@@ -145,12 +154,18 @@ pub fn evaluate(sub: &Submission, source: ScorerSource) -> Result<f32, ScoreErro
     rubric::validate_header(&sub.rubric_id, &sub.rubric_hash)?;
     let raw = match (&sub.assessment, source) {
         (Assessment::Rubric { criteria }, ScorerSource::Agent) => rubric::score_levels(criteria)?,
-        (Assessment::Total { score, evidence }, ScorerSource::CodeRabbit) => rubric::validate_total(*score, evidence)?,
+        (Assessment::Total { score, evidence }, ScorerSource::CodeRabbit) => {
+            rubric::validate_total(*score, evidence)?
+        }
         (Assessment::Total { .. }, ScorerSource::Agent) => {
-            return Err(ScoreError::WrongShape("an agent submits per-criterion levels, not a total"))
+            return Err(ScoreError::WrongShape(
+                "an agent submits per-criterion levels, not a total",
+            ))
         }
         (Assessment::Rubric { .. }, ScorerSource::CodeRabbit) => {
-            return Err(ScoreError::WrongShape("a coderabbit submission carries a total score"))
+            return Err(ScoreError::WrongShape(
+                "a coderabbit submission carries a total score",
+            ))
         }
     };
     Ok(rubric::apply_gates(raw, sub.ci_passed, sub.reverted))
@@ -189,13 +204,24 @@ async fn load_subject(pool: &SqlitePool, s: &Subject) -> Result<Option<SubjectRo
 
 /// Is any of the scorer's GitHub and GitLab logins the subject's author (directly, through a
 /// linked GitHub or GitLab identity, or through the legacy username)?
-async fn is_author(pool: &SqlitePool, s: &Subject, row: &SubjectRow, scorer: &Scorer) -> Result<bool, sqlx::Error> {
+async fn is_author(
+    pool: &SqlitePool,
+    s: &Subject,
+    row: &SubjectRow,
+    scorer: &Scorer,
+) -> Result<bool, sqlx::Error> {
     for (provider, login) in &scorer.foundry_logins {
         let login_n = login.trim().to_ascii_lowercase();
         if login_n.is_empty() {
             continue;
         }
-        if *provider == s.provider && row.author_login.as_deref().map(|a| a.eq_ignore_ascii_case(&login_n)).unwrap_or(false) {
+        if *provider == s.provider
+            && row
+                .author_login
+                .as_deref()
+                .map(|a| a.eq_ignore_ascii_case(&login_n))
+                .unwrap_or(false)
+        {
             return Ok(true);
         }
         let linked: i64 = sqlx::query_scalar(
@@ -229,13 +255,24 @@ async fn is_author(pool: &SqlitePool, s: &Subject, row: &SubjectRow, scorer: &Sc
 
 /// Store one score submission. Refuses a scorer who authored the subject, a second
 /// submission by the same scorer, an unknown subject, and anything the rubric rejects.
-pub async fn submit_score(pool: &SqlitePool, sub: &Submission, scorer: &Scorer) -> Result<ScoreRecord, ScoreError> {
+pub async fn submit_score(
+    pool: &SqlitePool,
+    sub: &Submission,
+    scorer: &Scorer,
+) -> Result<ScoreRecord, ScoreError> {
     if scorer.id.trim().is_empty() {
         return Err(ScoreError::EmptyScorerId);
     }
     let score = evaluate(sub, scorer.source)?;
-    let subject = Subject::new(sub.subject.provider, &sub.subject.host, &sub.subject.repo, &sub.subject.subject_id);
-    let row = load_subject(pool, &subject).await?.ok_or(ScoreError::UnknownSubject)?;
+    let subject = Subject::new(
+        sub.subject.provider,
+        &sub.subject.host,
+        &sub.subject.repo,
+        &sub.subject.subject_id,
+    );
+    let row = load_subject(pool, &subject)
+        .await?
+        .ok_or(ScoreError::UnknownSubject)?;
     if is_author(pool, &subject, &row, scorer).await? {
         return Err(ScoreError::SelfScore);
     }
@@ -282,8 +319,16 @@ pub async fn submit_score(pool: &SqlitePool, sub: &Submission, scorer: &Scorer) 
 }
 
 /// All submissions for a subject, oldest first.
-pub async fn list_scores(pool: &SqlitePool, subject: &Subject) -> Result<Vec<ScoreRecord>, sqlx::Error> {
-    let s = Subject::new(subject.provider, &subject.host, &subject.repo, &subject.subject_id);
+pub async fn list_scores(
+    pool: &SqlitePool,
+    subject: &Subject,
+) -> Result<Vec<ScoreRecord>, sqlx::Error> {
+    let s = Subject::new(
+        subject.provider,
+        &subject.host,
+        &subject.repo,
+        &subject.subject_id,
+    );
     let rows = sqlx::query(
         "SELECT id, scorer_id, scorer_source, rubric_id, rubric_hash, score, ci_passed, reverted, detail, created_at
          FROM merit_scores WHERE provider = ? AND host = ? AND repo = ? AND subject_id = ?",
@@ -302,7 +347,9 @@ pub async fn list_scores(pool: &SqlitePool, subject: &Subject) -> Result<Vec<Sco
             id: r.try_get("id")?,
             subject: s.clone(),
             scorer_id: r.try_get("scorer_id")?,
-            scorer_source: ScorerSource::parse(&source).ok_or_else(|| sqlx::Error::Decode(format!("unknown scorer_source {source}").into()))?,
+            scorer_source: ScorerSource::parse(&source).ok_or_else(|| {
+                sqlx::Error::Decode(format!("unknown scorer_source {source}").into())
+            })?,
             rubric_id: r.try_get("rubric_id")?,
             rubric_hash: r.try_get("rubric_hash")?,
             score: r.try_get::<f64, _>("score")? as f32,
@@ -312,7 +359,11 @@ pub async fn list_scores(pool: &SqlitePool, subject: &Subject) -> Result<Vec<Sco
             created_at: r.try_get("created_at")?,
         });
     }
-    out.sort_by(|a, b| a.created_at.cmp(&b.created_at).then_with(|| a.id.cmp(&b.id)));
+    out.sort_by(|a, b| {
+        a.created_at
+            .cmp(&b.created_at)
+            .then_with(|| a.id.cmp(&b.id))
+    });
     Ok(out)
 }
 
@@ -324,20 +375,31 @@ pub fn median(scores: &[f32]) -> Option<f32> {
     let mut v: Vec<f32> = scores.to_vec();
     v.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
     let n = v.len();
-    let m = if n % 2 == 1 { v[n / 2] } else { (v[n / 2 - 1] + v[n / 2]) / 2.0 };
+    let m = if n % 2 == 1 {
+        v[n / 2]
+    } else {
+        (v[n / 2 - 1] + v[n / 2]) / 2.0
+    };
     Some(((m as f64 * 10.0).round() / 10.0) as f32)
 }
 
 fn filter_sources(records: Vec<ScoreRecord>, sources: Option<&[ScorerSource]>) -> Vec<ScoreRecord> {
     match sources {
         None => records,
-        Some(allowed) => records.into_iter().filter(|r| allowed.contains(&r.scorer_source)).collect(),
+        Some(allowed) => records
+            .into_iter()
+            .filter(|r| allowed.contains(&r.scorer_source))
+            .collect(),
     }
 }
 
 /// Median score of every submission for the subject; None with fewer than `min_scorers`
 /// (and always None with no submissions).
-pub async fn aggregate(pool: &SqlitePool, subject: &Subject, min_scorers: usize) -> Result<Option<f32>, sqlx::Error> {
+pub async fn aggregate(
+    pool: &SqlitePool,
+    subject: &Subject,
+    min_scorers: usize,
+) -> Result<Option<f32>, sqlx::Error> {
     let recs = list_scores(pool, subject).await?;
     Ok(aggregate_records(&recs, min_scorers))
 }
@@ -350,7 +412,11 @@ fn aggregate_records(recs: &[ScoreRecord], min_scorers: usize) -> Option<f32> {
 }
 
 /// [`aggregate`] counting only the sources `rules.scorers` allows.
-pub async fn aggregate_for_rules(pool: &SqlitePool, subject: &Subject, rules: &MeritRules) -> Result<Option<f32>, sqlx::Error> {
+pub async fn aggregate_for_rules(
+    pool: &SqlitePool,
+    subject: &Subject,
+    rules: &MeritRules,
+) -> Result<Option<f32>, sqlx::Error> {
     let recs = filter_sources(list_scores(pool, subject).await?, Some(&rules.scorers));
     Ok(aggregate_records(&recs, rules.min_scorers))
 }
@@ -358,7 +424,11 @@ pub async fn aggregate_for_rules(pool: &SqlitePool, subject: &Subject, rules: &M
 /// Once-only key for a subject's score adjustment (also claimed at merge when a
 /// score was already used, so the adjustment cannot apply on top of it).
 pub fn score_adjust_key(subject: &Subject) -> String {
-    provider_key(subject.provider, &subject.host, &format!("score_adjust:{}:{}", subject.repo, subject.subject_id))
+    provider_key(
+        subject.provider,
+        &subject.host,
+        &format!("score_adjust:{}:{}", subject.repo, subject.subject_id),
+    )
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
@@ -374,11 +444,24 @@ pub struct ScoreAdjustment {
 /// applies (not merged, not enough scores, outside the window, already applied).
 ///
 /// Does NOT touch the payout ledger: a ledger row keeps the amount computed at merge.
-pub async fn apply_score_adjustment(pool: &SqlitePool, subject: &Subject, rules: &MeritRules) -> Result<Option<ScoreAdjustment>, ScoreError> {
-    let subject = Subject::new(subject.provider, &subject.host, &subject.repo, &subject.subject_id);
-    let Some(row) = load_subject(pool, &subject).await? else { return Ok(None) };
+pub async fn apply_score_adjustment(
+    pool: &SqlitePool,
+    subject: &Subject,
+    rules: &MeritRules,
+) -> Result<Option<ScoreAdjustment>, ScoreError> {
+    let subject = Subject::new(
+        subject.provider,
+        &subject.host,
+        &subject.repo,
+        &subject.subject_id,
+    );
+    let Some(row) = load_subject(pool, &subject).await? else {
+        return Ok(None);
+    };
     let merged = crate::models::ContributionStatus::Merged as i64;
-    let Some(merged_at) = row.merged_at.filter(|_| row.status == merged) else { return Ok(None) };
+    let Some(merged_at) = row.merged_at.filter(|_| row.status == merged) else {
+        return Ok(None);
+    };
 
     let recs = filter_sources(list_scores(pool, &subject).await?, Some(&rules.scorers));
     let need = rules.min_scorers.max(1);
@@ -390,15 +473,18 @@ pub async fn apply_score_adjustment(pool: &SqlitePool, subject: &Subject, rules:
     if valid_at > merged_at + Duration::days(rules.score_window_days) {
         return Ok(None);
     }
-    let Some(score) = aggregate_records(&recs, need) else { return Ok(None) };
+    let Some(score) = aggregate_records(&recs, need) else {
+        return Ok(None);
+    };
 
     let mut tx = pool.begin().await?;
-    let claimed = sqlx::query("INSERT OR IGNORE INTO processed_webhook_events (event_key) VALUES (?)")
-        .bind(score_adjust_key(&subject))
-        .execute(&mut *tx)
-        .await?
-        .rows_affected()
-        == 1;
+    let claimed =
+        sqlx::query("INSERT OR IGNORE INTO processed_webhook_events (event_key) VALUES (?)")
+            .bind(score_adjust_key(&subject))
+            .execute(&mut *tx)
+            .await?
+            .rows_affected()
+            == 1;
     if !claimed {
         tx.rollback().await?;
         return Ok(None);
@@ -436,7 +522,12 @@ pub async fn apply_score_adjustment(pool: &SqlitePool, subject: &Subject, rules:
             .await?;
     }
     tx.commit().await?;
-    Ok(Some(ScoreAdjustment { score, old_points, new_points, delta }))
+    Ok(Some(ScoreAdjustment {
+        score,
+        old_points,
+        new_points,
+        delta,
+    }))
 }
 
 #[cfg(test)]
@@ -450,19 +541,31 @@ mod tests {
     use std::sync::Arc;
 
     async fn pool() -> SqlitePool {
-        let pool = SqlitePoolOptions::new().max_connections(1).connect("sqlite::memory:").await.unwrap();
+        let pool = SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect("sqlite::memory:")
+            .await
+            .unwrap();
         sqlx::migrate!("./migrations").run(&pool).await.unwrap();
         pool
     }
 
     fn processor(pool: &SqlitePool, rules: MeritRules) -> FoundryProcessor {
         let reg = RepoRegistry::from_spec("gitlab:gitlab.com:grp/proj").unwrap();
-        FoundryProcessor::new(pool.clone()).with_registry(Arc::new(reg)).with_rules(Arc::new(rules))
+        FoundryProcessor::new(pool.clone())
+            .with_registry(Arc::new(reg))
+            .with_rules(Arc::new(rules))
     }
 
     async fn gl(p: &FoundryProcessor, action: &str, user: (i64, &str)) {
-        let payload: gitlab::GitLabWebhookPayload =
-            serde_json::from_value(mr_hook(action, user, 5, "grp/proj", "https://gitlab.com/grp/proj")).unwrap();
+        let payload: gitlab::GitLabWebhookPayload = serde_json::from_value(mr_hook(
+            action,
+            user,
+            5,
+            "grp/proj",
+            "https://gitlab.com/grp/proj",
+        ))
+        .unwrap();
         let ev = gitlab::normalize(&payload, None).unwrap().unwrap();
         p.process(&ev).await.unwrap();
     }
@@ -472,7 +575,11 @@ mod tests {
     }
 
     fn agent(id: &str, logins: &[(FoundryProvider, &str)]) -> Scorer {
-        Scorer { id: id.into(), source: ScorerSource::Agent, foundry_logins: logins.iter().map(|(p, l)| (*p, l.to_string())).collect() }
+        Scorer {
+            id: id.into(),
+            source: ScorerSource::Agent,
+            foundry_logins: logins.iter().map(|(p, l)| (*p, l.to_string())).collect(),
+        }
     }
 
     fn rubric_sub(level: u8) -> Submission {
@@ -485,7 +592,11 @@ mod tests {
             assessment: Assessment::Rubric {
                 criteria: CRITERIA
                     .iter()
-                    .map(|c| CriterionScore { criterion: c.key.into(), level, evidence: "evidence that is long enough".into() })
+                    .map(|c| CriterionScore {
+                        criterion: c.key.into(),
+                        level,
+                        evidence: "evidence that is long enough".into(),
+                    })
                     .collect(),
             },
         }
@@ -506,17 +617,44 @@ mod tests {
         gl(&p, "open", (5, "carol")).await;
 
         // Same GitHub or GitLab login as the author (case-insensitive)
-        let e = submit_score(&pool, &rubric_sub(3), &agent("agent-carol", &[(FoundryProvider::GitLab, "Carol")])).await;
+        let e = submit_score(
+            &pool,
+            &rubric_sub(3),
+            &agent("agent-carol", &[(FoundryProvider::GitLab, "Carol")]),
+        )
+        .await;
         assert!(matches!(e, Err(ScoreError::SelfScore)), "{e:?}");
 
         // A different login linked to the same contributor
-        let carol = find_contributor(&pool, FoundryProvider::GitLab, "gitlab.com", "carol").await.unwrap().unwrap();
-        link_foundry_identity(&pool, carol.id, FoundryProvider::GitHub, "github.com", "carol-gh").await.unwrap();
-        let e = submit_score(&pool, &rubric_sub(3), &agent("agent-x", &[(FoundryProvider::GitHub, "carol-gh")])).await;
+        let carol = find_contributor(&pool, FoundryProvider::GitLab, "gitlab.com", "carol")
+            .await
+            .unwrap()
+            .unwrap();
+        link_foundry_identity(
+            &pool,
+            carol.id,
+            FoundryProvider::GitHub,
+            "github.com",
+            "carol-gh",
+        )
+        .await
+        .unwrap();
+        let e = submit_score(
+            &pool,
+            &rubric_sub(3),
+            &agent("agent-x", &[(FoundryProvider::GitHub, "carol-gh")]),
+        )
+        .await;
         assert!(matches!(e, Err(ScoreError::SelfScore)), "{e:?}");
 
         // Control: an unrelated scorer is accepted
-        let ok = submit_score(&pool, &rubric_sub(3), &agent("agent-dave", &[(FoundryProvider::GitLab, "dave")])).await.unwrap();
+        let ok = submit_score(
+            &pool,
+            &rubric_sub(3),
+            &agent("agent-dave", &[(FoundryProvider::GitLab, "dave")]),
+        )
+        .await
+        .unwrap();
         assert_eq!(ok.score, 75.0);
         assert_eq!(list_scores(&pool, &subject()).await.unwrap().len(), 1);
     }
@@ -534,7 +672,10 @@ mod tests {
 
         let mut other = rubric_sub(2);
         other.subject = Subject::new(FoundryProvider::GitLab, "gitlab.com", "grp/proj", "999");
-        assert!(matches!(submit_score(&pool, &other, &s).await, Err(ScoreError::UnknownSubject)));
+        assert!(matches!(
+            submit_score(&pool, &other, &s).await,
+            Err(ScoreError::UnknownSubject)
+        ));
     }
 
     #[tokio::test]
@@ -544,10 +685,28 @@ mod tests {
         gl(&p, "open", (5, "carol")).await;
         let mut bad = rubric_sub(2);
         bad.rubric_hash = "0".repeat(64);
-        assert!(matches!(submit_score(&pool, &bad, &agent("a", &[])).await, Err(ScoreError::Rubric(RubricError::HashMismatch))));
-        let total = crate::services::coderabbit::coderabbit_submission(subject(), 88.0, "CodeRabbit review summary text".into(), true, false);
-        assert!(matches!(submit_score(&pool, &total, &agent("a", &[])).await, Err(ScoreError::WrongShape(_))));
-        let rec = submit_score(&pool, &total, &crate::services::coderabbit::coderabbit_scorer()).await.unwrap();
+        assert!(matches!(
+            submit_score(&pool, &bad, &agent("a", &[])).await,
+            Err(ScoreError::Rubric(RubricError::HashMismatch))
+        ));
+        let total = crate::services::coderabbit::coderabbit_submission(
+            subject(),
+            88.0,
+            "CodeRabbit review summary text".into(),
+            true,
+            false,
+        );
+        assert!(matches!(
+            submit_score(&pool, &total, &agent("a", &[])).await,
+            Err(ScoreError::WrongShape(_))
+        ));
+        let rec = submit_score(
+            &pool,
+            &total,
+            &crate::services::coderabbit::coderabbit_scorer(),
+        )
+        .await
+        .unwrap();
         assert_eq!(rec.score, 88.0);
         assert_eq!(rec.scorer_source, ScorerSource::CodeRabbit);
     }
@@ -566,12 +725,18 @@ mod tests {
         let p = processor(&pool, MeritRules::default());
         gl(&p, "open", (5, "carol")).await;
         assert_eq!(aggregate(&pool, &subject(), 1).await.unwrap(), None);
-        submit_score(&pool, &rubric_sub(4), &agent("a1", &[])).await.unwrap(); // 100
+        submit_score(&pool, &rubric_sub(4), &agent("a1", &[]))
+            .await
+            .unwrap(); // 100
         assert_eq!(aggregate(&pool, &subject(), 1).await.unwrap(), Some(100.0));
         assert_eq!(aggregate(&pool, &subject(), 2).await.unwrap(), None);
-        submit_score(&pool, &rubric_sub(0), &agent("a2", &[])).await.unwrap(); // 0
+        submit_score(&pool, &rubric_sub(0), &agent("a2", &[]))
+            .await
+            .unwrap(); // 0
         assert_eq!(aggregate(&pool, &subject(), 2).await.unwrap(), Some(50.0));
-        submit_score(&pool, &rubric_sub(1), &agent("a3", &[])).await.unwrap(); // 25
+        submit_score(&pool, &rubric_sub(1), &agent("a3", &[]))
+            .await
+            .unwrap(); // 25
         assert_eq!(aggregate(&pool, &subject(), 3).await.unwrap(), Some(25.0));
         assert_eq!(aggregate(&pool, &subject(), 4).await.unwrap(), None);
     }
@@ -584,24 +749,61 @@ mod tests {
         gl(&p, "open", (5, "carol")).await;
         gl(&p, "merge", (5, "carol")).await; // no score at merge: base 10
         assert_eq!(total(&pool, "gitlab:carol").await, 5 + 10);
-        assert_eq!(apply_score_adjustment(&pool, &subject(), &rules).await.unwrap(), None, "no score yet");
+        assert_eq!(
+            apply_score_adjustment(&pool, &subject(), &rules)
+                .await
+                .unwrap(),
+            None,
+            "no score yet"
+        );
 
-        submit_score(&pool, &rubric_sub(4), &agent("a1", &[])).await.unwrap();
-        let adj = apply_score_adjustment(&pool, &subject(), &rules).await.unwrap().unwrap();
-        assert_eq!(adj, ScoreAdjustment { score: 100.0, old_points: 10, new_points: 60, delta: 50 });
+        submit_score(&pool, &rubric_sub(4), &agent("a1", &[]))
+            .await
+            .unwrap();
+        let adj = apply_score_adjustment(&pool, &subject(), &rules)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            adj,
+            ScoreAdjustment {
+                score: 100.0,
+                old_points: 10,
+                new_points: 60,
+                delta: 50
+            }
+        );
         assert_eq!(total(&pool, "gitlab:carol").await, 5 + 60);
 
         // Idempotent: a second call (or a later score) does nothing more
-        assert_eq!(apply_score_adjustment(&pool, &subject(), &rules).await.unwrap(), None);
-        submit_score(&pool, &rubric_sub(0), &agent("a2", &[])).await.unwrap();
-        assert_eq!(apply_score_adjustment(&pool, &subject(), &rules).await.unwrap(), None);
-        assert_eq!(total(&pool, "gitlab:carol").await, 5 + 60);
-        let (pts, score): (i64, f64) = sqlx::query_as("SELECT merit_points, rubric_score FROM contributions").fetch_one(&pool).await.unwrap();
-        assert_eq!((pts, score), (60, 100.0));
-        let repo: String = sqlx::query_scalar("SELECT repo FROM merit_activities WHERE description LIKE 'Score adjustment%'")
-            .fetch_one(&pool)
+        assert_eq!(
+            apply_score_adjustment(&pool, &subject(), &rules)
+                .await
+                .unwrap(),
+            None
+        );
+        submit_score(&pool, &rubric_sub(0), &agent("a2", &[]))
             .await
             .unwrap();
+        assert_eq!(
+            apply_score_adjustment(&pool, &subject(), &rules)
+                .await
+                .unwrap(),
+            None
+        );
+        assert_eq!(total(&pool, "gitlab:carol").await, 5 + 60);
+        let (pts, score): (i64, f64) =
+            sqlx::query_as("SELECT merit_points, rubric_score FROM contributions")
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!((pts, score), (60, 100.0));
+        let repo: String = sqlx::query_scalar(
+            "SELECT repo FROM merit_activities WHERE description LIKE 'Score adjustment%'",
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
         assert_eq!(repo, "grp/proj");
     }
 
@@ -611,11 +813,29 @@ mod tests {
         let rules = MeritRules::default();
         let p = processor(&pool, rules.clone());
         gl(&p, "open", (5, "carol")).await;
-        assert_eq!(apply_score_adjustment(&pool, &subject(), &rules).await.unwrap(), None, "not merged");
+        assert_eq!(
+            apply_score_adjustment(&pool, &subject(), &rules)
+                .await
+                .unwrap(),
+            None,
+            "not merged"
+        );
         gl(&p, "merge", (5, "carol")).await;
-        sqlx::query("UPDATE contributions SET merged_at = ?").bind(Utc::now() - Duration::days(8)).execute(&pool).await.unwrap();
-        submit_score(&pool, &rubric_sub(4), &agent("a1", &[])).await.unwrap();
-        assert_eq!(apply_score_adjustment(&pool, &subject(), &rules).await.unwrap(), None, "outside 7-day window");
+        sqlx::query("UPDATE contributions SET merged_at = ?")
+            .bind(Utc::now() - Duration::days(8))
+            .execute(&pool)
+            .await
+            .unwrap();
+        submit_score(&pool, &rubric_sub(4), &agent("a1", &[]))
+            .await
+            .unwrap();
+        assert_eq!(
+            apply_score_adjustment(&pool, &subject(), &rules)
+                .await
+                .unwrap(),
+            None,
+            "outside 7-day window"
+        );
         assert_eq!(total(&pool, "gitlab:carol").await, 15);
     }
 
@@ -625,10 +845,17 @@ mod tests {
         let rules = MeritRules::default();
         let p = processor(&pool, rules.clone());
         gl(&p, "open", (5, "carol")).await;
-        submit_score(&pool, &rubric_sub(2), &agent("a1", &[])).await.unwrap(); // 50 -> 35 points
+        submit_score(&pool, &rubric_sub(2), &agent("a1", &[]))
+            .await
+            .unwrap(); // 50 -> 35 points
         gl(&p, "merge", (5, "carol")).await;
         assert_eq!(total(&pool, "gitlab:carol").await, 5 + 35);
-        assert_eq!(apply_score_adjustment(&pool, &subject(), &rules).await.unwrap(), None);
+        assert_eq!(
+            apply_score_adjustment(&pool, &subject(), &rules)
+                .await
+                .unwrap(),
+            None
+        );
         assert_eq!(total(&pool, "gitlab:carol").await, 5 + 35);
     }
 
@@ -638,9 +865,25 @@ mod tests {
         let rules = MeritRules::default(); // scorers = [agent]
         let p = processor(&pool, rules.clone());
         gl(&p, "open", (5, "carol")).await;
-        let cr = crate::services::coderabbit::coderabbit_submission(subject(), 100.0, "CodeRabbit review summary text".into(), true, false);
-        submit_score(&pool, &cr, &crate::services::coderabbit::coderabbit_scorer()).await.unwrap();
+        let cr = crate::services::coderabbit::coderabbit_submission(
+            subject(),
+            100.0,
+            "CodeRabbit review summary text".into(),
+            true,
+            false,
+        );
+        submit_score(
+            &pool,
+            &cr,
+            &crate::services::coderabbit::coderabbit_scorer(),
+        )
+        .await
+        .unwrap();
         gl(&p, "merge", (5, "carol")).await;
-        assert_eq!(total(&pool, "gitlab:carol").await, 5 + 10, "coderabbit not enabled: base points");
+        assert_eq!(
+            total(&pool, "gitlab:carol").await,
+            5 + 10,
+            "coderabbit not enabled: base points"
+        );
     }
 }

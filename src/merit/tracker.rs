@@ -13,7 +13,7 @@ pub struct MeritTracker {
 impl MeritTracker {
     pub fn new(db_pool: SqlitePool) -> Self {
         let mut role_thresholds = HashMap::new();
-        
+
         // Default role thresholds
         role_thresholds.insert("Newcomer".to_string(), 0);
         role_thresholds.insert("Contributor".to_string(), 50);
@@ -78,8 +78,8 @@ impl MeritTracker {
                 sqlx::query("UPDATE merit_roles SET discord_role_id = ? WHERE role_name = ?")
                     .bind(discord_role_id)
                     .bind(role_name)
-                .execute(&self.db_pool)
-                .await?;
+                    .execute(&self.db_pool)
+                    .await?;
             }
         }
 
@@ -88,17 +88,16 @@ impl MeritTracker {
     }
 
     pub async fn get_contributor_role(&self, contributor_id: Uuid) -> Result<Option<MeritRole>> {
-        let contributor = sqlx::query_as::<_, Contributor>(
-            "SELECT * FROM contributors WHERE id = ?"
-        )
-        .bind(contributor_id)
-        .fetch_optional(&self.db_pool)
-        .await?;
+        let contributor =
+            sqlx::query_as::<_, Contributor>("SELECT * FROM contributors WHERE id = ?")
+                .bind(contributor_id)
+                .fetch_optional(&self.db_pool)
+                .await?;
 
         if let Some(contributor) = contributor {
             let role = sqlx::query_as::<_, MeritRole>(
                 "SELECT * FROM merit_roles WHERE required_merit_points <= ? 
-                 ORDER BY required_merit_points DESC LIMIT 1"
+                 ORDER BY required_merit_points DESC LIMIT 1",
             )
             .bind(contributor.total_merit_points)
             .fetch_optional(&self.db_pool)
@@ -111,16 +110,15 @@ impl MeritTracker {
     }
 
     pub async fn check_role_progression(&self, contributor_id: Uuid) -> Result<bool> {
-        let contributor = sqlx::query_as::<_, Contributor>(
-            "SELECT * FROM contributors WHERE id = ?"
-        )
-        .bind(contributor_id)
-        .fetch_optional(&self.db_pool)
-        .await?;
+        let contributor =
+            sqlx::query_as::<_, Contributor>("SELECT * FROM contributors WHERE id = ?")
+                .bind(contributor_id)
+                .fetch_optional(&self.db_pool)
+                .await?;
 
         if let Some(contributor) = contributor {
             let new_role = self.get_contributor_role(contributor_id).await?;
-            
+
             if let Some(role) = new_role {
                 if role.role_name != contributor.current_role {
                     // Update contributor's role
@@ -144,10 +142,11 @@ impl MeritTracker {
     }
 
     pub async fn get_role_distribution(&self) -> Result<HashMap<String, i32>> {
-        let rows: Vec<(String, i64)> =
-            sqlx::query_as("SELECT current_role, COUNT(*) as count FROM contributors GROUP BY current_role")
-                .fetch_all(&self.db_pool)
-                .await?;
+        let rows: Vec<(String, i64)> = sqlx::query_as(
+            "SELECT current_role, COUNT(*) as count FROM contributors GROUP BY current_role",
+        )
+        .fetch_all(&self.db_pool)
+        .await?;
 
         let mut distribution = HashMap::new();
         for (role, count) in rows {
@@ -158,11 +157,9 @@ impl MeritTracker {
     }
 
     pub async fn recalculate_all_roles(&self) -> Result<i32> {
-        let contributors = sqlx::query_as::<_, Contributor>(
-            "SELECT * FROM contributors"
-        )
-        .fetch_all(&self.db_pool)
-        .await?;
+        let contributors = sqlx::query_as::<_, Contributor>("SELECT * FROM contributors")
+            .fetch_all(&self.db_pool)
+            .await?;
 
         let mut updated_count = 0;
 
@@ -172,7 +169,10 @@ impl MeritTracker {
             }
         }
 
-        info!("Recalculated roles for all contributors. {} roles updated", updated_count);
+        info!(
+            "Recalculated roles for all contributors. {} roles updated",
+            updated_count
+        );
         Ok(updated_count)
     }
 }

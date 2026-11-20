@@ -15,7 +15,10 @@
 use super::error::PayoutError;
 use super::payees;
 use crate::auth::{scopes, tokens::format_db_time, Directory, Principal};
-use chrono::{DateTime, Datelike, Duration, NaiveDate, NaiveDateTime, NaiveTime, TimeZone, Timelike, Utc, Weekday};
+use chrono::{
+    DateTime, Datelike, Duration, NaiveDate, NaiveDateTime, NaiveTime, TimeZone, Timelike, Utc,
+    Weekday,
+};
 use chrono_tz::Tz;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
@@ -36,7 +39,12 @@ pub const MAX_OPEN_MINUTES: i64 = 24 * 60;
 
 /// Parse an IANA time zone name such as `America/Phoenix`.
 pub fn parse_tz(name: &str) -> Result<Tz, String> {
-    name.trim().parse::<Tz>().map_err(|_| format!("'{}' is not an IANA time zone name (for example America/New_York)", name.trim()))
+    name.trim().parse::<Tz>().map_err(|_| {
+        format!(
+            "'{}' is not an IANA time zone name (for example America/New_York)",
+            name.trim()
+        )
+    })
 }
 
 /// The UTC instant of a local wall-clock time. A time skipped by a daylight saving change
@@ -69,7 +77,9 @@ pub fn local_date(tz: &Tz, t: DateTime<Utc>) -> NaiveDate {
 
 /// Round down to the whole minute.
 pub fn floor_minute(t: DateTime<Utc>) -> DateTime<Utc> {
-    t.with_nanosecond(0).and_then(|x| x.with_second(0)).unwrap_or(t)
+    t.with_nanosecond(0)
+        .and_then(|x| x.with_second(0))
+        .unwrap_or(t)
 }
 
 /// Round up to the whole minute (unchanged when already whole). Paid time starts at a whole
@@ -85,7 +95,8 @@ pub fn ceil_minute(t: DateTime<Utc>) -> DateTime<Utc> {
 }
 
 pub fn parse_hhmm(s: &str) -> Result<NaiveTime, String> {
-    NaiveTime::parse_from_str(s.trim(), "%H:%M").map_err(|_| format!("'{}' is not a time of day HH:MM", s.trim()))
+    NaiveTime::parse_from_str(s.trim(), "%H:%M")
+        .map_err(|_| format!("'{}' is not a time of day HH:MM", s.trim()))
 }
 
 pub fn parse_weekday(s: &str) -> Result<Weekday, String> {
@@ -117,7 +128,9 @@ impl PaidFrom {
         match s {
             PAID_LATER_OF => Ok(PaidFrom::LaterOfClockInAndStart),
             PAID_CLOCK_IN => Ok(PaidFrom::ClockIn),
-            other => Err(format!("paid_from must be {PAID_LATER_OF} or {PAID_CLOCK_IN}, not '{other}'")),
+            other => Err(format!(
+                "paid_from must be {PAID_LATER_OF} or {PAID_CLOCK_IN}, not '{other}'"
+            )),
         }
     }
 }
@@ -126,12 +139,26 @@ impl PaidFrom {
 pub enum Pattern {
     /// Every week on `weekday`, local `start` to `end` (an end at or before the start is the
     /// next day), within the optional local date range.
-    Weekly { weekday: Weekday, start: NaiveTime, end: NaiveTime, valid_from: Option<NaiveDate>, valid_until: Option<NaiveDate> },
+    Weekly {
+        weekday: Weekday,
+        start: NaiveTime,
+        end: NaiveTime,
+        valid_from: Option<NaiveDate>,
+        valid_until: Option<NaiveDate>,
+    },
     /// One shift on a local date.
-    Single { date: NaiveDate, start: NaiveTime, end: NaiveTime },
+    Single {
+        date: NaiveDate,
+        start: NaiveTime,
+        end: NaiveTime,
+    },
     /// An open-shift allowance: a clock-in outside every other shift starts an entry of this
     /// many minutes, on a local date in the optional range.
-    Open { length_minutes: i64, valid_from: Option<NaiveDate>, valid_until: Option<NaiveDate> },
+    Open {
+        length_minutes: i64,
+        valid_from: Option<NaiveDate>,
+        valid_until: Option<NaiveDate>,
+    },
 }
 
 /// A shift ready for the pure functions.
@@ -163,9 +190,18 @@ fn in_range(d: NaiveDate, from: Option<NaiveDate>, until: Option<NaiveDate>) -> 
     from.is_none_or(|f| d >= f) && until.is_none_or(|u| d <= u)
 }
 
-fn bounds(tz: &Tz, date: NaiveDate, start: NaiveTime, end: NaiveTime) -> (DateTime<Utc>, DateTime<Utc>) {
+fn bounds(
+    tz: &Tz,
+    date: NaiveDate,
+    start: NaiveTime,
+    end: NaiveTime,
+) -> (DateTime<Utc>, DateTime<Utc>) {
     let s = local_to_utc(tz, date.and_time(start));
-    let end_date = if end <= start { date.succ_opt().unwrap_or(date) } else { date };
+    let end_date = if end <= start {
+        date.succ_opt().unwrap_or(date)
+    } else {
+        date
+    };
     if super::mutant::on("naive_dst") {
         // The bug this guards: wall-clock length instead of real elapsed time.
         return (s, s + (end_date.and_time(end) - date.and_time(start)));
@@ -177,13 +213,23 @@ fn bounds(tz: &Tz, date: NaiveDate, start: NaiveTime, end: NaiveTime) -> (DateTi
 /// The occurrence of a weekly or single shift that starts on local `date`, if any.
 pub fn occurrence_on(spec: &ShiftSpec, date: NaiveDate) -> Option<Occurrence> {
     let (start, end) = match &spec.pattern {
-        Pattern::Weekly { weekday, start, end, valid_from, valid_until } => {
+        Pattern::Weekly {
+            weekday,
+            start,
+            end,
+            valid_from,
+            valid_until,
+        } => {
             if date.weekday() != *weekday || !in_range(date, *valid_from, *valid_until) {
                 return None;
             }
             bounds(&spec.tz, date, *start, *end)
         }
-        Pattern::Single { date: d, start, end } => {
+        Pattern::Single {
+            date: d,
+            start,
+            end,
+        } => {
             if *d != date {
                 return None;
             }
@@ -197,14 +243,20 @@ pub fn occurrence_on(spec: &ShiftSpec, date: NaiveDate) -> Option<Occurrence> {
         local_date: date,
         start,
         end,
-        window_start: if super::mutant::on("no_early_window") { start } else { start - Duration::minutes(spec.early_minutes.max(0)) },
+        window_start: if super::mutant::on("no_early_window") {
+            start
+        } else {
+            start - Duration::minutes(spec.early_minutes.max(0))
+        },
         paid_from: spec.paid_from,
     })
 }
 
 fn nearby_dates(tz: &Tz, now: DateTime<Utc>, back: i64, forward: i64) -> Vec<NaiveDate> {
     let today = local_date(tz, now);
-    (-back..=forward).filter_map(|i| today.checked_add_signed(Duration::days(i))).collect()
+    (-back..=forward)
+        .filter_map(|i| today.checked_add_signed(Duration::days(i)))
+        .collect()
 }
 
 /// Pure: every weekly or single occurrence whose window (early clock-in window included)
@@ -214,7 +266,11 @@ pub fn occurrences_containing(specs: &[ShiftSpec], now: DateTime<Utc>) -> Vec<Oc
     for s in specs {
         for d in nearby_dates(&s.tz, now, 2, 1) {
             if let Some(o) = occurrence_on(s, d) {
-                let open = if super::mutant::on("window_open_all_day") { true } else { o.window_start <= now };
+                let open = if super::mutant::on("window_open_all_day") {
+                    true
+                } else {
+                    o.window_start <= now
+                };
                 if open && (now < o.end || super::mutant::on("after_end_ok")) {
                     out.push(o);
                 }
@@ -235,7 +291,11 @@ pub fn current_or_next(specs: &[ShiftSpec], now: DateTime<Utc>) -> Option<Occurr
     for s in specs {
         for d in nearby_dates(&s.tz, now, 0, 14) {
             if let Some(o) = occurrence_on(s, d) {
-                if o.window_start > now && best.as_ref().is_none_or(|b| (o.start, &o.shift_id) < (b.start, &b.shift_id)) {
+                if o.window_start > now
+                    && best
+                        .as_ref()
+                        .is_none_or(|b| (o.start, &o.shift_id) < (b.start, &b.shift_id))
+                {
                     best = Some(o);
                 }
             }
@@ -264,7 +324,10 @@ pub enum ClockInRefusal {
     /// No shift window contains now and there is no open-shift allowance.
     NoShift,
     /// A shift today has already ended (and there is no open-shift allowance).
-    AfterEnd { shift_id: String, ended_at: DateTime<Utc> },
+    AfterEnd {
+        shift_id: String,
+        ended_at: DateTime<Utc>,
+    },
 }
 
 impl ClockInRefusal {
@@ -281,7 +344,10 @@ impl ClockInRefusal {
 /// The entry bounds for a clock-in at `now` into `occ`: start never before the shift start
 /// (unless the shift pays from clock-in), whole minutes, end = the shift's end. None when no
 /// whole minute is left before the end.
-pub fn entry_bounds(occ: &Occurrence, now: DateTime<Utc>) -> Option<(DateTime<Utc>, DateTime<Utc>)> {
+pub fn entry_bounds(
+    occ: &Occurrence,
+    now: DateTime<Utc>,
+) -> Option<(DateTime<Utc>, DateTime<Utc>)> {
     let clock = ceil_minute(now);
     let start = match occ.paid_from {
         PaidFrom::LaterOfClockInAndStart if super::mutant::on("start_before_shift") => clock,
@@ -302,7 +368,10 @@ pub fn entry_bounds(occ: &Occurrence, now: DateTime<Utc>) -> Option<(DateTime<Ut
 /// window contains `now` wins (the earliest one); otherwise an open-shift allowance valid
 /// today starts an entry of its length, cut short where the next scheduled shift starts;
 /// otherwise the clock-in is refused (after the end, or no shift).
-pub fn plan_clock_in(specs: &[ShiftSpec], now: DateTime<Utc>) -> Result<ClockInPlan, ClockInRefusal> {
+pub fn plan_clock_in(
+    specs: &[ShiftSpec],
+    now: DateTime<Utc>,
+) -> Result<ClockInPlan, ClockInRefusal> {
     for occ in occurrences_containing(specs, now) {
         if let Some((start, end)) = entry_bounds(&occ, now) {
             return Ok(ClockInPlan {
@@ -317,10 +386,20 @@ pub fn plan_clock_in(specs: &[ShiftSpec], now: DateTime<Utc>) -> Result<ClockInP
         }
     }
     // An open-shift allowance valid on today's local date.
-    let mut open: Vec<&ShiftSpec> = specs.iter().filter(|s| matches!(s.pattern, Pattern::Open { .. })).collect();
+    let mut open: Vec<&ShiftSpec> = specs
+        .iter()
+        .filter(|s| matches!(s.pattern, Pattern::Open { .. }))
+        .collect();
     open.sort_by(|a, b| a.id.cmp(&b.id));
     for s in open {
-        let Pattern::Open { length_minutes, valid_from, valid_until } = &s.pattern else { continue };
+        let Pattern::Open {
+            length_minutes,
+            valid_from,
+            valid_until,
+        } = &s.pattern
+        else {
+            continue;
+        };
         if !in_range(local_date(&s.tz, now), *valid_from, *valid_until) || *length_minutes <= 0 {
             continue;
         }
@@ -352,14 +431,25 @@ pub fn plan_clock_in(specs: &[ShiftSpec], now: DateTime<Utc>) -> Result<ClockInP
         // The bug this guards: a clock-in with no shift starting an entry anyway.
         let start = ceil_minute(now);
         let end = start + Duration::hours(1);
-        return Ok(ClockInPlan { shift_id: specs.first().map(|s| s.id.clone()).unwrap_or_default(), occurrence_key: format!("none:{start}"), shift_start: start, shift_end: end, start, end, open_shift: true });
+        return Ok(ClockInPlan {
+            shift_id: specs.first().map(|s| s.id.clone()).unwrap_or_default(),
+            occurrence_key: format!("none:{start}"),
+            shift_start: start,
+            shift_end: end,
+            start,
+            end,
+            open_shift: true,
+        });
     }
     // Refused: name a shift that already ended today, when there is one.
     let mut ended: Option<(String, DateTime<Utc>)> = None;
     for s in specs {
         for d in nearby_dates(&s.tz, now, 1, 0) {
             if let Some(o) = occurrence_on(s, d) {
-                if o.end <= now && ended.as_ref().is_none_or(|(_, e)| o.end > *e) && (now - o.end) < Duration::hours(24) {
+                if o.end <= now
+                    && ended.as_ref().is_none_or(|(_, e)| o.end > *e)
+                    && (now - o.end) < Duration::hours(24)
+                {
                     ended = Some((o.shift_id.clone(), o.end));
                 }
             }
@@ -391,7 +481,12 @@ pub fn day_segments(start: DateTime<Utc>, end: DateTime<Utc>, tz: &Tz) -> Vec<Da
         let d = local_date(tz, cur);
         let next = d.succ_opt().map(|n| local_midnight(tz, n)).unwrap_or(end);
         let seg_end = if next > cur { next.min(end) } else { end };
-        out.push(DaySegment { date: d, start: cur, end: seg_end, minutes: (seg_end - cur).num_seconds() / 60 });
+        out.push(DaySegment {
+            date: d,
+            start: cur,
+            end: seg_end,
+            minutes: (seg_end - cur).num_seconds() / 60,
+        });
         cur = seg_end;
     }
     out
@@ -423,13 +518,14 @@ pub struct ShiftRow {
 }
 
 fn opt_date(s: &Option<String>, field: &str, errs: &mut Vec<String>) -> Option<NaiveDate> {
-    s.as_deref().and_then(|v| match NaiveDate::parse_from_str(v, "%Y-%m-%d") {
-        Ok(d) => Some(d),
-        Err(_) => {
-            errs.push(format!("{field} must be a date YYYY-MM-DD"));
-            None
-        }
-    })
+    s.as_deref()
+        .and_then(|v| match NaiveDate::parse_from_str(v, "%Y-%m-%d") {
+            Ok(d) => Some(d),
+            Err(_) => {
+                errs.push(format!("{field} must be a date YYYY-MM-DD"));
+                None
+            }
+        })
 }
 
 impl ShiftRow {
@@ -437,7 +533,9 @@ impl ShiftRow {
     pub fn spec(&self) -> Result<ShiftSpec, Vec<String>> {
         let mut errs = Vec::new();
         let tz = parse_tz(&self.time_zone).map_err(|e| errs.push(e)).ok();
-        let paid_from = PaidFrom::parse(&self.paid_from).map_err(|e| errs.push(e)).ok();
+        let paid_from = PaidFrom::parse(&self.paid_from)
+            .map_err(|e| errs.push(e))
+            .ok();
         if !(0..=MAX_EARLY_MINUTES).contains(&self.early_minutes) {
             errs.push(format!("early_minutes must be 0 to {MAX_EARLY_MINUTES}"));
         }
@@ -477,7 +575,13 @@ impl ShiftRow {
                     }
                 };
                 match (wd, times(&mut errs)) {
-                    (Some(weekday), Some((start, end))) => Some(Pattern::Weekly { weekday, start, end, valid_from, valid_until }),
+                    (Some(weekday), Some((start, end))) => Some(Pattern::Weekly {
+                        weekday,
+                        start,
+                        end,
+                        valid_from,
+                        valid_until,
+                    }),
                     _ => None,
                 }
             }
@@ -490,27 +594,41 @@ impl ShiftRow {
                     }
                 };
                 if self.valid_from.is_some() || self.valid_until.is_some() {
-                    errs.push("valid_from and valid_until apply to weekly and open shifts only".into());
+                    errs.push(
+                        "valid_from and valid_until apply to weekly and open shifts only".into(),
+                    );
                 }
                 match (d, times(&mut errs)) {
                     (Some(date), Some((start, end))) => Some(Pattern::Single { date, start, end }),
                     _ => None,
                 }
             }
-            OPEN => match self.length_minutes {
-                Some(l) if (1..=MAX_OPEN_MINUTES).contains(&l) => {
-                    if self.start_time.is_some() || self.end_time.is_some() || self.weekday.is_some() || self.date.is_some() {
-                        errs.push("an open shift has only length_minutes (and an optional valid_from and valid_until)".into());
+            OPEN => {
+                match self.length_minutes {
+                    Some(l) if (1..=MAX_OPEN_MINUTES).contains(&l) => {
+                        if self.start_time.is_some()
+                            || self.end_time.is_some()
+                            || self.weekday.is_some()
+                            || self.date.is_some()
+                        {
+                            errs.push("an open shift has only length_minutes (and an optional valid_from and valid_until)".into());
+                        }
+                        Some(Pattern::Open {
+                            length_minutes: l,
+                            valid_from,
+                            valid_until,
+                        })
                     }
-                    Some(Pattern::Open { length_minutes: l, valid_from, valid_until })
+                    _ => {
+                        errs.push(format!("length_minutes (1 to {MAX_OPEN_MINUTES}) is required for an open shift"));
+                        None
+                    }
                 }
-                _ => {
-                    errs.push(format!("length_minutes (1 to {MAX_OPEN_MINUTES}) is required for an open shift"));
-                    None
-                }
-            },
+            }
             other => {
-                errs.push(format!("kind must be weekly, single or open, not '{other}'"));
+                errs.push(format!(
+                    "kind must be weekly, single or open, not '{other}'"
+                ));
                 None
             }
         };
@@ -518,9 +636,13 @@ impl ShiftRow {
             errs.push("length_minutes applies to open shifts only".into());
         }
         match (errs.is_empty(), pattern, tz, paid_from) {
-            (true, Some(pattern), Some(tz), Some(paid_from)) => {
-                Ok(ShiftSpec { id: self.id.clone(), pattern, tz, early_minutes: self.early_minutes, paid_from })
-            }
+            (true, Some(pattern), Some(tz), Some(paid_from)) => Ok(ShiftSpec {
+                id: self.id.clone(),
+                pattern,
+                tz,
+                early_minutes: self.early_minutes,
+                paid_from,
+            }),
             _ => Err(errs),
         }
     }
@@ -586,32 +708,56 @@ pub struct ShiftPatch {
 }
 
 fn clean(s: &Option<String>) -> Option<String> {
-    s.as_deref().map(str::trim).filter(|v| !v.is_empty()).map(str::to_string)
+    s.as_deref()
+        .map(str::trim)
+        .filter(|v| !v.is_empty())
+        .map(str::to_string)
 }
 
 pub async fn load(pool: &SqlitePool, id: &str) -> Result<Option<ShiftRow>, sqlx::Error> {
-    sqlx::query_as::<_, ShiftRow>("SELECT * FROM shifts WHERE id = ?").bind(id).fetch_optional(pool).await
+    sqlx::query_as::<_, ShiftRow>("SELECT * FROM shifts WHERE id = ?")
+        .bind(id)
+        .fetch_optional(pool)
+        .await
 }
 
 /// The active shifts of a payee that parse (an unparsable stored shift is logged and skipped).
-pub async fn active_specs(pool: &SqlitePool, payee_id: &str) -> Result<Vec<ShiftSpec>, sqlx::Error> {
-    let rows = sqlx::query_as::<_, ShiftRow>("SELECT * FROM shifts WHERE payee_id = ? AND status = 'active' ORDER BY created_at, id")
-        .bind(payee_id)
-        .fetch_all(pool)
-        .await?;
+pub async fn active_specs(
+    pool: &SqlitePool,
+    payee_id: &str,
+) -> Result<Vec<ShiftSpec>, sqlx::Error> {
+    let rows = sqlx::query_as::<_, ShiftRow>(
+        "SELECT * FROM shifts WHERE payee_id = ? AND status = 'active' ORDER BY created_at, id",
+    )
+    .bind(payee_id)
+    .fetch_all(pool)
+    .await?;
     let mut out = Vec::new();
     for r in rows {
         match r.spec() {
             Ok(s) => out.push(s),
-            Err(e) => tracing::error!("shift {} is unreadable and is skipped: {}", r.id, e.join("; ")),
+            Err(e) => tracing::error!(
+                "shift {} is unreadable and is skipped: {}",
+                r.id,
+                e.join("; ")
+            ),
         }
     }
     Ok(out)
 }
 
-async fn refuse_own(pool: &SqlitePool, directory: &dyn Directory, principal: &Principal, payee_id: &str) -> Result<(), PayoutError> {
-    if payees::principal_is_payee_of(pool, directory, principal, payee_id).await? && !super::mutant::on("payee_creates_own_shift") {
-        return Err(PayoutError::Forbidden("a payee cannot create or change their own shifts".into()));
+async fn refuse_own(
+    pool: &SqlitePool,
+    directory: &dyn Directory,
+    principal: &Principal,
+    payee_id: &str,
+) -> Result<(), PayoutError> {
+    if payees::principal_is_payee_of(pool, directory, principal, payee_id).await?
+        && !super::mutant::on("payee_creates_own_shift")
+    {
+        return Err(PayoutError::Forbidden(
+            "a payee cannot create or change their own shifts".into(),
+        ));
     }
     Ok(())
 }
@@ -628,7 +774,9 @@ pub async fn list(
     } else if super::timeclock::has(principal, scopes::TIME_CLOCK) {
         let own = super::timeclock::own_payee(pool, principal).await?;
         if payee_id.is_some_and(|p| p != own.row.id) {
-            return Err(PayoutError::Forbidden("with time.clock only, you can read only your own shifts".into()));
+            return Err(PayoutError::Forbidden(
+                "with time.clock only, you can read only your own shifts".into(),
+            ));
         }
         Some(own.row.id)
     } else {
@@ -648,7 +796,13 @@ pub async fn list(
     Ok(rows)
 }
 
-async fn audit_shift(conn: &mut sqlx::SqliteConnection, principal: &Principal, action: &str, row: &ShiftRow, extra: serde_json::Value) -> Result<(), sqlx::Error> {
+async fn audit_shift(
+    conn: &mut sqlx::SqliteConnection,
+    principal: &Principal,
+    action: &str,
+    row: &ShiftRow,
+    extra: serde_json::Value,
+) -> Result<(), sqlx::Error> {
     crate::audit::append_in(
         conn,
         &crate::audit::AuditEntry::by_principal(
@@ -671,7 +825,9 @@ pub async fn create(
     now: DateTime<Utc>,
 ) -> Result<ShiftRow, PayoutError> {
     super::timeclock::need(principal, scopes::TIME_MANAGE)?;
-    let payee = payees::load(pool, input.payee_id.trim()).await?.ok_or(PayoutError::NotFound("payee"))?;
+    let payee = payees::load(pool, input.payee_id.trim())
+        .await?
+        .ok_or(PayoutError::NotFound("payee"))?;
     if payee.row.org_id != principal.org_id {
         return Err(PayoutError::NotFound("payee"));
     }
@@ -744,7 +900,9 @@ pub async fn update(
     now: DateTime<Utc>,
 ) -> Result<ShiftRow, PayoutError> {
     super::timeclock::need(principal, scopes::TIME_MANAGE)?;
-    let cur = load(pool, id).await?.ok_or(PayoutError::NotFound("shift"))?;
+    let cur = load(pool, id)
+        .await?
+        .ok_or(PayoutError::NotFound("shift"))?;
     if cur.org_id != principal.org_id {
         return Err(PayoutError::NotFound("shift"));
     }
@@ -759,22 +917,50 @@ pub async fn update(
             }
         };
     }
-    set!(weekday, patch.weekday.as_ref().map(|w| Some(w.trim().to_ascii_lowercase())));
-    set!(date, patch.date.as_ref().map(|d| Some(d.trim().to_string())));
-    set!(start_time, patch.start_time.as_ref().map(|t| Some(t.trim().to_string())));
-    set!(end_time, patch.end_time.as_ref().map(|t| Some(t.trim().to_string())));
+    set!(
+        weekday,
+        patch
+            .weekday
+            .as_ref()
+            .map(|w| Some(w.trim().to_ascii_lowercase()))
+    );
+    set!(
+        date,
+        patch.date.as_ref().map(|d| Some(d.trim().to_string()))
+    );
+    set!(
+        start_time,
+        patch
+            .start_time
+            .as_ref()
+            .map(|t| Some(t.trim().to_string()))
+    );
+    set!(
+        end_time,
+        patch.end_time.as_ref().map(|t| Some(t.trim().to_string()))
+    );
     set!(length_minutes, patch.length_minutes.map(Some));
-    set!(time_zone, patch.time_zone.as_ref().map(|t| t.trim().to_string()));
+    set!(
+        time_zone,
+        patch.time_zone.as_ref().map(|t| t.trim().to_string())
+    );
     set!(valid_from, patch.valid_from.clone().map(|v| clean(&v)));
     set!(valid_until, patch.valid_until.clone().map(|v| clean(&v)));
     set!(early_minutes, patch.early_minutes);
-    set!(paid_from, patch.paid_from.as_ref().map(|p| p.trim().to_string()));
+    set!(
+        paid_from,
+        patch.paid_from.as_ref().map(|p| p.trim().to_string())
+    );
     set!(status, patch.status.as_ref().map(|s| s.trim().to_string()));
     if next.status != "active" && next.status != "ended" {
-        return Err(PayoutError::Invalid(vec!["status must be active or ended".into()]));
+        return Err(PayoutError::Invalid(vec![
+            "status must be active or ended".into()
+        ]));
     }
     if cur.status == "ended" && next.status == "active" {
-        return Err(PayoutError::Invalid(vec!["an ended shift cannot be reopened; create a new shift".into()]));
+        return Err(PayoutError::Invalid(vec![
+            "an ended shift cannot be reopened; create a new shift".into(),
+        ]));
     }
     next.spec().map_err(PayoutError::Invalid)?;
     let now_s = format_db_time(now);
@@ -803,9 +989,18 @@ pub async fn update(
     .execute(&mut *tx)
     .await?;
     if res.rows_affected() == 0 {
-        return Err(PayoutError::InvalidState("shift changed concurrently; read it again".into()));
+        return Err(PayoutError::InvalidState(
+            "shift changed concurrently; read it again".into(),
+        ));
     }
-    audit_shift(&mut tx, principal, "shift.changed", &next, json!({ "fields": changed, "before": cur })).await?;
+    audit_shift(
+        &mut tx,
+        principal,
+        "shift.changed",
+        &next,
+        json!({ "fields": changed, "before": cur }),
+    )
+    .await?;
     tx.commit().await?;
     Ok(next)
 }

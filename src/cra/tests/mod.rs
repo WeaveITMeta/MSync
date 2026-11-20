@@ -265,8 +265,16 @@ pub(super) fn append(mut files: CraFiles, f: F, text: &str) -> CraFiles {
 }
 
 /// Adds a grant to an existing member of the base fixture.
-pub(super) fn add_grant(files: CraFiles, member: &str, role: &str, by: &str, expires: Option<&str>) -> CraFiles {
-    let exp = expires.map(|e| format!("expires = \"{e}\"\n")).unwrap_or_default();
+pub(super) fn add_grant(
+    files: CraFiles,
+    member: &str,
+    role: &str,
+    by: &str,
+    expires: Option<&str>,
+) -> CraFiles {
+    let exp = expires
+        .map(|e| format!("expires = \"{e}\"\n"))
+        .unwrap_or_default();
     let marker = format!("# end:{member}");
     edit(
         files,
@@ -279,7 +287,13 @@ pub(super) fn add_grant(files: CraFiles, member: &str, role: &str, by: &str, exp
 pub(super) fn load_ok(files: &CraFiles) -> Snapshot {
     match load(files, today()) {
         Ok(s) => s,
-        Err(e) => panic!("fixture should load, got errors:\n{}", e.iter().map(|e| e.to_string()).collect::<Vec<_>>().join("\n")),
+        Err(e) => panic!(
+            "fixture should load, got errors:\n{}",
+            e.iter()
+                .map(|e| e.to_string())
+                .collect::<Vec<_>>()
+                .join("\n")
+        ),
     }
 }
 
@@ -305,7 +319,13 @@ pub(super) fn owners() -> Vec<String> {
 }
 
 pub(super) fn push(actor: &str) -> ChangeContext {
-    ChangeContext { actor: gh(actor), via_pull_request: false, author: None, approvers: vec![], today: today() }
+    ChangeContext {
+        actor: gh(actor),
+        via_pull_request: false,
+        author: None,
+        approvers: vec![],
+        today: today(),
+    }
 }
 
 pub(super) fn pr(actor: &str, author: &str, approvers: &[&str]) -> ChangeContext {
@@ -319,7 +339,11 @@ pub(super) fn pr(actor: &str, author: &str, approvers: &[&str]) -> ChangeContext
 }
 
 /// Loads `new` (it must validate), plans against `old`, authorizes.
-pub(super) fn auth(old: &Snapshot, new: &CraFiles, ctx: &ChangeContext) -> Result<(), Vec<Violation>> {
+pub(super) fn auth(
+    old: &Snapshot,
+    new: &CraFiles,
+    ctx: &ChangeContext,
+) -> Result<(), Vec<Violation>> {
     let new = load_ok(new);
     let plan = plan_change(Some(old), &new);
     assert!(!plan.is_empty(), "test change produced an empty plan");
@@ -343,8 +367,13 @@ pub(super) fn assert_allowed(r: &Result<(), Vec<Violation>>) {
 }
 
 pub(super) fn example(slug: &str) -> CraFiles {
-    let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("examples/cra").join(slug).join(".msync");
-    let read = |name: &str| std::fs::read_to_string(dir.join(name)).unwrap_or_else(|e| panic!("{slug}/{name}: {e}"));
+    let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("examples/cra")
+        .join(slug)
+        .join(".msync");
+    let read = |name: &str| {
+        std::fs::read_to_string(dir.join(name)).unwrap_or_else(|e| panic!("{slug}/{name}: {e}"))
+    };
     CraFiles {
         org: read("org.toml"),
         roles: read("roles.toml"),

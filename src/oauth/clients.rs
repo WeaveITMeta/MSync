@@ -62,16 +62,27 @@ pub enum ClientError {
 /// An exact redirect URI a client may register: `https://` with a host, or `http://` on a
 /// loopback host for local development. No fragment, no wildcard, no whitespace.
 pub fn valid_redirect_uri(u: &str) -> bool {
-    if u.is_empty() || u.len() > 2000 || u.contains('#') || u.contains('*') || u.chars().any(|c| c.is_whitespace() || c.is_control()) {
+    if u.is_empty()
+        || u.len() > 2000
+        || u.contains('#')
+        || u.contains('*')
+        || u.chars().any(|c| c.is_whitespace() || c.is_control())
+    {
         return false;
     }
-    let Some((scheme, rest)) = u.split_once("://") else { return false };
+    let Some((scheme, rest)) = u.split_once("://") else {
+        return false;
+    };
     let host_port = rest.split(['/', '?']).next().unwrap_or("");
     if host_port.is_empty() || host_port.contains('@') {
         return false;
     }
     let host = if host_port.starts_with('[') {
-        host_port.split(']').next().map(|h| format!("{h}]")).unwrap_or_default()
+        host_port
+            .split(']')
+            .next()
+            .map(|h| format!("{h}]"))
+            .unwrap_or_default()
     } else {
         host_port.split(':').next().unwrap_or("").to_string()
     };
@@ -87,7 +98,10 @@ impl Client {
     /// not a different query, not a different case.
     pub fn redirect_allowed(&self, uri: &str) -> bool {
         if mutant::on("redirect_prefix") {
-            return self.redirect_uris.iter().any(|r| uri.starts_with(r.as_str()));
+            return self
+                .redirect_uris
+                .iter()
+                .any(|r| uri.starts_with(r.as_str()));
         }
         self.redirect_uris.iter().any(|r| r == uri)
     }
@@ -104,7 +118,11 @@ impl Client {
     /// The subject this client sees for an account: HMAC-SHA256 under the client's own salt,
     /// so two clients cannot correlate one person.
     pub fn pairwise_sub(&self, account_id: &str) -> String {
-        let key = if mutant::on("sub_not_pairwise") { "shared" } else { self.pairwise_salt.as_str() };
+        let key = if mutant::on("sub_not_pairwise") {
+            "shared"
+        } else {
+            self.pairwise_salt.as_str()
+        };
         let mut mac = Hmac::<Sha256>::new_from_slice(key.as_bytes()).expect("hmac accepts any key");
         mac.update(b"msync-sub-v1:");
         mac.update(account_id.as_bytes());
@@ -137,7 +155,9 @@ pub async fn register(
 ) -> Result<CreatedClient, ClientError> {
     let name = new.name.trim().to_string();
     if name.is_empty() || name.len() > 100 {
-        return Err(ClientError::Invalid("name must be 1..=100 characters".into()));
+        return Err(ClientError::Invalid(
+            "name must be 1..=100 characters".into(),
+        ));
     }
     let redirect_uris = dedupe(&new.redirect_uris);
     if redirect_uris.is_empty() || redirect_uris.len() > 10 {
@@ -147,25 +167,51 @@ pub async fn register(
         return Err(ClientError::Invalid(format!("redirect URI '{bad}' must be an exact https:// URL (http:// only on localhost), with no fragment or wildcard")));
     }
     let allowed_scopes = dedupe(&new.allowed_scopes);
-    if let Some(bad) = allowed_scopes.iter().find(|s| !SCOPES.contains(&s.as_str())) {
-        return Err(ClientError::Invalid(format!("unknown scope '{bad}'; known: {}", SCOPES.join(" "))));
+    if let Some(bad) = allowed_scopes
+        .iter()
+        .find(|s| !SCOPES.contains(&s.as_str()))
+    {
+        return Err(ClientError::Invalid(format!(
+            "unknown scope '{bad}'; known: {}",
+            SCOPES.join(" ")
+        )));
     }
     if !allowed_scopes.iter().any(|s| s == "openid") {
-        return Err(ClientError::Invalid("allowed_scopes must include openid".into()));
+        return Err(ClientError::Invalid(
+            "allowed_scopes must include openid".into(),
+        ));
     }
     let allowed_claims = dedupe(&new.allowed_claims);
-    if let Some(bad) = allowed_claims.iter().find(|c| !CLAIMS.contains(&c.as_str())) {
-        return Err(ClientError::Invalid(format!("unknown claim '{bad}'; known: {}", CLAIMS.join(" "))));
+    if let Some(bad) = allowed_claims
+        .iter()
+        .find(|c| !CLAIMS.contains(&c.as_str()))
+    {
+        return Err(ClientError::Invalid(format!(
+            "unknown claim '{bad}'; known: {}",
+            CLAIMS.join(" ")
+        )));
     }
-    let consumer_key = new.consumer_key.map(|k| k.trim().to_string()).filter(|k| !k.is_empty());
+    let consumer_key = new
+        .consumer_key
+        .map(|k| k.trim().to_string())
+        .filter(|k| !k.is_empty());
     if let (Some(k), Some(keys)) = (&consumer_key, consumer_keys) {
         if !keys.contains(k) {
-            return Err(ClientError::Invalid(format!("consumer_key '{k}' is not a [[consumer]] in the active CRA")));
+            return Err(ClientError::Invalid(format!(
+                "consumer_key '{k}' is not a [[consumer]] in the active CRA"
+            )));
         }
     }
 
     let client_id = random_id("msc_").map_err(|_| ClientError::Rng)?;
-    let secret = if new.public { None } else { Some(format!("mss_{}", random_token().map_err(|_| ClientError::Rng)?)) };
+    let secret = if new.public {
+        None
+    } else {
+        Some(format!(
+            "mss_{}",
+            random_token().map_err(|_| ClientError::Rng)?
+        ))
+    };
     let salt = random_token().map_err(|_| ClientError::Rng)?;
     sqlx::query(
         "INSERT INTO oauth_clients (client_id, name, secret_hash, redirect_uris, allowed_scopes, allowed_claims, consumer_key,
@@ -183,15 +229,29 @@ pub async fn register(
     .bind(now)
     .execute(pool)
     .await?;
-    let client = get(pool, &client_id).await?.ok_or_else(|| ClientError::Invalid("client vanished".into()))?;
-    Ok(CreatedClient { client, client_secret: secret })
+    let client = get(pool, &client_id)
+        .await?
+        .ok_or_else(|| ClientError::Invalid("client vanished".into()))?;
+    Ok(CreatedClient {
+        client,
+        client_secret: secret,
+    })
 }
 
 fn list(s: &str) -> Vec<String> {
     serde_json::from_str(s).unwrap_or_default()
 }
 
-type ClientRow = (String, String, Option<String>, String, String, String, Option<String>, String);
+type ClientRow = (
+    String,
+    String,
+    Option<String>,
+    String,
+    String,
+    String,
+    Option<String>,
+    String,
+);
 
 /// An active (unrevoked) client.
 pub async fn get(pool: &SqlitePool, client_id: &str) -> Result<Option<Client>, sqlx::Error> {
@@ -202,17 +262,19 @@ pub async fn get(pool: &SqlitePool, client_id: &str) -> Result<Option<Client>, s
     .bind(client_id)
     .fetch_optional(pool)
     .await?;
-    Ok(r.map(|(client_id, name, secret_hash, ru, sc, cl, consumer_key, pairwise_salt)| Client {
-        public: secret_hash.is_none(),
-        client_id,
-        name,
-        secret_hash,
-        redirect_uris: list(&ru),
-        allowed_scopes: list(&sc),
-        allowed_claims: list(&cl),
-        consumer_key,
-        pairwise_salt,
-    }))
+    Ok(r.map(
+        |(client_id, name, secret_hash, ru, sc, cl, consumer_key, pairwise_salt)| Client {
+            public: secret_hash.is_none(),
+            client_id,
+            name,
+            secret_hash,
+            redirect_uris: list(&ru),
+            allowed_scopes: list(&sc),
+            allowed_claims: list(&cl),
+            consumer_key,
+            pairwise_salt,
+        },
+    ))
 }
 
 #[cfg(test)]
@@ -221,7 +283,13 @@ mod tests {
 
     #[test]
     fn redirect_uris_must_be_exact_https_or_loopback() {
-        for ok in ["https://eustress.example/auth/callback", "https://a.b/cb?x=1", "http://localhost:3000/cb", "http://127.0.0.1/cb", "http://[::1]:8/cb"] {
+        for ok in [
+            "https://eustress.example/auth/callback",
+            "https://a.b/cb?x=1",
+            "http://localhost:3000/cb",
+            "http://127.0.0.1/cb",
+            "http://[::1]:8/cb",
+        ] {
             assert!(valid_redirect_uri(ok), "{ok}");
         }
         for bad in [

@@ -25,7 +25,10 @@ use sqlx::SqlitePool;
 
 pub use providers::{HttpProviderApi, ProviderApi, ProviderConfig, ProviderError, ProviderProfile};
 pub use rules::{can_unlink, decide, Decision, Facts, Provider, Refusal, UnlinkRefusal};
-pub use store::{chat_binding_is_verified, complete_sign_in, login_is_verified, member_for_account, AccountsError};
+pub use store::{
+    chat_binding_is_verified, complete_sign_in, login_is_verified, member_for_account,
+    AccountsError,
+};
 
 use crate::cra::loader::CraHandle;
 
@@ -42,7 +45,10 @@ pub struct NoMailer;
 #[async_trait]
 impl MailSender for NoMailer {
     async fn send_sign_in_link(&self, to: &str, _url: &str) -> Result<(), String> {
-        tracing::warn!("no mailer is configured; the sign-in link for {} was not sent", rules::mask_email(to));
+        tracing::warn!(
+            "no mailer is configured; the sign-in link for {} was not sent",
+            rules::mask_email(to)
+        );
         Ok(())
     }
 }
@@ -74,7 +80,8 @@ impl AccountsContext {
     }
 
     pub fn today(&self) -> NaiveDate {
-        self.today.unwrap_or_else(|| chrono::Utc::now().date_naive())
+        self.today
+            .unwrap_or_else(|| chrono::Utc::now().date_naive())
     }
 
     /// The exact redirect URI registered at the provider.

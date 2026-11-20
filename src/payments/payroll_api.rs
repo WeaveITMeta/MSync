@@ -54,7 +54,11 @@ fn reason_body(bytes: &[u8]) -> Result<ReasonBody, HttpResponse> {
     body::<ReasonBody>(bytes)
 }
 
-fn ok<T: serde::Serialize>(status: StatusCode, key: &str, v: Result<T, PayoutError>) -> HttpResponse {
+fn ok<T: serde::Serialize>(
+    status: StatusCode,
+    key: &str,
+    v: Result<T, PayoutError>,
+) -> HttpResponse {
     match v {
         Ok(v) => HttpResponse::build(status).json(json!({"status": "success", key: v})),
         Err(e) => payout_error(e),
@@ -78,85 +82,234 @@ pub struct StatusQuery {
 }
 
 #[get("/api/v1/payees")]
-pub async fn list_payees(req: HttpRequest, q: web::Query<StatusQuery>, ctx: web::Data<ApiContext>) -> HttpResponse {
+pub async fn list_payees(
+    req: HttpRequest,
+    q: web::Query<StatusQuery>,
+    ctx: web::Data<ApiContext>,
+) -> HttpResponse {
     let p = auth_or_return!(req, ctx);
-    ok(StatusCode::OK, "payees", payees::list(&ctx.pool, &p, q.status.as_deref()).await)
+    ok(
+        StatusCode::OK,
+        "payees",
+        payees::list(&ctx.pool, &p, q.status.as_deref()).await,
+    )
 }
 
 /// There is no field for a bank account or card number (contract 11.2).
 #[post("/api/v1/payees")]
-pub async fn create_payee(req: HttpRequest, bytes: web::Bytes, ctx: web::Data<ApiContext>) -> HttpResponse {
+pub async fn create_payee(
+    req: HttpRequest,
+    bytes: web::Bytes,
+    ctx: web::Data<ApiContext>,
+) -> HttpResponse {
     let p = auth_or_return!(req, ctx);
     let input: NewPayee = parse_or_return!(body(&bytes));
-    ok(StatusCode::CREATED, "payee", payees::create(&ctx.pool, ctx.directory.as_ref(), &p, input, Utc::now()).await)
+    ok(
+        StatusCode::CREATED,
+        "payee",
+        payees::create(&ctx.pool, ctx.directory.as_ref(), &p, input, Utc::now()).await,
+    )
 }
 
 #[get("/api/v1/payees/{id}")]
-pub async fn get_payee(req: HttpRequest, path: web::Path<String>, ctx: web::Data<ApiContext>) -> HttpResponse {
+pub async fn get_payee(
+    req: HttpRequest,
+    path: web::Path<String>,
+    ctx: web::Data<ApiContext>,
+) -> HttpResponse {
     let p = auth_or_return!(req, ctx);
-    ok(StatusCode::OK, "payee", payees::get(&ctx.pool, &p, &path).await)
+    ok(
+        StatusCode::OK,
+        "payee",
+        payees::get(&ctx.pool, &p, &path).await,
+    )
 }
 
 #[patch("/api/v1/payees/{id}")]
-pub async fn update_payee(req: HttpRequest, path: web::Path<String>, bytes: web::Bytes, ctx: web::Data<ApiContext>) -> HttpResponse {
+pub async fn update_payee(
+    req: HttpRequest,
+    path: web::Path<String>,
+    bytes: web::Bytes,
+    ctx: web::Data<ApiContext>,
+) -> HttpResponse {
     let p = auth_or_return!(req, ctx);
     let patch: PayeePatch = parse_or_return!(body(&bytes));
-    ok(StatusCode::OK, "payee", payees::update(&ctx.pool, ctx.directory.as_ref(), &p, &path, patch, Utc::now()).await)
+    ok(
+        StatusCode::OK,
+        "payee",
+        payees::update(
+            &ctx.pool,
+            ctx.directory.as_ref(),
+            &p,
+            &path,
+            patch,
+            Utc::now(),
+        )
+        .await,
+    )
 }
 
 // ------------------------------------------------------------------ pay orders
 
 #[get("/api/v1/payorders")]
-pub async fn list_orders(req: HttpRequest, q: web::Query<StatusQuery>, ctx: web::Data<ApiContext>) -> HttpResponse {
+pub async fn list_orders(
+    req: HttpRequest,
+    q: web::Query<StatusQuery>,
+    ctx: web::Data<ApiContext>,
+) -> HttpResponse {
     let p = auth_or_return!(req, ctx);
-    ok(StatusCode::OK, "payorders", payorders::list(&ctx.pool, &ctx.payments, ctx.directory.as_ref(), &p, q.status.as_deref()).await)
+    ok(
+        StatusCode::OK,
+        "payorders",
+        payorders::list(
+            &ctx.pool,
+            &ctx.payments,
+            ctx.directory.as_ref(),
+            &p,
+            q.status.as_deref(),
+        )
+        .await,
+    )
 }
 
 #[post("/api/v1/payorders")]
-pub async fn create_order(req: HttpRequest, bytes: web::Bytes, ctx: web::Data<ApiContext>) -> HttpResponse {
+pub async fn create_order(
+    req: HttpRequest,
+    bytes: web::Bytes,
+    ctx: web::Data<ApiContext>,
+) -> HttpResponse {
     let p = auth_or_return!(req, ctx);
     let input: NewOrder = parse_or_return!(body(&bytes));
-    ok(StatusCode::CREATED, "payorder", payorders::create(&ctx.pool, &ctx.payments, ctx.directory.as_ref(), &p, input, Utc::now()).await)
+    ok(
+        StatusCode::CREATED,
+        "payorder",
+        payorders::create(
+            &ctx.pool,
+            &ctx.payments,
+            ctx.directory.as_ref(),
+            &p,
+            input,
+            Utc::now(),
+        )
+        .await,
+    )
 }
 
 #[get("/api/v1/payorders/{id}")]
-pub async fn get_order(req: HttpRequest, path: web::Path<String>, ctx: web::Data<ApiContext>) -> HttpResponse {
+pub async fn get_order(
+    req: HttpRequest,
+    path: web::Path<String>,
+    ctx: web::Data<ApiContext>,
+) -> HttpResponse {
     let p = auth_or_return!(req, ctx);
-    ok(StatusCode::OK, "payorder", payorders::get(&ctx.pool, &ctx.payments, ctx.directory.as_ref(), &p, &path).await)
+    ok(
+        StatusCode::OK,
+        "payorder",
+        payorders::get(&ctx.pool, &ctx.payments, ctx.directory.as_ref(), &p, &path).await,
+    )
 }
 
 #[patch("/api/v1/payorders/{id}")]
-pub async fn update_order(req: HttpRequest, path: web::Path<String>, bytes: web::Bytes, ctx: web::Data<ApiContext>) -> HttpResponse {
+pub async fn update_order(
+    req: HttpRequest,
+    path: web::Path<String>,
+    bytes: web::Bytes,
+    ctx: web::Data<ApiContext>,
+) -> HttpResponse {
     let p = auth_or_return!(req, ctx);
     let patch: OrderPatch = parse_or_return!(body(&bytes));
-    ok(StatusCode::OK, "payorder", payorders::update(&ctx.pool, &ctx.payments, ctx.directory.as_ref(), &p, &path, patch, Utc::now()).await)
+    ok(
+        StatusCode::OK,
+        "payorder",
+        payorders::update(
+            &ctx.pool,
+            &ctx.payments,
+            ctx.directory.as_ref(),
+            &p,
+            &path,
+            patch,
+            Utc::now(),
+        )
+        .await,
+    )
 }
 
 #[post("/api/v1/payorders/{id}/approve")]
-pub async fn approve_order(req: HttpRequest, path: web::Path<String>, bytes: web::Bytes, ctx: web::Data<ApiContext>) -> HttpResponse {
+pub async fn approve_order(
+    req: HttpRequest,
+    path: web::Path<String>,
+    bytes: web::Bytes,
+    ctx: web::Data<ApiContext>,
+) -> HttpResponse {
     let p = auth_or_return!(req, ctx);
     parse_or_return!(no_body(&bytes));
-    ok(StatusCode::OK, "result", payorders::approve(&ctx.pool, &ctx.payments, ctx.directory.as_ref(), &p, &path, Utc::now()).await)
+    ok(
+        StatusCode::OK,
+        "result",
+        payorders::approve(
+            &ctx.pool,
+            &ctx.payments,
+            ctx.directory.as_ref(),
+            &p,
+            &path,
+            Utc::now(),
+        )
+        .await,
+    )
 }
 
-async fn order_transition(req: HttpRequest, id: &str, bytes: &[u8], ctx: &ApiContext, t: Transition) -> HttpResponse {
+async fn order_transition(
+    req: HttpRequest,
+    id: &str,
+    bytes: &[u8],
+    ctx: &ApiContext,
+    t: Transition,
+) -> HttpResponse {
     let p = auth_or_return!(req, ctx);
     parse_or_return!(no_body(bytes));
-    ok(StatusCode::OK, "payorder", payorders::transition(&ctx.pool, &ctx.payments, ctx.directory.as_ref(), &p, id, t, Utc::now()).await)
+    ok(
+        StatusCode::OK,
+        "payorder",
+        payorders::transition(
+            &ctx.pool,
+            &ctx.payments,
+            ctx.directory.as_ref(),
+            &p,
+            id,
+            t,
+            Utc::now(),
+        )
+        .await,
+    )
 }
 
 #[post("/api/v1/payorders/{id}/pause")]
-pub async fn pause_order(req: HttpRequest, path: web::Path<String>, bytes: web::Bytes, ctx: web::Data<ApiContext>) -> HttpResponse {
+pub async fn pause_order(
+    req: HttpRequest,
+    path: web::Path<String>,
+    bytes: web::Bytes,
+    ctx: web::Data<ApiContext>,
+) -> HttpResponse {
     order_transition(req, &path, &bytes, &ctx, Transition::Pause).await
 }
 
 #[post("/api/v1/payorders/{id}/resume")]
-pub async fn resume_order(req: HttpRequest, path: web::Path<String>, bytes: web::Bytes, ctx: web::Data<ApiContext>) -> HttpResponse {
+pub async fn resume_order(
+    req: HttpRequest,
+    path: web::Path<String>,
+    bytes: web::Bytes,
+    ctx: web::Data<ApiContext>,
+) -> HttpResponse {
     order_transition(req, &path, &bytes, &ctx, Transition::Resume).await
 }
 
 #[post("/api/v1/payorders/{id}/cancel")]
-pub async fn cancel_order(req: HttpRequest, path: web::Path<String>, bytes: web::Bytes, ctx: web::Data<ApiContext>) -> HttpResponse {
+pub async fn cancel_order(
+    req: HttpRequest,
+    path: web::Path<String>,
+    bytes: web::Bytes,
+    ctx: web::Data<ApiContext>,
+) -> HttpResponse {
     order_transition(req, &path, &bytes, &ctx, Transition::Cancel).await
 }
 
@@ -166,10 +319,28 @@ pub struct PreviewQuery {
 }
 
 #[get("/api/v1/payorders/{id}/preview")]
-pub async fn preview_order(req: HttpRequest, path: web::Path<String>, q: web::Query<PreviewQuery>, ctx: web::Data<ApiContext>) -> HttpResponse {
+pub async fn preview_order(
+    req: HttpRequest,
+    path: web::Path<String>,
+    q: web::Query<PreviewQuery>,
+    ctx: web::Data<ApiContext>,
+) -> HttpResponse {
     let p = auth_or_return!(req, ctx);
     let periods = q.periods.unwrap_or(3);
-    ok(StatusCode::OK, "preview", payorders::preview(&ctx.pool, &ctx.payments, ctx.directory.as_ref(), &p, &path, periods, Utc::now()).await)
+    ok(
+        StatusCode::OK,
+        "preview",
+        payorders::preview(
+            &ctx.pool,
+            &ctx.payments,
+            ctx.directory.as_ref(),
+            &p,
+            &path,
+            periods,
+            Utc::now(),
+        )
+        .await,
+    )
 }
 
 // ------------------------------------------------------------------ invoices
@@ -181,44 +352,148 @@ pub struct InvoiceQuery {
 }
 
 #[get("/api/v1/invoices")]
-pub async fn list_invoices(req: HttpRequest, q: web::Query<InvoiceQuery>, ctx: web::Data<ApiContext>) -> HttpResponse {
+pub async fn list_invoices(
+    req: HttpRequest,
+    q: web::Query<InvoiceQuery>,
+    ctx: web::Data<ApiContext>,
+) -> HttpResponse {
     let p = auth_or_return!(req, ctx);
-    let f = InvoiceFilter { status: q.status.clone(), payee_id: q.payee_id.clone() };
-    ok(StatusCode::OK, "invoices", invoices::list(&ctx.pool, &ctx.payments, ctx.directory.as_ref(), &p, &f, Utc::now()).await)
+    let f = InvoiceFilter {
+        status: q.status.clone(),
+        payee_id: q.payee_id.clone(),
+    };
+    ok(
+        StatusCode::OK,
+        "invoices",
+        invoices::list(
+            &ctx.pool,
+            &ctx.payments,
+            ctx.directory.as_ref(),
+            &p,
+            &f,
+            Utc::now(),
+        )
+        .await,
+    )
 }
 
 #[post("/api/v1/invoices")]
-pub async fn submit_invoice(req: HttpRequest, bytes: web::Bytes, ctx: web::Data<ApiContext>) -> HttpResponse {
+pub async fn submit_invoice(
+    req: HttpRequest,
+    bytes: web::Bytes,
+    ctx: web::Data<ApiContext>,
+) -> HttpResponse {
     let p = auth_or_return!(req, ctx);
     let input: NewInvoice = parse_or_return!(body(&bytes));
-    ok(StatusCode::CREATED, "invoice", invoices::submit(&ctx.pool, &ctx.payments, ctx.directory.as_ref(), &p, input, Utc::now()).await)
+    ok(
+        StatusCode::CREATED,
+        "invoice",
+        invoices::submit(
+            &ctx.pool,
+            &ctx.payments,
+            ctx.directory.as_ref(),
+            &p,
+            input,
+            Utc::now(),
+        )
+        .await,
+    )
 }
 
 #[get("/api/v1/invoices/{id}")]
-pub async fn get_invoice(req: HttpRequest, path: web::Path<String>, ctx: web::Data<ApiContext>) -> HttpResponse {
+pub async fn get_invoice(
+    req: HttpRequest,
+    path: web::Path<String>,
+    ctx: web::Data<ApiContext>,
+) -> HttpResponse {
     let p = auth_or_return!(req, ctx);
-    ok(StatusCode::OK, "invoice", invoices::get(&ctx.pool, &ctx.payments, ctx.directory.as_ref(), &p, &path, Utc::now()).await)
+    ok(
+        StatusCode::OK,
+        "invoice",
+        invoices::get(
+            &ctx.pool,
+            &ctx.payments,
+            ctx.directory.as_ref(),
+            &p,
+            &path,
+            Utc::now(),
+        )
+        .await,
+    )
 }
 
 #[post("/api/v1/invoices/{id}/approve")]
-pub async fn approve_invoice(req: HttpRequest, path: web::Path<String>, bytes: web::Bytes, ctx: web::Data<ApiContext>) -> HttpResponse {
+pub async fn approve_invoice(
+    req: HttpRequest,
+    path: web::Path<String>,
+    bytes: web::Bytes,
+    ctx: web::Data<ApiContext>,
+) -> HttpResponse {
     let p = auth_or_return!(req, ctx);
     parse_or_return!(no_body(&bytes));
-    ok(StatusCode::OK, "result", invoices::approve(&ctx.pool, &ctx.payments, ctx.directory.as_ref(), &p, &path, Utc::now()).await)
+    ok(
+        StatusCode::OK,
+        "result",
+        invoices::approve(
+            &ctx.pool,
+            &ctx.payments,
+            ctx.directory.as_ref(),
+            &p,
+            &path,
+            Utc::now(),
+        )
+        .await,
+    )
 }
 
 #[post("/api/v1/invoices/{id}/reject")]
-pub async fn reject_invoice(req: HttpRequest, path: web::Path<String>, bytes: web::Bytes, ctx: web::Data<ApiContext>) -> HttpResponse {
+pub async fn reject_invoice(
+    req: HttpRequest,
+    path: web::Path<String>,
+    bytes: web::Bytes,
+    ctx: web::Data<ApiContext>,
+) -> HttpResponse {
     let p = auth_or_return!(req, ctx);
     let b = parse_or_return!(reason_body(&bytes));
-    ok(StatusCode::OK, "invoice", invoices::reject(&ctx.pool, &ctx.payments, ctx.directory.as_ref(), &p, &path, b.reason.as_deref(), Utc::now()).await)
+    ok(
+        StatusCode::OK,
+        "invoice",
+        invoices::reject(
+            &ctx.pool,
+            &ctx.payments,
+            ctx.directory.as_ref(),
+            &p,
+            &path,
+            b.reason.as_deref(),
+            Utc::now(),
+        )
+        .await,
+    )
 }
 
 #[post("/api/v1/invoices/{id}/void")]
-pub async fn void_invoice(req: HttpRequest, path: web::Path<String>, bytes: web::Bytes, ctx: web::Data<ApiContext>) -> HttpResponse {
+pub async fn void_invoice(
+    req: HttpRequest,
+    path: web::Path<String>,
+    bytes: web::Bytes,
+    ctx: web::Data<ApiContext>,
+) -> HttpResponse {
     let p = auth_or_return!(req, ctx);
     let b = parse_or_return!(reason_body(&bytes));
-    ok(StatusCode::OK, "invoice", invoices::void(&ctx.pool, &ctx.payments, ctx.directory.as_ref(), &p, &path, b.reason.as_deref(), Utc::now()).await)
+    ok(
+        StatusCode::OK,
+        "invoice",
+        invoices::void(
+            &ctx.pool,
+            &ctx.payments,
+            ctx.directory.as_ref(),
+            &p,
+            &path,
+            b.reason.as_deref(),
+            Utc::now(),
+        )
+        .await,
+    )
 }
 
 // ------------------------------------------------------------------ statement
@@ -231,9 +506,17 @@ pub struct StatementQuery {
 }
 
 #[get("/api/v1/payouts/statement")]
-pub async fn payout_statement(req: HttpRequest, q: web::Query<StatementQuery>, ctx: web::Data<ApiContext>) -> HttpResponse {
+pub async fn payout_statement(
+    req: HttpRequest,
+    q: web::Query<StatementQuery>,
+    ctx: web::Data<ApiContext>,
+) -> HttpResponse {
     let p = auth_or_return!(req, ctx);
-    ok(StatusCode::OK, "statement", statement::statement(&ctx.pool, &p, &q.payee, &q.from, &q.to).await)
+    ok(
+        StatusCode::OK,
+        "statement",
+        statement::statement(&ctx.pool, &p, &q.payee, &q.from, &q.to).await,
+    )
 }
 
 /// Register the payroll routes. Called from `api::configure`.

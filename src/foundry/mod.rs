@@ -138,7 +138,9 @@ impl FoundryEvent {
     }
 
     pub fn repo_ref(&self) -> Option<RepoRef> {
-        self.repo.as_deref().map(|r| RepoRef::new(self.provider, &self.host, r))
+        self.repo
+            .as_deref()
+            .map(|r| RepoRef::new(self.provider, &self.host, r))
     }
 }
 
@@ -182,8 +184,13 @@ pub fn host_from_url(url: &str) -> Option<String> {
     let rest = url.split_once("://").map(|(_, r)| r).unwrap_or(url);
     let authority = rest.split(['/', '?', '#']).next()?;
     let host = authority.rsplit('@').next()?; // drop userinfo
-    // Port dropped: registry entries are ':'-separated, so a host is a bare name.
-    let host = host.split(':').next().unwrap_or("").trim().to_ascii_lowercase();
+                                              // Port dropped: registry entries are ':'-separated, so a host is a bare name.
+    let host = host
+        .split(':')
+        .next()
+        .unwrap_or("")
+        .trim()
+        .to_ascii_lowercase();
     if host.is_empty() {
         None
     } else {
@@ -200,26 +207,54 @@ mod tests {
     /// MSync rename is still recognized as a duplicate.
     #[test]
     fn webhook_dedupe_keys_survive_the_rename() {
-        assert_eq!(github::delivery_key("72d3162e-cc78-11e3-81ab-4c9367dc0958"), "delivery:72d3162e-cc78-11e3-81ab-4c9367dc0958");
-        assert_eq!(gitlab::delivery_key("GitLab.com", "u-1"), "gitlab:gitlab.com:delivery:u-1");
-        assert_eq!(provider_key(FoundryProvider::GitHub, "github.com", "pr_merged:id9:abc"), "pr_merged:id9:abc");
         assert_eq!(
-            provider_key(FoundryProvider::GitLab, "Git.Example.org", "review_approved:id5:maint"),
+            github::delivery_key("72d3162e-cc78-11e3-81ab-4c9367dc0958"),
+            "delivery:72d3162e-cc78-11e3-81ab-4c9367dc0958"
+        );
+        assert_eq!(
+            gitlab::delivery_key("GitLab.com", "u-1"),
+            "gitlab:gitlab.com:delivery:u-1"
+        );
+        assert_eq!(
+            provider_key(FoundryProvider::GitHub, "github.com", "pr_merged:id9:abc"),
+            "pr_merged:id9:abc"
+        );
+        assert_eq!(
+            provider_key(
+                FoundryProvider::GitLab,
+                "Git.Example.org",
+                "review_approved:id5:maint"
+            ),
             "gitlab:git.example.org:review_approved:id5:maint"
         );
     }
 
     #[test]
     fn legacy_usernames() {
-        assert_eq!(legacy_username(FoundryProvider::GitHub, "github.com", "alice"), "alice");
-        assert_eq!(legacy_username(FoundryProvider::GitLab, "gitlab.com", "alice"), "gitlab:alice");
-        assert_eq!(legacy_username(FoundryProvider::GitLab, "GitLab.Example.org", "alice"), "gitlab:gitlab.example.org:alice");
+        assert_eq!(
+            legacy_username(FoundryProvider::GitHub, "github.com", "alice"),
+            "alice"
+        );
+        assert_eq!(
+            legacy_username(FoundryProvider::GitLab, "gitlab.com", "alice"),
+            "gitlab:alice"
+        );
+        assert_eq!(
+            legacy_username(FoundryProvider::GitLab, "GitLab.Example.org", "alice"),
+            "gitlab:gitlab.example.org:alice"
+        );
     }
 
     #[test]
     fn hosts() {
-        assert_eq!(host_from_url("https://GitLab.com/g/p").as_deref(), Some("gitlab.com"));
-        assert_eq!(host_from_url("https://git.example.org:8443/g/p").as_deref(), Some("git.example.org"));
+        assert_eq!(
+            host_from_url("https://GitLab.com/g/p").as_deref(),
+            Some("gitlab.com")
+        );
+        assert_eq!(
+            host_from_url("https://git.example.org:8443/g/p").as_deref(),
+            Some("git.example.org")
+        );
         assert_eq!(host_from_url("").as_deref(), None);
     }
 }

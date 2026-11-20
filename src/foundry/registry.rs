@@ -55,7 +55,9 @@ impl RepoRegistry {
 
     /// An explicit list (the CRA seam). An empty list means nothing earns.
     pub fn from_entries(entries: Vec<RepoEntry>) -> Self {
-        Self { entries: Some(entries) }
+        Self {
+            entries: Some(entries),
+        }
     }
 
     pub fn from_env() -> Result<Self, String> {
@@ -79,30 +81,49 @@ impl RepoRegistry {
             }
             let parts: Vec<&str> = item.split(':').map(str::trim).collect();
             if parts.len() < 3 || parts.len() > 5 {
-                return Err(format!("{ENV_VAR}: '{item}' is not provider:host:path[:flag[:flag]]"));
+                return Err(format!(
+                    "{ENV_VAR}: '{item}' is not provider:host:path[:flag[:flag]]"
+                ));
             }
             let provider = FoundryProvider::parse(parts[0])
                 .ok_or_else(|| format!("{ENV_VAR}: unknown provider '{}' in '{item}'", parts[0]))?;
             let host = parts[1].to_ascii_lowercase();
             let path = parts[2].trim_matches('/').to_ascii_lowercase();
             if host.is_empty() || path.is_empty() || !path.contains('/') {
-                return Err(format!("{ENV_VAR}: '{item}' needs a host and an owner/repo path"));
+                return Err(format!(
+                    "{ENV_VAR}: '{item}' needs a host and an owner/repo path"
+                ));
             }
             let (mut canonical, mut private) = (true, false);
             for flag in &parts[3..] {
                 match flag.to_ascii_lowercase().as_str() {
                     "mirror" if canonical => canonical = false,
                     "private" if !private => private = true,
-                    other => return Err(format!("{ENV_VAR}: bad or repeated flag '{other}' in '{item}'")),
+                    other => {
+                        return Err(format!(
+                            "{ENV_VAR}: bad or repeated flag '{other}' in '{item}'"
+                        ))
+                    }
                 }
             }
-            let entry = RepoEntry { provider, host, path, canonical, private };
-            if entries.iter().any(|e: &RepoEntry| e.repo_ref() == entry.repo_ref()) {
+            let entry = RepoEntry {
+                provider,
+                host,
+                path,
+                canonical,
+                private,
+            };
+            if entries
+                .iter()
+                .any(|e: &RepoEntry| e.repo_ref() == entry.repo_ref())
+            {
                 return Err(format!("{ENV_VAR}: '{item}' listed twice"));
             }
             entries.push(entry);
         }
-        Ok(Self { entries: Some(entries) })
+        Ok(Self {
+            entries: Some(entries),
+        })
     }
 
     pub fn is_legacy(&self) -> bool {
@@ -119,14 +140,21 @@ impl RepoRegistry {
     }
 
     /// May an event from this repository earn merit?
-    pub fn decide(&self, provider: FoundryProvider, host: &str, repo: Option<&str>) -> RepoDecision {
+    pub fn decide(
+        &self,
+        provider: FoundryProvider,
+        host: &str,
+        repo: Option<&str>,
+    ) -> RepoDecision {
         if self.is_legacy() {
             return match provider {
                 FoundryProvider::GitHub => RepoDecision::Earn,
                 _ => RepoDecision::ProviderRefused,
             };
         }
-        let Some(repo) = repo else { return RepoDecision::Unlisted };
+        let Some(repo) = repo else {
+            return RepoDecision::Unlisted;
+        };
         match self.find(provider, host, repo) {
             Some(e) if e.canonical => RepoDecision::Earn,
             Some(_) => RepoDecision::Mirror,
@@ -142,7 +170,9 @@ impl RepoRegistry {
         if self.is_legacy() {
             return true;
         }
-        let Some(provider) = FoundryProvider::parse(&r.provider) else { return false };
+        let Some(provider) = FoundryProvider::parse(&r.provider) else {
+            return false;
+        };
         matches!(self.find(provider, &r.host, &r.repo), Some(e) if !e.private)
     }
 }
@@ -156,9 +186,15 @@ mod tests {
     fn legacy_mode() {
         let r = RepoRegistry::from_spec("  ").unwrap();
         assert!(r.is_legacy());
-        assert_eq!(r.decide(GitHub, "github.com", Some("a/b")), RepoDecision::Earn);
+        assert_eq!(
+            r.decide(GitHub, "github.com", Some("a/b")),
+            RepoDecision::Earn
+        );
         assert_eq!(r.decide(GitHub, "github.com", None), RepoDecision::Earn);
-        assert_eq!(r.decide(GitLab, "gitlab.com", Some("a/b")), RepoDecision::ProviderRefused);
+        assert_eq!(
+            r.decide(GitLab, "gitlab.com", Some("a/b")),
+            RepoDecision::ProviderRefused
+        );
     }
 
     #[test]
@@ -167,13 +203,31 @@ mod tests {
             "github:github.com:Org/Main, gitlab:gitlab.com:org/main:mirror, gitlab:git.example.org:grp/sub/proj:private, github:github.com:org/secret:private:mirror",
         )
         .unwrap();
-        assert_eq!(r.decide(GitHub, "github.com", Some("org/main")), RepoDecision::Earn);
-        assert_eq!(r.decide(GitHub, "GITHUB.com", Some("ORG/MAIN")), RepoDecision::Earn);
-        assert_eq!(r.decide(GitLab, "gitlab.com", Some("org/main")), RepoDecision::Mirror);
-        assert_eq!(r.decide(GitLab, "git.example.org", Some("grp/sub/proj")), RepoDecision::Earn);
-        assert_eq!(r.decide(GitHub, "github.com", Some("org/other")), RepoDecision::Unlisted);
+        assert_eq!(
+            r.decide(GitHub, "github.com", Some("org/main")),
+            RepoDecision::Earn
+        );
+        assert_eq!(
+            r.decide(GitHub, "GITHUB.com", Some("ORG/MAIN")),
+            RepoDecision::Earn
+        );
+        assert_eq!(
+            r.decide(GitLab, "gitlab.com", Some("org/main")),
+            RepoDecision::Mirror
+        );
+        assert_eq!(
+            r.decide(GitLab, "git.example.org", Some("grp/sub/proj")),
+            RepoDecision::Earn
+        );
+        assert_eq!(
+            r.decide(GitHub, "github.com", Some("org/other")),
+            RepoDecision::Unlisted
+        );
         assert_eq!(r.decide(GitHub, "github.com", None), RepoDecision::Unlisted);
-        assert_eq!(r.decide(GitHub, "github.com", Some("org/secret")), RepoDecision::Mirror);
+        assert_eq!(
+            r.decide(GitHub, "github.com", Some("org/secret")),
+            RepoDecision::Mirror
+        );
         assert!(r.is_public(&RepoRef::new(GitHub, "github.com", "org/main")));
         assert!(!r.is_public(&RepoRef::new(GitLab, "git.example.org", "grp/sub/proj")));
         assert!(!r.is_public(&RepoRef::new(GitHub, "github.com", "org/unlisted")));
@@ -190,7 +244,10 @@ mod tests {
             "github:github.com:a/b:mirror:mirror",
             "github:github.com:a/b,github:github.com:A/B",
         ] {
-            assert!(RepoRegistry::from_spec(bad).is_err(), "{bad} should be rejected");
+            assert!(
+                RepoRegistry::from_spec(bad).is_err(),
+                "{bad} should be rejected"
+            );
         }
     }
 }

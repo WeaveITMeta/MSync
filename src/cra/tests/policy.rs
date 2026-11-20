@@ -8,7 +8,9 @@ use crate::cra::policy::{ExternalEarn, PayoutEligible, Visibility, POLICY_KEYS};
 /// fails if one appears outside `policy::resolve_org_policy`.
 #[test]
 fn mode_is_read_in_exactly_one_function() {
-    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src").join("cra");
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("src")
+        .join("cra");
     let needle: String = [".", "mode"].concat();
     let mut files = Vec::new();
     let mut stack = vec![root.clone()];
@@ -30,7 +32,9 @@ fn mode_is_read_in_exactly_one_function() {
         let text = std::fs::read_to_string(path).unwrap();
         // The byte range of `fn resolve_org_policy` in policy.rs, by brace matching.
         let allowed = if path.file_name().unwrap() == "policy.rs" {
-            let start = text.find("pub fn resolve_org_policy(").expect("resolve_org_policy must exist");
+            let start = text
+                .find("pub fn resolve_org_policy(")
+                .expect("resolve_org_policy must exist");
             let open = start + text[start..].find('{').unwrap();
             let mut depth = 0;
             let mut end = open;
@@ -68,7 +72,10 @@ fn mode_is_read_in_exactly_one_function() {
         }
     }
     assert!(inside >= 1, "resolve_org_policy must read the mode");
-    assert!(outside.is_empty(), "the mode is read outside resolve_org_policy at: {outside:?}");
+    assert!(
+        outside.is_empty(),
+        "the mode is read outside resolve_org_policy at: {outside:?}"
+    );
 }
 
 #[test]
@@ -77,29 +84,67 @@ fn mode_defaults_match_hierarchy_doc_table() {
     let hybrid = mode_defaults(Mode::Hybrid);
     let closed = mode_defaults(Mode::Closed);
     assert_eq!(
-        (open.grants_two_person_min_rank, hybrid.grants_two_person_min_rank, closed.grants_two_person_min_rank),
+        (
+            open.grants_two_person_min_rank,
+            hybrid.grants_two_person_min_rank,
+            closed.grants_two_person_min_rank
+        ),
         (60, 50, 30)
     );
     assert_eq!(
-        (open.promotion_merit_rank_ceiling, hybrid.promotion_merit_rank_ceiling, closed.promotion_merit_rank_ceiling),
+        (
+            open.promotion_merit_rank_ceiling,
+            hybrid.promotion_merit_rank_ceiling,
+            closed.promotion_merit_rank_ceiling
+        ),
         (30, 30, 0)
     );
-    assert_eq!((open.grants_max_term_days, hybrid.grants_max_term_days, closed.grants_max_term_days), (365, 180, 90));
-    assert_eq!((open.payouts_hold_days, hybrid.payouts_hold_days, closed.payouts_hold_days), (7, 7, 14));
     assert_eq!(
-        (open.payouts_two_person_min_cents, hybrid.payouts_two_person_min_cents, closed.payouts_two_person_min_cents),
+        (
+            open.grants_max_term_days,
+            hybrid.grants_max_term_days,
+            closed.grants_max_term_days
+        ),
+        (365, 180, 90)
+    );
+    assert_eq!(
+        (
+            open.payouts_hold_days,
+            hybrid.payouts_hold_days,
+            closed.payouts_hold_days
+        ),
+        (7, 7, 14)
+    );
+    assert_eq!(
+        (
+            open.payouts_two_person_min_cents,
+            hybrid.payouts_two_person_min_cents,
+            closed.payouts_two_person_min_cents
+        ),
         (50_000, 25_000, 0)
     );
-    assert_eq!((open.probation_days, hybrid.probation_days, closed.probation_days), (14, 30, 90));
+    assert_eq!(
+        (
+            open.probation_days,
+            hybrid.probation_days,
+            closed.probation_days
+        ),
+        (14, 30, 90)
+    );
     assert_eq!(open.visibility_roster, Visibility::Public);
     assert_eq!(hybrid.visibility_roster, Visibility::Members);
     assert_eq!(closed.visibility_roster, Visibility::NeedToKnow);
     assert_eq!(closed.visibility_leaderboard, Visibility::Off);
     assert_eq!(closed.visibility_profile, Visibility::SelfAndChain);
-    assert_eq!(hybrid.merit_external_contributions_earn, ExternalEarn::PublicReposOnly);
+    assert_eq!(
+        hybrid.merit_external_contributions_earn,
+        ExternalEarn::PublicReposOnly
+    );
     assert_eq!(closed.merit_external_contributions_earn, ExternalEarn::No);
     assert_eq!(closed.payouts_eligible, PayoutEligible::PositionsOnly);
-    assert!(!open.compartments_enabled && hybrid.compartments_enabled && closed.compartments_enabled);
+    assert!(
+        !open.compartments_enabled && hybrid.compartments_enabled && closed.compartments_enabled
+    );
     for p in [&open, &hybrid, &closed] {
         assert!(!p.promotion_merit_may_confer_authority);
         assert_eq!(p.consumers_subject_ids, "pairwise");
@@ -135,7 +180,11 @@ const SOURCE_AVAILABLE_TABLE: &[(&str, &str)] = &[
 fn source_available_defaults_match_the_contract_table_field_by_field() {
     let p = mode_defaults(Mode::SourceAvailable);
     let got = p.entries();
-    assert_eq!(SOURCE_AVAILABLE_TABLE.len(), POLICY_KEYS.len(), "the table covers every policy field");
+    assert_eq!(
+        SOURCE_AVAILABLE_TABLE.len(),
+        POLICY_KEYS.len(),
+        "the table covers every policy field"
+    );
     assert_eq!(got.len(), SOURCE_AVAILABLE_TABLE.len());
     for ((key, want), (got_key, got_val)) in SOURCE_AVAILABLE_TABLE.iter().zip(&got) {
         assert_eq!(key, got_key, "field order");
@@ -144,29 +193,64 @@ fn source_available_defaults_match_the_contract_table_field_by_field() {
     // The one documented difference from hybrid.
     let hybrid = mode_defaults(Mode::Hybrid);
     assert_eq!(p.merit_external_contributions_earn, ExternalEarn::Yes);
-    assert_eq!(hybrid.merit_external_contributions_earn, ExternalEarn::PublicReposOnly);
-    let differs: Vec<&str> = p.entries().into_iter().zip(hybrid.entries()).filter(|(a, b)| a != b).map(|(a, _)| a.0).collect();
+    assert_eq!(
+        hybrid.merit_external_contributions_earn,
+        ExternalEarn::PublicReposOnly
+    );
+    let differs: Vec<&str> = p
+        .entries()
+        .into_iter()
+        .zip(hybrid.entries())
+        .filter(|(a, b)| a != b)
+        .map(|(a, _)| a.0)
+        .collect();
     assert_eq!(differs, vec!["merit.external_contributions_earn"]);
-    assert_eq!((Mode::SourceAvailable.as_str(), Mode::SourceAvailable.label()), ("source_available", "Source available"));
+    assert_eq!(
+        (
+            Mode::SourceAvailable.as_str(),
+            Mode::SourceAvailable.label()
+        ),
+        ("source_available", "Source available")
+    );
 }
 
 /// Every mode's defaults against the 3.1.1 table as written in
 /// `docs/CRA_PLATFORM.md`, so the code and the contract cannot drift apart.
 #[test]
 fn every_mode_default_matches_the_table_in_the_platform_contract() {
-    let doc = std::fs::read_to_string(std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("docs").join("CRA_PLATFORM.md")).unwrap();
+    let doc = std::fs::read_to_string(
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("docs")
+            .join("CRA_PLATFORM.md"),
+    )
+    .unwrap();
     let start = doc.find("### 3.1.1 Modes").expect("contract section 3.1.1");
     let rows: Vec<Vec<String>> = doc[start..]
         .lines()
         .skip_while(|l| !l.starts_with('|'))
         .take_while(|l| l.starts_with('|'))
-        .map(|l| l.trim_matches('|').split('|').map(|c| c.trim().replace('`', "")).collect())
+        .map(|l| {
+            l.trim_matches('|')
+                .split('|')
+                .map(|c| c.trim().replace('`', ""))
+                .collect()
+        })
         .collect();
     let header = &rows[0];
     let modes: Vec<Mode> = Mode::ALL.to_vec();
-    assert_eq!(header[1..].to_vec(), modes.iter().map(|m| m.as_str().to_string()).collect::<Vec<_>>());
+    assert_eq!(
+        header[1..].to_vec(),
+        modes
+            .iter()
+            .map(|m| m.as_str().to_string())
+            .collect::<Vec<_>>()
+    );
     let body: Vec<&Vec<String>> = rows[2..].iter().collect();
-    assert_eq!(body.len(), POLICY_KEYS.len(), "one table row per policy field");
+    assert_eq!(
+        body.len(),
+        POLICY_KEYS.len(),
+        "one table row per policy field"
+    );
     for (col, mode) in modes.iter().enumerate() {
         let entries = mode_defaults(*mode).entries();
         for (row, (key, value)) in body.iter().zip(&entries) {
@@ -174,7 +258,9 @@ fn every_mode_default_matches_the_table_in_the_platform_contract() {
             let cell = &row[col + 1];
             let want = match cell.as_str() {
                 "all" => "[*]".to_string(),
-                c if c.contains(" plus ") => format!("[{}]", c.split(" plus ").collect::<Vec<_>>().join(", ")),
+                c if c.contains(" plus ") => {
+                    format!("[{}]", c.split(" plus ").collect::<Vec<_>>().join(", "))
+                }
                 c => c.to_string(),
             };
             assert_eq!(value, &want, "{} `{key}`", mode.as_str());
@@ -185,12 +271,19 @@ fn every_mode_default_matches_the_table_in_the_platform_contract() {
 /// The base fixture switched to `source_available`, with the two-person
 /// grants moved inside its 180-day term limit.
 fn source_available(files: CraFiles) -> CraFiles {
-    let files = edit(files, F::Org, "mode = \"open\"", "mode = \"source_available\"");
+    let files = edit(
+        files,
+        F::Org,
+        "mode = \"open\"",
+        "mode = \"source_available\"",
+    );
     within_180_days(files)
 }
 
 fn within_180_days(mut files: CraFiles) -> CraFiles {
-    files.members = files.members.replace("expires = \"2027-06-01\"", "expires = \"2027-05-01\"");
+    files.members = files
+        .members
+        .replace("expires = \"2027-06-01\"", "expires = \"2027-05-01\"");
     files
 }
 
@@ -200,27 +293,65 @@ fn source_available_parses_from_org_toml() {
     assert_eq!(s.mode_label, Mode::SourceAvailable);
     assert_eq!(s.policy, mode_defaults(Mode::SourceAvailable));
     // Overrides apply on top of it like any other mode.
-    let files = edit(source_available(base()), F::Org, "[discord]", "[policy]\n\"payouts.hold_days\" = 9\n\n[discord]");
+    let files = edit(
+        source_available(base()),
+        F::Org,
+        "[discord]",
+        "[policy]\n\"payouts.hold_days\" = 9\n\n[discord]",
+    );
     let files = edit(files, F::Payouts, "hold_days = 7", "hold_days = 9");
     let s = load_ok(&files);
-    assert_eq!((s.policy.payouts_hold_days, s.policy.grants_two_person_min_rank), (9, 50));
+    assert_eq!(
+        (
+            s.policy.payouts_hold_days,
+            s.policy.grants_two_person_min_rank
+        ),
+        (9, 50)
+    );
     // Its 180-day term limit applies: the base fixture's 2027-06-01 grants are too long.
-    let long = edit(base(), F::Org, "mode = \"open\"", "mode = \"source_available\"");
+    let long = edit(
+        base(),
+        F::Org,
+        "mode = \"open\"",
+        "mode = \"source_available\"",
+    );
     assert_refused(&long, ErrorCode::GrantTermTooLong);
 }
 
 #[test]
 fn unknown_modes_are_still_refused() {
-    for bad in ["secret", "sourceavailable", "source-available", "Source available", "SourceAvailable", "source_available "] {
-        let files = edit(base(), F::Org, "mode = \"open\"", &format!("mode = \"{bad}\""));
+    for bad in [
+        "secret",
+        "sourceavailable",
+        "source-available",
+        "Source available",
+        "SourceAvailable",
+        "source_available ",
+    ] {
+        let files = edit(
+            base(),
+            F::Org,
+            "mode = \"open\"",
+            &format!("mode = \"{bad}\""),
+        );
         let codes = error_codes(&files);
-        assert!(codes.contains(&ErrorCode::Parse), "`{bad}`: expected Parse, got {codes:?}");
+        assert!(
+            codes.contains(&ErrorCode::Parse),
+            "`{bad}`: expected Parse, got {codes:?}"
+        );
     }
 }
 
 #[test]
 fn a_mode_change_to_or_from_source_available_is_two_person() {
-    let with_mode = |m: &str| within_180_days(edit(base(), F::Org, "mode = \"open\"", &format!("mode = \"{m}\"")));
+    let with_mode = |m: &str| {
+        within_180_days(edit(
+            base(),
+            F::Org,
+            "mode = \"open\"",
+            &format!("mode = \"{m}\""),
+        ))
+    };
     for (from, to) in [
         (Mode::Open, Mode::SourceAvailable),
         (Mode::SourceAvailable, Mode::Open),
@@ -237,10 +368,18 @@ fn a_mode_change_to_or_from_source_available_is_two_person() {
         // A direct push by a Lead (80) is refused: no second person.
         let r = auth(&old, &new, &push("lena-gh"));
         assert_denied(&r, ViolationCode::DirectPushNeedsApproval);
-        let items: Vec<String> = r.unwrap_err().into_iter().filter(|v| v.code == ViolationCode::DirectPushNeedsApproval).map(|v| v.item).collect();
+        let items: Vec<String> = r
+            .unwrap_err()
+            .into_iter()
+            .filter(|v| v.code == ViolationCode::DirectPushNeedsApproval)
+            .map(|v| v.item)
+            .collect();
         assert!(items.contains(&item), "{item} not in {items:?}");
         // A pull request with the author as the only approver is refused too.
-        assert!(auth(&old, &new, &pr("lena-gh", "lena-gh", &["lena-gh"])).is_err(), "{item}");
+        assert!(
+            auth(&old, &new, &pr("lena-gh", "lena-gh", &["lena-gh"])).is_err(),
+            "{item}"
+        );
         // Approved by a second Lead, it is authorized.
         assert_allowed(&auth(&old, &new, &pr("lena-gh", "lena-gh", &["lars-gh"])));
     }
@@ -254,10 +393,19 @@ fn plan_change_previews_a_switch_to_source_available() {
     let m = p.mode_change.as_ref().unwrap();
     assert_eq!((m.old, m.new), (Some(Mode::Open), Mode::SourceAvailable));
     let fields: Vec<&str> = p.policy_changes.iter().map(|c| c.path.as_str()).collect();
-    for f in ["visibility.roster", "visibility.leaderboard", "compartments.enabled", "grants.two_person_min_rank", "grants.max_term_days"] {
+    for f in [
+        "visibility.roster",
+        "visibility.leaderboard",
+        "compartments.enabled",
+        "grants.two_person_min_rank",
+        "grants.max_term_days",
+    ] {
         assert!(fields.contains(&f), "{f} missing from {fields:?}");
     }
-    assert!(!fields.contains(&"merit.external_contributions_earn"), "open and source_available both earn: {fields:?}");
+    assert!(
+        !fields.contains(&"merit.external_contributions_earn"),
+        "open and source_available both earn: {fields:?}"
+    );
     // Two-person at the lower threshold (50), org changes above the higher (60).
     assert_eq!((p.two_person_min_rank, p.org_change_rank), (50, 60));
     let md = p.render_markdown();
@@ -272,10 +420,18 @@ fn overrides_win_field_by_field_in_both_toml_forms() {
     o.insert("payouts.hold_days".to_string(), toml::Value::Integer(10));
     let p = effective_policy(Mode::Open, &o).unwrap();
     assert_eq!(p.payouts_hold_days, 10);
-    assert_eq!(p.grants_two_person_min_rank, 60, "other fields keep the mode default");
+    assert_eq!(
+        p.grants_two_person_min_rank, 60,
+        "other fields keep the mode default"
+    );
 
     // The unquoted dotted form `grants.two_person_min_rank = 70` is a nested table.
-    let files = edit(base(), F::Org, "[discord]", "[policy]\ngrants.two_person_min_rank = 70\n\"payouts.hold_days\" = 9\n\n[discord]");
+    let files = edit(
+        base(),
+        F::Org,
+        "[discord]",
+        "[policy]\ngrants.two_person_min_rank = 70\n\"payouts.hold_days\" = 9\n\n[discord]",
+    );
     let files = edit(files, F::Payouts, "hold_days = 7", "hold_days = 9");
     let s = load_ok(&files);
     assert_eq!(s.policy.grants_two_person_min_rank, 70);
@@ -287,13 +443,24 @@ fn bad_policy_overrides_are_refused() {
     for (line, what) in [
         ("\"no.such_key\" = 1", "unknown key"),
         ("\"payouts.hold_days\" = \"ten\"", "wrong type"),
-        ("\"visibility.leaderboard\" = \"need_to_know\"", "value outside the field's set"),
+        (
+            "\"visibility.leaderboard\" = \"need_to_know\"",
+            "value outside the field's set",
+        ),
         ("\"consumers.subject_ids\" = \"raw\"", "only pairwise"),
         ("\"promotion.merit_rank_ceiling\" = 1000", "ceiling 1000"),
     ] {
-        let files = edit(base(), F::Org, "[discord]", &format!("[policy]\n{line}\n\n[discord]"));
+        let files = edit(
+            base(),
+            F::Org,
+            "[discord]",
+            &format!("[policy]\n{line}\n\n[discord]"),
+        );
         let codes = error_codes(&files);
-        assert!(codes.contains(&ErrorCode::PolicyOverride), "{what}: expected PolicyOverride, got {codes:?}");
+        assert!(
+            codes.contains(&ErrorCode::PolicyOverride),
+            "{what}: expected PolicyOverride, got {codes:?}"
+        );
     }
 }
 
@@ -309,7 +476,15 @@ fn content_hash_is_stable_and_covers_every_file_in_order() {
         assert_ne!(a.content_hash(), b.content_hash());
     }
     // Moving bytes across a file boundary changes the hash (length framing).
-    let x = CraFiles { org: "ab".into(), roles: "c".into(), ..Default::default() };
-    let y = CraFiles { org: "a".into(), roles: "bc".into(), ..Default::default() };
+    let x = CraFiles {
+        org: "ab".into(),
+        roles: "c".into(),
+        ..Default::default()
+    };
+    let y = CraFiles {
+        org: "a".into(),
+        roles: "bc".into(),
+        ..Default::default()
+    };
     assert_ne!(x.content_hash(), y.content_hash());
 }

@@ -83,8 +83,12 @@ pub enum PlatformError {
 impl std::fmt::Display for PlatformError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            PlatformError::RateLimited { retry_after_secs: Some(s) } => write!(f, "rate limited (retry after {s}s)"),
-            PlatformError::RateLimited { retry_after_secs: None } => write!(f, "rate limited"),
+            PlatformError::RateLimited {
+                retry_after_secs: Some(s),
+            } => write!(f, "rate limited (retry after {s}s)"),
+            PlatformError::RateLimited {
+                retry_after_secs: None,
+            } => write!(f, "rate limited"),
             PlatformError::Refused(m) => write!(f, "refused: {m}"),
             PlatformError::Api(m) => write!(f, "{m}"),
         }
@@ -130,10 +134,16 @@ pub trait SyncPlatform: Send + Sync {
     fn configured(&self) -> bool;
 
     /// Whether each of `roles` may be managed. Called before anything is read.
-    async fn role_safety(&self, roles: &[String]) -> Result<BTreeMap<String, RoleSafety>, PlatformError>;
+    async fn role_safety(
+        &self,
+        roles: &[String],
+    ) -> Result<BTreeMap<String, RoleSafety>, PlatformError>;
 
     /// The current holders of each of `roles`, and of nothing else.
-    async fn holders(&self, roles: &[String]) -> Result<BTreeMap<String, BTreeSet<String>>, PlatformError>;
+    async fn holders(
+        &self,
+        roles: &[String],
+    ) -> Result<BTreeMap<String, BTreeSet<String>>, PlatformError>;
 
     async fn add_member(&self, role: &str, user: &str) -> Result<(), PlatformError>;
 
@@ -206,7 +216,10 @@ pub fn sync_audit_action(kind: SyncEventKind) -> &'static str {
 /// is appended to the audit log, best effort (a failed audit write is logged and never
 /// stops role sync). Drift (reverted and held) is also written to `chat_drift_events`, which
 /// the anti-flap hold reads. Returns the drift row id when one was written.
-pub async fn record_sync_event(pool: &SqlitePool, ev: &SyncEvent) -> Result<Option<i64>, sqlx::Error> {
+pub async fn record_sync_event(
+    pool: &SqlitePool,
+    ev: &SyncEvent,
+) -> Result<Option<i64>, sqlx::Error> {
     let mut entry = crate::audit::AuditEntry::new(
         crate::audit::ActorKind::System,
         "system:role-sync",
@@ -277,7 +290,13 @@ async fn open_holds(pool: &SqlitePool, p: ChatPlatform) -> Result<BTreeSet<Pair>
 
 /// Reverts of one pair inside the anti-flap window, counted from the later of one hour ago
 /// and the pair's last release.
-async fn recent_reverts(pool: &SqlitePool, p: ChatPlatform, role: &str, user: &str, now: DateTime<Utc>) -> Result<i64, sqlx::Error> {
+async fn recent_reverts(
+    pool: &SqlitePool,
+    p: ChatPlatform,
+    role: &str,
+    user: &str,
+    now: DateTime<Utc>,
+) -> Result<i64, sqlx::Error> {
     let last_release: Option<String> = sqlx::query_scalar(
         "SELECT MAX(released_at) FROM chat_drift_holds WHERE platform = ? AND role_id = ? AND member_id = ?",
     )
@@ -303,7 +322,13 @@ async fn recent_reverts(pool: &SqlitePool, p: ChatPlatform, role: &str, user: &s
     .await
 }
 
-async fn open_hold(pool: &SqlitePool, p: ChatPlatform, role: &str, user: &str, now: DateTime<Utc>) -> Result<(), sqlx::Error> {
+async fn open_hold(
+    pool: &SqlitePool,
+    p: ChatPlatform,
+    role: &str,
+    user: &str,
+    now: DateTime<Utc>,
+) -> Result<(), sqlx::Error> {
     sqlx::query("INSERT OR IGNORE INTO chat_drift_holds (platform, role_id, member_id, held_at) VALUES (?, ?, ?, ?)")
         .bind(p.as_str())
         .bind(role)
@@ -315,7 +340,12 @@ async fn open_hold(pool: &SqlitePool, p: ChatPlatform, role: &str, user: &str, n
 }
 
 /// Release every open hold on `p`. Returns how many were released.
-pub async fn release_holds(pool: &SqlitePool, p: ChatPlatform, reason: &str, now: DateTime<Utc>) -> Result<u64, sqlx::Error> {
+pub async fn release_holds(
+    pool: &SqlitePool,
+    p: ChatPlatform,
+    reason: &str,
+    now: DateTime<Utc>,
+) -> Result<u64, sqlx::Error> {
     let res = sqlx::query(
         "UPDATE chat_drift_holds SET released_at = ?, release_reason = ? WHERE platform = ? AND released_at IS NULL",
     )
@@ -381,7 +411,10 @@ pub struct ReconcileReport {
 
 impl ReconcileReport {
     fn skipped(why: impl Into<String>) -> Self {
-        ReconcileReport { skipped: Some(why.into()), ..Default::default() }
+        ReconcileReport {
+            skipped: Some(why.into()),
+            ..Default::default()
+        }
     }
 
     pub fn applied(&self) -> usize {
@@ -399,13 +432,25 @@ impl ReconcileReport {
             notes.push(format!("❌ Nothing applied: {e}"));
         }
         if self.holds_released > 0 {
-            notes.push(format!("Released {} held drift pair(s).", self.holds_released));
+            notes.push(format!(
+                "Released {} held drift pair(s).",
+                self.holds_released
+            ));
         }
         if !self.added.is_empty() || !self.removed.is_empty() {
-            notes.push(format!("Projection changes: {} added, {} removed.", self.added.len(), self.removed.len()));
+            notes.push(format!(
+                "Projection changes: {} added, {} removed.",
+                self.added.len(),
+                self.removed.len()
+            ));
         }
         for d in &self.reverted {
-            notes.push(format!("↩️ Drift reverted: {noun} `{}` was {} by hand for `{}`.", d.role, d.direction.as_str(), d.user));
+            notes.push(format!(
+                "↩️ Drift reverted: {noun} `{}` was {} by hand for `{}`.",
+                d.role,
+                d.direction.as_str(),
+                d.user
+            ));
         }
         for d in &self.newly_held {
             notes.push(format!("⏸️ Held: {noun} `{}` for `{}` changed by hand {FLAP_LIMIT} times within an hour; no longer reverted.", d.role, d.user));
@@ -422,7 +467,11 @@ impl ReconcileReport {
         if self.rate_limited {
             notes.push("⏳ Rate limited: the rest is retried on the next run.".into());
         }
-        SyncReport { synced: self.applied() as u32, failed: self.failed.len() as u32, notes }
+        SyncReport {
+            synced: self.applied() as u32,
+            failed: self.failed.len() as u32,
+            notes,
+        }
     }
 
     /// The alert-channel text, or `None` when nothing needs reporting.
@@ -442,12 +491,19 @@ impl ReconcileReport {
             ));
         }
         for (r, why) in new_refusals {
-            lines.push(format!("🚫 {noun} `{r}` is mapped in the CRA but not managed: {}.", why.reason()));
+            lines.push(format!(
+                "🚫 {noun} `{r}` is mapped in the CRA but not managed: {}.",
+                why.reason()
+            ));
         }
         if lines.is_empty() {
             None
         } else {
-            Some(format!("**MSync role sync ({})**\n{}", p.label(), lines.join("\n")))
+            Some(format!(
+                "**MSync role sync ({})**\n{}",
+                p.label(),
+                lines.join("\n")
+            ))
         }
     }
 }
@@ -525,7 +581,12 @@ impl SyncRunner {
     /// The projection for this platform from the active snapshot, or `None` with no CRA.
     pub fn plan(&self) -> Option<(ProjectionPlan, i64)> {
         let active = self.cra.active()?;
-        let plan = super::commands::projection_plan(&active.snapshot, self.platform(), &cached_merits(&self.cra), self.today());
+        let plan = super::commands::projection_plan(
+            &active.snapshot,
+            self.platform(),
+            &cached_merits(&self.cra),
+            self.today(),
+        );
         Some((plan, active.snapshot_id))
     }
 
@@ -534,7 +595,13 @@ impl SyncRunner {
         if mutant("no_lock") {
             let mut unlocked = RunnerState::default();
             let plan = self.plan();
-            return self.run_locked(&mut unlocked, trigger, plan.as_ref().map(|(p, id)| (p, Some(*id)))).await;
+            return self
+                .run_locked(
+                    &mut unlocked,
+                    trigger,
+                    plan.as_ref().map(|(p, id)| (p, Some(*id))),
+                )
+                .await;
         }
         let mut state = self.state.lock().await;
         let mut plan = self.plan();
@@ -544,7 +611,12 @@ impl SyncRunner {
             }
             plan = state.cached_plan.clone();
         }
-        self.run_locked(&mut state, trigger, plan.as_ref().map(|(p, id)| (p, Some(*id)))).await
+        self.run_locked(
+            &mut state,
+            trigger,
+            plan.as_ref().map(|(p, id)| (p, Some(*id))),
+        )
+        .await
     }
 
     /// One run with a plan computed by the caller (the `sync` command).
@@ -554,7 +626,12 @@ impl SyncRunner {
         self.run_locked(&mut state, trigger, Some((plan, id))).await
     }
 
-    async fn run_locked(&self, state: &mut RunnerState, trigger: Trigger, plan: Option<(&ProjectionPlan, Option<i64>)>) -> ReconcileReport {
+    async fn run_locked(
+        &self,
+        state: &mut RunnerState,
+        trigger: Trigger,
+        plan: Option<(&ProjectionPlan, Option<i64>)>,
+    ) -> ReconcileReport {
         let p = self.platform();
         if !self.platform.configured() {
             return ReconcileReport::skipped(format!("{} is not configured", p.label()));
@@ -565,14 +642,21 @@ impl SyncRunner {
         let now = (self.clock)();
         if let Some(until) = state.backoff_until {
             if now < until {
-                return ReconcileReport::skipped(format!("rate limited; backing off until {}", ts(until)));
+                return ReconcileReport::skipped(format!(
+                    "rate limited; backing off until {}",
+                    ts(until)
+                ));
             }
             state.backoff_until = None;
         }
 
         let mut report = ReconcileReport::default();
         if trigger.releases_holds() {
-            let reason = if trigger == Trigger::Activation { "snapshot activation" } else { "explicit sync" };
+            let reason = if trigger == Trigger::Activation {
+                "snapshot activation"
+            } else {
+                "explicit sync"
+            };
             match release_holds(&self.pool, p, reason, now).await {
                 Ok(n) => {
                     report.holds_released = n;
@@ -626,8 +710,12 @@ impl SyncRunner {
                 other => report.refused.push((r.clone(), other)),
             }
         }
-        let new_refusals: Vec<(String, RoleSafety)> =
-            report.refused.iter().filter(|(r, _)| !state.alerted_refusals.contains(r)).cloned().collect();
+        let new_refusals: Vec<(String, RoleSafety)> = report
+            .refused
+            .iter()
+            .filter(|(r, _)| !state.alerted_refusals.contains(r))
+            .cloned()
+            .collect();
         for (r, why) in &new_refusals {
             let _ = record_sync_event(
                 &self.pool,
@@ -676,7 +764,11 @@ impl SyncRunner {
             // Every CRA member on this platform, plus anyone else who holds the role: a
             // member's pair is settled even while they should not hold the role, so a hand
             // grant to them later is recognised as drift.
-            let users: BTreeSet<&String> = want_set.iter().chain(has_set.iter()).chain(plan.users.iter()).collect();
+            let users: BTreeSet<&String> = want_set
+                .iter()
+                .chain(has_set.iter())
+                .chain(plan.users.iter())
+                .collect();
             // Adds before removes, so a Slack user group is never emptied on the way.
             let mut users: Vec<&String> = users.into_iter().collect();
             users.sort_by_key(|u| !want_set.contains(*u) || has_set.contains(*u));
@@ -699,7 +791,11 @@ impl SyncRunner {
                     Some(&prev) => prev == want,
                     None => has && !plan.users.contains(user) && !mutant("no_outsider_drift"),
                 };
-                let direction = if has { DriftDirection::Granted } else { DriftDirection::Removed };
+                let direction = if has {
+                    DriftDirection::Granted
+                } else {
+                    DriftDirection::Removed
+                };
                 if drift {
                     match recent_reverts(&self.pool, p, role, user, now).await {
                         Ok(n) if n >= FLAP_LIMIT && !mutant("no_flap_limit") => {
@@ -721,12 +817,20 @@ impl SyncRunner {
                             if let Err(e) = record_sync_event(&self.pool, &ev).await {
                                 error!("role sync: could not record drift: {e}");
                             }
-                            report.newly_held.push(Drift { role: role.clone(), user: user.clone(), direction });
+                            report.newly_held.push(Drift {
+                                role: role.clone(),
+                                user: user.clone(),
+                                direction,
+                            });
                             continue;
                         }
                         Ok(_) => {}
                         Err(e) => {
-                            report.failed.push((role.clone(), user.clone(), format!("database: {e}")));
+                            report.failed.push((
+                                role.clone(),
+                                user.clone(),
+                                format!("database: {e}"),
+                            ));
                             continue;
                         }
                     }
@@ -752,9 +856,16 @@ impl SyncRunner {
                                 detail: format!("{:?}", trigger),
                             };
                             if let Err(e) = record_sync_event(&self.pool, &ev).await {
-                                error!("role sync: drift on {} reverted but not recorded: {e}", p.label());
+                                error!(
+                                    "role sync: drift on {} reverted but not recorded: {e}",
+                                    p.label()
+                                );
                             }
-                            report.reverted.push(Drift { role: role.clone(), user: user.clone(), direction });
+                            report.reverted.push(Drift {
+                                role: role.clone(),
+                                user: user.clone(),
+                                direction,
+                            });
                         } else {
                             let _ = record_sync_event(
                                 &self.pool,
@@ -767,7 +878,11 @@ impl SyncRunner {
                                     observed_at: now,
                                     reverted_at: None,
                                     snapshot_id,
-                                    detail: if want { "added".into() } else { "removed".into() },
+                                    detail: if want {
+                                        "added".into()
+                                    } else {
+                                        "removed".into()
+                                    },
                                 },
                             )
                             .await;
@@ -789,12 +904,26 @@ impl SyncRunner {
                     Err(e) => {
                         // Never marked as applied: the next run sees the same difference.
                         state.settled.remove(&pair);
-                        warn!("role sync: {} {} for {} on {} failed: {}", if want { "add" } else { "remove" }, role, user, p.label(), e);
-                        report.failed.push((role.clone(), user.clone(), e.to_string()));
-                        if let (false, PlatformError::RateLimited { retry_after_secs }) = (mutant("no_backoff"), e) {
+                        warn!(
+                            "role sync: {} {} for {} on {} failed: {}",
+                            if want { "add" } else { "remove" },
+                            role,
+                            user,
+                            p.label(),
+                            e
+                        );
+                        report
+                            .failed
+                            .push((role.clone(), user.clone(), e.to_string()));
+                        if let (false, PlatformError::RateLimited { retry_after_secs }) =
+                            (mutant("no_backoff"), e)
+                        {
                             report.rate_limited = true;
-                            state.backoff_until =
-                                Some(now + chrono::Duration::seconds(retry_after_secs.unwrap_or(DEFAULT_BACKOFF_SECS) as i64));
+                            state.backoff_until = Some(
+                                now + chrono::Duration::seconds(
+                                    retry_after_secs.unwrap_or(DEFAULT_BACKOFF_SECS) as i64,
+                                ),
+                            );
                             break 'roles;
                         }
                     }
@@ -816,12 +945,26 @@ impl SyncRunner {
         report
     }
 
-    fn read_failed(&self, state: &mut RunnerState, mut report: ReconcileReport, e: PlatformError, now: DateTime<Utc>) -> ReconcileReport {
+    fn read_failed(
+        &self,
+        state: &mut RunnerState,
+        mut report: ReconcileReport,
+        e: PlatformError,
+        now: DateTime<Utc>,
+    ) -> ReconcileReport {
         if let PlatformError::RateLimited { retry_after_secs } = &e {
             report.rate_limited = true;
-            state.backoff_until = Some(now + chrono::Duration::seconds(retry_after_secs.unwrap_or(DEFAULT_BACKOFF_SECS) as i64));
+            state.backoff_until = Some(
+                now + chrono::Duration::seconds(
+                    retry_after_secs.unwrap_or(DEFAULT_BACKOFF_SECS) as i64
+                ),
+            );
         }
-        warn!("role sync on {}: could not read the platform: {}", self.platform().label(), e);
+        warn!(
+            "role sync on {}: could not read the platform: {}",
+            self.platform().label(),
+            e
+        );
         report.error = Some(format!("could not read {}: {e}", self.platform().label()));
         report
     }
@@ -829,7 +972,11 @@ impl SyncRunner {
     async fn send_alert(&self, report: &ReconcileReport, new_refusals: &[(String, RoleSafety)]) {
         if let Some(text) = report.alert_text(self.platform(), new_refusals) {
             if let Err(e) = self.platform.alert(&text).await {
-                warn!("role sync: alert on {} not delivered: {}", self.platform().label(), e);
+                warn!(
+                    "role sync: alert on {} not delivered: {}",
+                    self.platform().label(),
+                    e
+                );
             }
         }
     }
@@ -896,7 +1043,10 @@ pub fn snapshot_activated(cra: &CraHandle) {
 pub fn spawn(runner: Arc<SyncRunner>, every: Option<Duration>) -> SyncHandle {
     let (tx, mut rx) = mpsc::unbounded_channel::<Trigger>();
     if let Ok(mut reg) = registry().lock() {
-        reg.push(Registered { cra: runner.cra.clone(), tx: tx.clone() });
+        reg.push(Registered {
+            cra: runner.cra.clone(),
+            tx: tx.clone(),
+        });
     }
     let task_runner = runner.clone();
     tokio::spawn(async move {
@@ -919,7 +1069,12 @@ pub fn spawn(runner: Arc<SyncRunner>, every: Option<Duration>) -> SyncHandle {
             }
             let rep = task_runner.run(t).await;
             if let Some(e) = &rep.error {
-                warn!("role sync on {} ({:?}): {}", task_runner.platform().label(), t, e);
+                warn!(
+                    "role sync on {} ({:?}): {}",
+                    task_runner.platform().label(),
+                    t,
+                    e
+                );
             }
         }
     });

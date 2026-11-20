@@ -60,7 +60,11 @@ struct ReasonOnly {
     reason: Option<String>,
 }
 
-fn ok<T: serde::Serialize>(status: StatusCode, key: &str, v: Result<T, PayoutError>) -> HttpResponse {
+fn ok<T: serde::Serialize>(
+    status: StatusCode,
+    key: &str,
+    v: Result<T, PayoutError>,
+) -> HttpResponse {
     match v {
         Ok(v) => HttpResponse::build(status).json(json!({"status": "success", key: v})),
         Err(e) => payout_error(e),
@@ -71,52 +75,112 @@ fn ok<T: serde::Serialize>(status: StatusCode, key: &str, v: Result<T, PayoutErr
 
 /// The caller's own payee; the body must be empty or `{}`.
 #[post("/api/v1/time/clock-in")]
-pub async fn clock_in(req: HttpRequest, bytes: web::Bytes, ctx: web::Data<ApiContext>) -> HttpResponse {
+pub async fn clock_in(
+    req: HttpRequest,
+    bytes: web::Bytes,
+    ctx: web::Data<ApiContext>,
+) -> HttpResponse {
     let p = auth_or_return!(req, ctx);
     parse_or_return!(no_body(&bytes));
     match timeclock::clock_in(&ctx.pool, &p, Utc::now()).await {
         Ok(r) => {
-            let status = if r.result == "created" { StatusCode::CREATED } else { StatusCode::OK };
-            HttpResponse::build(status).json(json!({"status": "success", "result": r.result, "entry": r.entry}))
+            let status = if r.result == "created" {
+                StatusCode::CREATED
+            } else {
+                StatusCode::OK
+            };
+            HttpResponse::build(status)
+                .json(json!({"status": "success", "result": r.result, "entry": r.entry}))
         }
         Err(e) => payout_error(e),
     }
 }
 
 #[post("/api/v1/time/clock-out")]
-pub async fn clock_out(req: HttpRequest, bytes: web::Bytes, ctx: web::Data<ApiContext>) -> HttpResponse {
+pub async fn clock_out(
+    req: HttpRequest,
+    bytes: web::Bytes,
+    ctx: web::Data<ApiContext>,
+) -> HttpResponse {
     let p = auth_or_return!(req, ctx);
     parse_or_return!(no_body(&bytes));
-    ok(StatusCode::OK, "result", timeclock::clock_out(&ctx.pool, &p, Utc::now()).await)
+    ok(
+        StatusCode::OK,
+        "result",
+        timeclock::clock_out(&ctx.pool, &p, Utc::now()).await,
+    )
 }
 
 // ------------------------------------------------------------------ entries
 
 #[get("/api/v1/time/entries")]
-pub async fn list_entries(req: HttpRequest, q: web::Query<EntryFilter>, ctx: web::Data<ApiContext>) -> HttpResponse {
+pub async fn list_entries(
+    req: HttpRequest,
+    q: web::Query<EntryFilter>,
+    ctx: web::Data<ApiContext>,
+) -> HttpResponse {
     let p = auth_or_return!(req, ctx);
-    ok(StatusCode::OK, "entries", timeclock::list(&ctx.pool, &p, &q, Utc::now()).await)
+    ok(
+        StatusCode::OK,
+        "entries",
+        timeclock::list(&ctx.pool, &p, &q, Utc::now()).await,
+    )
 }
 
 #[post("/api/v1/time/entries/{id}/approve")]
-pub async fn approve_entry(req: HttpRequest, path: web::Path<String>, bytes: web::Bytes, ctx: web::Data<ApiContext>) -> HttpResponse {
+pub async fn approve_entry(
+    req: HttpRequest,
+    path: web::Path<String>,
+    bytes: web::Bytes,
+    ctx: web::Data<ApiContext>,
+) -> HttpResponse {
     let p = auth_or_return!(req, ctx);
     parse_or_return!(no_body(&bytes));
-    ok(StatusCode::OK, "entry", timeclock::approve(&ctx.pool, ctx.directory.as_ref(), &p, &path, Utc::now()).await)
+    ok(
+        StatusCode::OK,
+        "entry",
+        timeclock::approve(&ctx.pool, ctx.directory.as_ref(), &p, &path, Utc::now()).await,
+    )
 }
 
 #[post("/api/v1/time/entries/{id}/adjust")]
-pub async fn adjust_entry(req: HttpRequest, path: web::Path<String>, bytes: web::Bytes, ctx: web::Data<ApiContext>) -> HttpResponse {
+pub async fn adjust_entry(
+    req: HttpRequest,
+    path: web::Path<String>,
+    bytes: web::Bytes,
+    ctx: web::Data<ApiContext>,
+) -> HttpResponse {
     let p = auth_or_return!(req, ctx);
     let b: AdjustBody = parse_or_return!(body(&bytes));
-    ok(StatusCode::OK, "entry", timeclock::adjust(&ctx.pool, ctx.directory.as_ref(), &p, &path, b, Utc::now()).await)
+    ok(
+        StatusCode::OK,
+        "entry",
+        timeclock::adjust(&ctx.pool, ctx.directory.as_ref(), &p, &path, b, Utc::now()).await,
+    )
 }
 
 #[post("/api/v1/time/entries/{id}/void")]
-pub async fn void_entry(req: HttpRequest, path: web::Path<String>, bytes: web::Bytes, ctx: web::Data<ApiContext>) -> HttpResponse {
+pub async fn void_entry(
+    req: HttpRequest,
+    path: web::Path<String>,
+    bytes: web::Bytes,
+    ctx: web::Data<ApiContext>,
+) -> HttpResponse {
     let p = auth_or_return!(req, ctx);
     let b: ReasonOnly = parse_or_return!(body(&bytes));
-    ok(StatusCode::OK, "entry", timeclock::void(&ctx.pool, ctx.directory.as_ref(), &p, &path, b.reason.as_deref(), Utc::now()).await)
+    ok(
+        StatusCode::OK,
+        "entry",
+        timeclock::void(
+            &ctx.pool,
+            ctx.directory.as_ref(),
+            &p,
+            &path,
+            b.reason.as_deref(),
+            Utc::now(),
+        )
+        .await,
+    )
 }
 
 // ------------------------------------------------------------------ shifts
@@ -128,23 +192,56 @@ pub struct ShiftQuery {
 }
 
 #[get("/api/v1/time/shifts")]
-pub async fn list_shifts(req: HttpRequest, q: web::Query<ShiftQuery>, ctx: web::Data<ApiContext>) -> HttpResponse {
+pub async fn list_shifts(
+    req: HttpRequest,
+    q: web::Query<ShiftQuery>,
+    ctx: web::Data<ApiContext>,
+) -> HttpResponse {
     let p = auth_or_return!(req, ctx);
-    ok(StatusCode::OK, "shifts", shifts::list(&ctx.pool, &p, q.payee.as_deref(), q.status.as_deref()).await)
+    ok(
+        StatusCode::OK,
+        "shifts",
+        shifts::list(&ctx.pool, &p, q.payee.as_deref(), q.status.as_deref()).await,
+    )
 }
 
 #[post("/api/v1/time/shifts")]
-pub async fn create_shift(req: HttpRequest, bytes: web::Bytes, ctx: web::Data<ApiContext>) -> HttpResponse {
+pub async fn create_shift(
+    req: HttpRequest,
+    bytes: web::Bytes,
+    ctx: web::Data<ApiContext>,
+) -> HttpResponse {
     let p = auth_or_return!(req, ctx);
     let input: NewShift = parse_or_return!(body(&bytes));
-    ok(StatusCode::CREATED, "shift", shifts::create(&ctx.pool, ctx.directory.as_ref(), &p, input, Utc::now()).await)
+    ok(
+        StatusCode::CREATED,
+        "shift",
+        shifts::create(&ctx.pool, ctx.directory.as_ref(), &p, input, Utc::now()).await,
+    )
 }
 
 #[patch("/api/v1/time/shifts/{id}")]
-pub async fn update_shift(req: HttpRequest, path: web::Path<String>, bytes: web::Bytes, ctx: web::Data<ApiContext>) -> HttpResponse {
+pub async fn update_shift(
+    req: HttpRequest,
+    path: web::Path<String>,
+    bytes: web::Bytes,
+    ctx: web::Data<ApiContext>,
+) -> HttpResponse {
     let p = auth_or_return!(req, ctx);
     let patch: ShiftPatch = parse_or_return!(body(&bytes));
-    ok(StatusCode::OK, "shift", shifts::update(&ctx.pool, ctx.directory.as_ref(), &p, &path, patch, Utc::now()).await)
+    ok(
+        StatusCode::OK,
+        "shift",
+        shifts::update(
+            &ctx.pool,
+            ctx.directory.as_ref(),
+            &p,
+            &path,
+            patch,
+            Utc::now(),
+        )
+        .await,
+    )
 }
 
 // ------------------------------------------------------------------ timesheet
@@ -156,36 +253,101 @@ pub struct TimesheetQuery {
 }
 
 #[get("/api/v1/time/timesheet")]
-pub async fn get_timesheet(req: HttpRequest, q: web::Query<TimesheetQuery>, ctx: web::Data<ApiContext>) -> HttpResponse {
+pub async fn get_timesheet(
+    req: HttpRequest,
+    q: web::Query<TimesheetQuery>,
+    ctx: web::Data<ApiContext>,
+) -> HttpResponse {
     let p = auth_or_return!(req, ctx);
     ok(
         StatusCode::OK,
         "timesheet",
-        timesheet::timesheet(&ctx.pool, &ctx.payments, ctx.directory.as_ref(), &p, q.payee.as_deref(), q.period.as_deref(), Utc::now()).await,
+        timesheet::timesheet(
+            &ctx.pool,
+            &ctx.payments,
+            ctx.directory.as_ref(),
+            &p,
+            q.payee.as_deref(),
+            q.period.as_deref(),
+            Utc::now(),
+        )
+        .await,
     )
 }
 
 // ------------------------------------------------------------------ wages
 
 #[get("/api/v1/payees/{id}/wage")]
-pub async fn get_wage(req: HttpRequest, path: web::Path<String>, ctx: web::Data<ApiContext>) -> HttpResponse {
+pub async fn get_wage(
+    req: HttpRequest,
+    path: web::Path<String>,
+    ctx: web::Data<ApiContext>,
+) -> HttpResponse {
     let p = auth_or_return!(req, ctx);
-    ok(StatusCode::OK, "wage", wages::history(&ctx.pool, &ctx.payments, ctx.directory.as_ref(), &p, &path, Utc::now()).await)
+    ok(
+        StatusCode::OK,
+        "wage",
+        wages::history(
+            &ctx.pool,
+            &ctx.payments,
+            ctx.directory.as_ref(),
+            &p,
+            &path,
+            Utc::now(),
+        )
+        .await,
+    )
 }
 
 #[post("/api/v1/payees/{id}/wage")]
-pub async fn set_wage(req: HttpRequest, path: web::Path<String>, bytes: web::Bytes, ctx: web::Data<ApiContext>) -> HttpResponse {
+pub async fn set_wage(
+    req: HttpRequest,
+    path: web::Path<String>,
+    bytes: web::Bytes,
+    ctx: web::Data<ApiContext>,
+) -> HttpResponse {
     let p = auth_or_return!(req, ctx);
     let input: NewWage = parse_or_return!(body(&bytes));
-    ok(StatusCode::CREATED, "wage", wages::set(&ctx.pool, &ctx.payments, ctx.directory.as_ref(), &p, &path, input, Utc::now()).await)
+    ok(
+        StatusCode::CREATED,
+        "wage",
+        wages::set(
+            &ctx.pool,
+            &ctx.payments,
+            ctx.directory.as_ref(),
+            &p,
+            &path,
+            input,
+            Utc::now(),
+        )
+        .await,
+    )
 }
 
 #[post("/api/v1/payees/{id}/wage/{wage_id}/approve")]
-pub async fn approve_wage(req: HttpRequest, path: web::Path<(String, String)>, bytes: web::Bytes, ctx: web::Data<ApiContext>) -> HttpResponse {
+pub async fn approve_wage(
+    req: HttpRequest,
+    path: web::Path<(String, String)>,
+    bytes: web::Bytes,
+    ctx: web::Data<ApiContext>,
+) -> HttpResponse {
     let p = auth_or_return!(req, ctx);
     parse_or_return!(no_body(&bytes));
     let (payee, wage) = path.into_inner();
-    ok(StatusCode::OK, "result", wages::approve(&ctx.pool, &ctx.payments, ctx.directory.as_ref(), &p, &payee, &wage, Utc::now()).await)
+    ok(
+        StatusCode::OK,
+        "result",
+        wages::approve(
+            &ctx.pool,
+            &ctx.payments,
+            ctx.directory.as_ref(),
+            &p,
+            &payee,
+            &wage,
+            Utc::now(),
+        )
+        .await,
+    )
 }
 
 /// Register the time routes. Called from `api::configure`.

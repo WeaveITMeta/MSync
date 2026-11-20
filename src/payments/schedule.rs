@@ -48,11 +48,15 @@ fn add_months(year: i32, month: u32, delta: i32) -> (i32, u32) {
 
 /// The latest schedule slot at or before `now`, or None for `manual` cadence or an invalid schedule.
 pub fn current_slot(schedule: &Schedule, now: DateTime<Utc>) -> Option<PeriodSlot> {
-    let hour = u32::try_from(schedule.hour_utc?).ok().filter(|h| *h <= 23)?;
+    let hour = u32::try_from(schedule.hour_utc?)
+        .ok()
+        .filter(|h| *h <= 23)?;
     match schedule.cadence {
         Cadence::Manual => None,
         Cadence::Weekly | Cadence::Biweekly => {
-            let Some(ScheduleDay::Weekday(name)) = &schedule.day else { return None };
+            let Some(ScheduleDay::Weekday(name)) = &schedule.day else {
+                return None;
+            };
             let wd = weekday_of(name)?;
             let biweekly = schedule.cadence == Cadence::Biweekly;
             let span = if biweekly { 14 } else { 7 };
@@ -75,10 +79,16 @@ pub fn current_slot(schedule: &Schedule, now: DateTime<Utc>) -> Option<PeriodSlo
             None
         }
         Cadence::Monthly => {
-            let Some(ScheduleDay::MonthDay(day)) = &schedule.day else { return None };
+            let Some(ScheduleDay::MonthDay(day)) = &schedule.day else {
+                return None;
+            };
             let day = u32::try_from(*day).ok().filter(|d| (1..=28).contains(d))?;
             let this = at_hour(NaiveDate::from_ymd_opt(now.year(), now.month(), day)?, hour)?;
-            let (y, m) = if this <= now { (now.year(), now.month()) } else { add_months(now.year(), now.month(), -1) };
+            let (y, m) = if this <= now {
+                (now.year(), now.month())
+            } else {
+                add_months(now.year(), now.month(), -1)
+            };
             let start = at_hour(NaiveDate::from_ymd_opt(y, m, day)?, hour)?;
             let (ny, nm) = add_months(y, m, 1);
             let end = at_hour(NaiveDate::from_ymd_opt(ny, nm, day)?, hour)?;
@@ -108,7 +118,11 @@ pub fn period_window(schedule: &Schedule, now: DateTime<Utc>) -> (DateTime<Utc>,
 
 /// Is a scheduled run due at `now`? Returns its period key when the policy is enabled, the
 /// cadence is not manual, and `last_key` (the newest scheduled run's key) is a different period.
-pub fn run_due(policy: &PayoutPolicy, now: DateTime<Utc>, last_key: Option<&str>) -> Option<String> {
+pub fn run_due(
+    policy: &PayoutPolicy,
+    now: DateTime<Utc>,
+    last_key: Option<&str>,
+) -> Option<String> {
     if !policy.enabled {
         return None;
     }
@@ -126,7 +140,11 @@ pub enum TickOutcome {
     /// Nothing due (disabled, manual cadence, or the period already has its run).
     Idle,
     /// A run was created for the period; `executed` is true in auto mode.
-    Created { run_id: String, period_key: String, executed: bool },
+    Created {
+        run_id: String,
+        period_key: String,
+        executed: bool,
+    },
 }
 
 /// One scheduler step at time `now`. Safe to call any number of times per period.
@@ -136,7 +154,10 @@ pub enum TickOutcome {
 /// timesheet rows of ended pay periods (contract 14.5; never a transfer). A failure there is
 /// logged and does not stop the payout run below. Then, as before, it creates the
 /// period's scheduled run when one is due.
-pub async fn scheduler_tick(ctx: &ApiContext, now: DateTime<Utc>) -> Result<TickOutcome, super::error::PayoutError> {
+pub async fn scheduler_tick(
+    ctx: &ApiContext,
+    now: DateTime<Utc>,
+) -> Result<TickOutcome, super::error::PayoutError> {
     if let Err(e) = super::payorders::materialize_due(ctx, now).await {
         error!("pay order materialization failed: {}", e);
     }
@@ -159,20 +180,52 @@ pub async fn scheduler_tick(ctx: &ApiContext, now: DateTime<Utc>) -> Result<Tick
     let Some(key) = run_due(&eff.policy, now, last.as_deref()) else {
         return Ok(TickOutcome::Idle);
     };
-    let system = Principal::system("scheduler", &[scopes::PAYOUTS_PREPARE, scopes::PAYOUTS_EXECUTE, scopes::PAYOUTS_READ]);
-    let Some(run_id) = runs::create_scheduled_run(&ctx.pool, &ctx.payments, ctx.directory.as_ref(), &system, &key, now).await? else {
+    let system = Principal::system(
+        "scheduler",
+        &[
+            scopes::PAYOUTS_PREPARE,
+            scopes::PAYOUTS_EXECUTE,
+            scopes::PAYOUTS_READ,
+        ],
+    );
+    let Some(run_id) = runs::create_scheduled_run(
+        &ctx.pool,
+        &ctx.payments,
+        ctx.directory.as_ref(),
+        &system,
+        &key,
+        now,
+    )
+    .await?
+    else {
         return Ok(TickOutcome::Idle);
     };
     let mut executed = false;
     if eff.policy.schedule.mode == ScheduleMode::Auto {
-        runs::execute_run(&ctx.pool, ctx.stripe.as_ref(), &ctx.payments, ctx.directory.as_ref(), &system, &run_id, now).await?;
+        runs::execute_run(
+            &ctx.pool,
+            ctx.stripe.as_ref(),
+            &ctx.payments,
+            ctx.directory.as_ref(),
+            &system,
+            &run_id,
+            now,
+        )
+        .await?;
         executed = true;
         if let Err(e) = super::invoices::sync_paid(&ctx.pool, now).await {
             error!("invoice paid sync failed: {}", e);
         }
     }
-    info!("Scheduled payout run {} created for {} (executed: {})", run_id, key, executed);
-    Ok(TickOutcome::Created { run_id, period_key: key, executed })
+    info!(
+        "Scheduled payout run {} created for {} (executed: {})",
+        run_id, key, executed
+    );
+    Ok(TickOutcome::Created {
+        run_id,
+        period_key: key,
+        executed,
+    })
 }
 
 /// Background task: tick every `interval`. Started from main.rs.

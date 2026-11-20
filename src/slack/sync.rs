@@ -27,7 +27,14 @@ impl SlackPlatform {
     }
 
     fn alert_channel(&self) -> Option<String> {
-        self.cra.active()?.snapshot.org.slack.as_ref()?.alert_channel_id.clone()
+        self.cra
+            .active()?
+            .snapshot
+            .org
+            .slack
+            .as_ref()?
+            .alert_channel_id
+            .clone()
     }
 }
 
@@ -39,17 +46,33 @@ impl SyncPlatform for SlackPlatform {
 
     /// A bot token, and a CRA with a `[slack]` section.
     fn configured(&self) -> bool {
-        self.api.configured() && self.cra.active().is_some_and(|a| a.snapshot.org.slack.is_some())
+        self.api.configured()
+            && self
+                .cra
+                .active()
+                .is_some_and(|a| a.snapshot.org.slack.is_some())
     }
 
-    async fn role_safety(&self, roles: &[String]) -> Result<BTreeMap<String, RoleSafety>, PlatformError> {
-        Ok(roles.iter().map(|r| (r.clone(), RoleSafety::Safe)).collect())
+    async fn role_safety(
+        &self,
+        roles: &[String],
+    ) -> Result<BTreeMap<String, RoleSafety>, PlatformError> {
+        Ok(roles
+            .iter()
+            .map(|r| (r.clone(), RoleSafety::Safe))
+            .collect())
     }
 
-    async fn holders(&self, roles: &[String]) -> Result<BTreeMap<String, BTreeSet<String>>, PlatformError> {
+    async fn holders(
+        &self,
+        roles: &[String],
+    ) -> Result<BTreeMap<String, BTreeSet<String>>, PlatformError> {
         let mut out = BTreeMap::new();
         for r in roles {
-            out.insert(r.clone(), self.api.usergroup_users(r).await?.into_iter().collect());
+            out.insert(
+                r.clone(),
+                self.api.usergroup_users(r).await?.into_iter().collect(),
+            );
         }
         Ok(out)
     }
@@ -79,9 +102,11 @@ impl SyncPlatform for SlackPlatform {
     }
 
     async fn alert(&self, text: &str) -> Result<(), PlatformError> {
-        let channel = self
-            .alert_channel()
-            .ok_or_else(|| PlatformError::Refused("no [slack] alert_channel_id in org.toml".into()))?;
-        self.api.post_message(&channel, &super::to_mrkdwn(text)).await
+        let channel = self.alert_channel().ok_or_else(|| {
+            PlatformError::Refused("no [slack] alert_channel_id in org.toml".into())
+        })?;
+        self.api
+            .post_message(&channel, &super::to_mrkdwn(text))
+            .await
     }
 }

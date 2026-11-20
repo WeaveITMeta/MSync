@@ -10,9 +10,7 @@ pub struct GitHubApiClient {
 
 impl GitHubApiClient {
     pub fn new(token: String, repo_owner: String, repo_name: String) -> Result<Self> {
-        let octocrab = Octocrab::builder()
-            .personal_token(token)
-            .build()?;
+        let octocrab = Octocrab::builder().personal_token(token).build()?;
 
         Ok(Self {
             octocrab,
@@ -21,7 +19,10 @@ impl GitHubApiClient {
         })
     }
 
-    pub async fn get_pr_details(&self, pr_number: u64) -> Result<octocrab::models::pulls::PullRequest> {
+    pub async fn get_pr_details(
+        &self,
+        pr_number: u64,
+    ) -> Result<octocrab::models::pulls::PullRequest> {
         let pr = self
             .octocrab
             .pulls(&self.repo_owner, &self.repo_name)
@@ -51,7 +52,10 @@ impl GitHubApiClient {
         Ok(())
     }
 
-    pub async fn get_user_contributions(&self, username: &str) -> Result<Vec<octocrab::models::pulls::PullRequest>> {
+    pub async fn get_user_contributions(
+        &self,
+        username: &str,
+    ) -> Result<Vec<octocrab::models::pulls::PullRequest>> {
         let prs = self
             .octocrab
             .pulls(&self.repo_owner, &self.repo_name)
@@ -63,7 +67,12 @@ impl GitHubApiClient {
         let user_prs: Vec<_> = prs
             .items
             .into_iter()
-            .filter(|pr| pr.user.as_ref().map(|u| u.login == username).unwrap_or(false))
+            .filter(|pr| {
+                pr.user
+                    .as_ref()
+                    .map(|u| u.login == username)
+                    .unwrap_or(false)
+            })
             .collect();
 
         Ok(user_prs)

@@ -9,7 +9,9 @@
 use super::jsonrpc::RpcError;
 use super::McpContext;
 use crate::auth::{scopes, AuthError, Principal};
-use crate::merit::api::{self as merit_api, LeaderboardParams, MeritApiError, ScoreInput, SubjectInput};
+use crate::merit::api::{
+    self as merit_api, LeaderboardParams, MeritApiError, ScoreInput, SubjectInput,
+};
 use crate::merit::rubric::{CRITERIA, MAX_LEVEL, MIN_EVIDENCE_CHARS, RUBRIC_ID, RUBRIC_SHA256};
 use crate::payments::error::PayoutError;
 use crate::payments::ledger::LedgerError;
@@ -390,7 +392,11 @@ fn tool_json(t: &ToolDef) -> Value {
 }
 
 pub fn list(ctx: &McpContext, p: &Principal) -> Value {
-    let tools: Vec<Value> = TOOLS.iter().filter(|t| visible(ctx, p, t)).map(tool_json).collect();
+    let tools: Vec<Value> = TOOLS
+        .iter()
+        .filter(|t| visible(ctx, p, t))
+        .map(tool_json)
+        .collect();
     json!({ "tools": tools })
 }
 
@@ -460,7 +466,9 @@ fn payout_msg(e: PayoutError) -> String {
         | PayoutError::Invalid(_) => msg,
         PayoutError::Policy(p) => policy_msg(p),
         PayoutError::Ledger(l) => match l {
-            LedgerError::NotFound | LedgerError::InvalidState(..) | LedgerError::NotPayable(_) => msg,
+            LedgerError::NotFound | LedgerError::InvalidState(..) | LedgerError::NotPayable(_) => {
+                msg
+            }
             LedgerError::Policy(detail) => {
                 error!("payout policy unavailable: {detail}");
                 "payout policy unavailable".into()
@@ -582,14 +590,20 @@ struct StatementArgs {
 }
 
 fn parse_args<T: DeserializeOwned>(tool: &str, args: Value) -> Result<T, RpcError> {
-    serde_json::from_value(args).map_err(|e| RpcError::invalid_params(format!("invalid arguments for {tool}: {e}")))
+    serde_json::from_value(args)
+        .map_err(|e| RpcError::invalid_params(format!("invalid arguments for {tool}: {e}")))
 }
 
 // ------------------------------------------------------------------ call
 
 /// `tools/call`. Protocol problems (unknown tool, arguments that do not match the schema) are
 /// JSON-RPC errors; everything else, including a missing scope, is a result with `isError: true`.
-pub async fn call(ctx: &McpContext, p: &Principal, name: &str, args: Option<Value>) -> Result<Value, RpcError> {
+pub async fn call(
+    ctx: &McpContext,
+    p: &Principal,
+    name: &str,
+    args: Option<Value>,
+) -> Result<Value, RpcError> {
     let Some(tool) = find(name) else {
         return Err(RpcError::invalid_params(format!("unknown tool '{name}'")));
     };
@@ -601,7 +615,10 @@ pub async fn call(ctx: &McpContext, p: &Principal, name: &str, args: Option<Valu
     }
     if let Some(scope) = tool.scope {
         if !p.has(scope) && !crate::payments::mutant::on("mcp_no_scope") {
-            return Ok(failure(&format!("tool '{}' requires scope '{}', which this token does not have", tool.name, scope)));
+            return Ok(failure(&format!(
+                "tool '{}' requires scope '{}', which this token does not have",
+                tool.name, scope
+            )));
         }
     }
     let args = match args {
@@ -667,9 +684,20 @@ pub async fn call(ctx: &McpContext, p: &Principal, name: &str, args: Option<Valu
         "payouts_run_preview" | "payouts_run_create" => {
             let _: NoArgs = parse_args(name, args)?;
             let dry_run = tool.name == "payouts_run_preview";
-            match runs::create_run(&api.pool, &api.payments, api.directory.as_ref(), p, dry_run, Utc::now()).await {
+            match runs::create_run(
+                &api.pool,
+                &api.payments,
+                api.directory.as_ref(),
+                p,
+                dry_run,
+                Utc::now(),
+            )
+            .await
+            {
                 Ok(CreateRunResult::DryRun(plan)) => Ok(json!({"dry_run": true, "plan": plan})),
-                Ok(CreateRunResult::Created { run, plan }) => Ok(json!({"dry_run": false, "run": run, "plan": plan})),
+                Ok(CreateRunResult::Created { run, plan }) => {
+                    Ok(json!({"dry_run": false, "run": run, "plan": plan}))
+                }
                 Err(e) => Err(payout_msg(e)),
             }
         }
@@ -682,7 +710,17 @@ pub async fn call(ctx: &McpContext, p: &Principal, name: &str, args: Option<Valu
         }
         EXECUTE_TOOL => {
             let input: RunIdArgs = parse_args(name, args)?;
-            match runs::execute_run(&api.pool, api.stripe.as_ref(), &api.payments, api.directory.as_ref(), p, &input.run_id, Utc::now()).await {
+            match runs::execute_run(
+                &api.pool,
+                api.stripe.as_ref(),
+                &api.payments,
+                api.directory.as_ref(),
+                p,
+                &input.run_id,
+                Utc::now(),
+            )
+            .await
+            {
                 Ok(r) => Ok(json!({ "report": r })),
                 Err(e) => Err(payout_msg(e)),
             }
@@ -703,7 +741,15 @@ pub async fn call(ctx: &McpContext, p: &Principal, name: &str, args: Option<Valu
         }
         "payorders_list" => {
             let input: StatusArgs = parse_args(name, args)?;
-            match payorders::list(&api.pool, &api.payments, api.directory.as_ref(), p, input.status.as_deref()).await {
+            match payorders::list(
+                &api.pool,
+                &api.payments,
+                api.directory.as_ref(),
+                p,
+                input.status.as_deref(),
+            )
+            .await
+            {
                 Ok(v) => Ok(json!({ "payorders": v })),
                 Err(e) => Err(payout_msg(e)),
             }
@@ -711,49 +757,114 @@ pub async fn call(ctx: &McpContext, p: &Principal, name: &str, args: Option<Valu
         "payorder_preview" => {
             let input: PreviewArgs = parse_args(name, args)?;
             let periods = input.periods.unwrap_or(3);
-            match payorders::preview(&api.pool, &api.payments, api.directory.as_ref(), p, &input.order_id, periods, Utc::now()).await {
+            match payorders::preview(
+                &api.pool,
+                &api.payments,
+                api.directory.as_ref(),
+                p,
+                &input.order_id,
+                periods,
+                Utc::now(),
+            )
+            .await
+            {
                 Ok(v) => Ok(json!({ "preview": v })),
                 Err(e) => Err(payout_msg(e)),
             }
         }
         "payorder_create" => {
             let input: payorders::NewOrder = parse_args(name, args)?;
-            match payorders::create(&api.pool, &api.payments, api.directory.as_ref(), p, input, Utc::now()).await {
+            match payorders::create(
+                &api.pool,
+                &api.payments,
+                api.directory.as_ref(),
+                p,
+                input,
+                Utc::now(),
+            )
+            .await
+            {
                 Ok(v) => Ok(json!({ "payorder": v })),
                 Err(e) => Err(payout_msg(e)),
             }
         }
         "payorder_approve" => {
             let input: OrderIdArgs = parse_args(name, args)?;
-            match payorders::approve(&api.pool, &api.payments, api.directory.as_ref(), p, &input.order_id, Utc::now()).await {
+            match payorders::approve(
+                &api.pool,
+                &api.payments,
+                api.directory.as_ref(),
+                p,
+                &input.order_id,
+                Utc::now(),
+            )
+            .await
+            {
                 Ok(v) => Ok(json!({ "result": v })),
                 Err(e) => Err(payout_msg(e)),
             }
         }
         "payorder_pause" => {
             let input: OrderIdArgs = parse_args(name, args)?;
-            match payorders::transition(&api.pool, &api.payments, api.directory.as_ref(), p, &input.order_id, payorders::Transition::Pause, Utc::now()).await {
+            match payorders::transition(
+                &api.pool,
+                &api.payments,
+                api.directory.as_ref(),
+                p,
+                &input.order_id,
+                payorders::Transition::Pause,
+                Utc::now(),
+            )
+            .await
+            {
                 Ok(v) => Ok(json!({ "payorder": v })),
                 Err(e) => Err(payout_msg(e)),
             }
         }
         "invoices_list" => {
             let input: invoices::InvoiceFilter = parse_args(name, args)?;
-            match invoices::list(&api.pool, &api.payments, api.directory.as_ref(), p, &input, Utc::now()).await {
+            match invoices::list(
+                &api.pool,
+                &api.payments,
+                api.directory.as_ref(),
+                p,
+                &input,
+                Utc::now(),
+            )
+            .await
+            {
                 Ok(v) => Ok(json!({ "invoices": v })),
                 Err(e) => Err(payout_msg(e)),
             }
         }
         "invoice_submit" => {
             let input: invoices::NewInvoice = parse_args(name, args)?;
-            match invoices::submit(&api.pool, &api.payments, api.directory.as_ref(), p, input, Utc::now()).await {
+            match invoices::submit(
+                &api.pool,
+                &api.payments,
+                api.directory.as_ref(),
+                p,
+                input,
+                Utc::now(),
+            )
+            .await
+            {
                 Ok(v) => Ok(json!({ "invoice": v })),
                 Err(e) => Err(payout_msg(e)),
             }
         }
         "invoice_approve" => {
             let input: InvoiceIdArgs = parse_args(name, args)?;
-            match invoices::approve(&api.pool, &api.payments, api.directory.as_ref(), p, &input.invoice_id, Utc::now()).await {
+            match invoices::approve(
+                &api.pool,
+                &api.payments,
+                api.directory.as_ref(),
+                p,
+                &input.invoice_id,
+                Utc::now(),
+            )
+            .await
+            {
                 Ok(v) => Ok(json!({ "result": v })),
                 Err(e) => Err(payout_msg(e)),
             }
@@ -787,7 +898,11 @@ pub async fn call(ctx: &McpContext, p: &Principal, name: &str, args: Option<Valu
         }
         "time_entries_list" => {
             let input: EntriesArgs = parse_args(name, args)?;
-            let f = timeclock::EntryFilter { payee: input.payee_id, from: input.from, to: input.to };
+            let f = timeclock::EntryFilter {
+                payee: input.payee_id,
+                from: input.from,
+                to: input.to,
+            };
             match timeclock::list(&api.pool, p, &f, Utc::now()).await {
                 Ok(v) => Ok(json!({ "entries": v })),
                 Err(e) => Err(payout_msg(e)),
@@ -795,28 +910,54 @@ pub async fn call(ctx: &McpContext, p: &Principal, name: &str, args: Option<Valu
         }
         "time_shifts_list" => {
             let input: ShiftsArgs = parse_args(name, args)?;
-            match shifts::list(&api.pool, p, input.payee_id.as_deref(), input.status.as_deref()).await {
+            match shifts::list(
+                &api.pool,
+                p,
+                input.payee_id.as_deref(),
+                input.status.as_deref(),
+            )
+            .await
+            {
                 Ok(v) => Ok(json!({ "shifts": v })),
                 Err(e) => Err(payout_msg(e)),
             }
         }
         "time_timesheet_get" => {
             let input: TimesheetArgs = parse_args(name, args)?;
-            match timesheet::timesheet(&api.pool, &api.payments, api.directory.as_ref(), p, Some(&input.payee_id), input.period.as_deref(), Utc::now()).await {
+            match timesheet::timesheet(
+                &api.pool,
+                &api.payments,
+                api.directory.as_ref(),
+                p,
+                Some(&input.payee_id),
+                input.period.as_deref(),
+                Utc::now(),
+            )
+            .await
+            {
                 Ok(v) => Ok(json!({ "timesheet": v })),
                 Err(e) => Err(payout_msg(e)),
             }
         }
         "time_entry_approve" => {
             let input: EntryIdArgs = parse_args(name, args)?;
-            match timeclock::approve(&api.pool, api.directory.as_ref(), p, &input.entry_id, Utc::now()).await {
+            match timeclock::approve(
+                &api.pool,
+                api.directory.as_ref(),
+                p,
+                &input.entry_id,
+                Utc::now(),
+            )
+            .await
+            {
                 Ok(v) => Ok(json!({ "entry": v })),
                 Err(e) => Err(payout_msg(e)),
             }
         }
         "payout_statement" => {
             let input: StatementArgs = parse_args(name, args)?;
-            match statement::statement(&api.pool, p, &input.payee_id, &input.from, &input.to).await {
+            match statement::statement(&api.pool, p, &input.payee_id, &input.from, &input.to).await
+            {
                 Ok(v) => Ok(json!({ "statement": v })),
                 Err(e) => Err(payout_msg(e)),
             }
@@ -863,7 +1004,12 @@ fn subject_args_schema() -> Value {
 fn score_submit_schema() -> Value {
     let mut props = serde_json::Map::new();
     for c in CRITERIA.iter() {
-        let meanings: Vec<String> = c.levels.iter().enumerate().map(|(i, t)| format!("{i}: {t}")).collect();
+        let meanings: Vec<String> = c
+            .levels
+            .iter()
+            .enumerate()
+            .map(|(i, t)| format!("{i}: {t}"))
+            .collect();
         props.insert(
             c.key.to_string(),
             json!({

@@ -15,17 +15,30 @@ use crate::payments::ledger::{self, MergeEvent, PAID, PENDING};
 use crate::payments::{PaymentConfig, StripeApi, TransferRequest};
 
 async fn pool() -> SqlitePool {
-    let pool = SqlitePoolOptions::new().max_connections(1).connect("sqlite::memory:").await.unwrap();
+    let pool = SqlitePoolOptions::new()
+        .max_connections(1)
+        .connect("sqlite::memory:")
+        .await
+        .unwrap();
     sqlx::migrate!("./migrations").run(&pool).await.unwrap();
     pool
 }
 
 fn entry(n: usize) -> AuditEntry {
-    AuditEntry::new(ActorKind::System, "system:test", "test.event", format!("thing:{n}"), json!({"n": n, "b": "x", "a": [1, 2]}))
+    AuditEntry::new(
+        ActorKind::System,
+        "system:test",
+        "test.event",
+        format!("thing:{n}"),
+        json!({"n": n, "b": "x", "a": [1, 2]}),
+    )
 }
 
 async fn count(pool: &SqlitePool) -> i64 {
-    sqlx::query_scalar("SELECT COUNT(*) FROM audit_log").fetch_one(pool).await.unwrap()
+    sqlx::query_scalar("SELECT COUNT(*) FROM audit_log")
+        .fetch_one(pool)
+        .await
+        .unwrap()
 }
 
 /// Every column of every stored entry, joined: what a reader of the table could see.
@@ -36,7 +49,10 @@ async fn dump(pool: &SqlitePool) -> String {
     .fetch_all(pool)
     .await
     .unwrap();
-    rows.into_iter().map(|r| format!("{r:?}")).collect::<Vec<_>>().join("\n")
+    rows.into_iter()
+        .map(|r| format!("{r:?}"))
+        .collect::<Vec<_>>()
+        .join("\n")
 }
 
 #[derive(Default)]
@@ -94,7 +110,11 @@ async fn payable_row(pool: &SqlitePool, pr: i64) -> String {
         branch: "main".into(),
         merit_points: 50,
     };
-    ledger::record_merge(pool, &pay_cfg(), &ev).await.unwrap().unwrap().id
+    ledger::record_merge(pool, &pay_cfg(), &ev)
+        .await
+        .unwrap()
+        .unwrap()
+        .id
 }
 
 /// Make every audit insert fail, the way a full disk or a broken table would.
@@ -110,13 +130,26 @@ async fn break_audit_writes(pool: &SqlitePool) {
 #[test]
 fn canonical_json_sorts_keys_and_drops_whitespace() {
     let v = json!({"b": 1, "a": {"z": [true, null, "x\"y"], "c": 2.5}, "é": "ü"});
-    assert_eq!(canonical_json(&v), r#"{"a":{"c":2.5,"z":[true,null,"x\"y"]},"b":1,"é":"ü"}"#);
+    assert_eq!(
+        canonical_json(&v),
+        r#"{"a":{"c":2.5,"z":[true,null,"x\"y"]},"b":1,"é":"ü"}"#
+    );
 }
 
 #[test]
 fn entry_hash_is_pinned() {
     // Pins the documented serialization: changing it breaks every stored chain.
-    let h = entry_hash(1, "2026-11-21T19:00:00.000Z", "default", "system", "system:test", "test.event", "thing:1", &json!({"n": 1}), GENESIS_HASH);
+    let h = entry_hash(
+        1,
+        "2026-11-21T19:00:00.000Z",
+        "default",
+        "system",
+        "system:test",
+        "test.event",
+        "thing:1",
+        &json!({"n": 1}),
+        GENESIS_HASH,
+    );
     let expected_input = format!(
         r#"["msync-audit-v1",1,"2026-11-21T19:00:00.000Z","default","system","system:test","test.event","thing:1",{{"n":1}},"{GENESIS_HASH}"]"#
     );
@@ -134,7 +167,10 @@ fn redaction_keeps_last_four_and_drops_secrets() {
     assert!(!s.contains("abc.def"), "{s}");
     assert_eq!(redact_str(&s), s, "idempotent");
     let v = redact_value(&json!({"secret": "hunter2", "nested": [{"token": "t"}], "ok": "fine"}));
-    assert_eq!(v, json!({"secret": "[redacted]", "nested": [{"token": "[redacted]"}], "ok": "fine"}));
+    assert_eq!(
+        v,
+        json!({"secret": "[redacted]", "nested": [{"token": "[redacted]"}], "ok": "fine"})
+    );
 }
 
 // ------------------------------------------------------------------ append-only
@@ -145,10 +181,14 @@ async fn database_refuses_update_and_delete() {
     for i in 0..3 {
         append(&pool, &entry(i)).await.unwrap();
     }
-    let upd = sqlx::query("UPDATE audit_log SET detail = '{}' WHERE seq = 2").execute(&pool).await;
+    let upd = sqlx::query("UPDATE audit_log SET detail = '{}' WHERE seq = 2")
+        .execute(&pool)
+        .await;
     let err = upd.expect_err("an UPDATE must be refused");
     assert!(err.to_string().contains("append-only"), "{err}");
-    let del = sqlx::query("DELETE FROM audit_log WHERE seq = 3").execute(&pool).await;
+    let del = sqlx::query("DELETE FROM audit_log WHERE seq = 3")
+        .execute(&pool)
+        .await;
     let err = del.expect_err("a DELETE must be refused");
     assert!(err.to_string().contains("append-only"), "{err}");
     // A forged insert that does not extend the head is refused too.
@@ -177,8 +217,14 @@ async fn editing_an_entry_out_of_band_is_named_by_verify() {
 
     // Someone with raw database access drops the guard and rewrites entry 3's detail, keeping
     // it canonical so only the hash can tell.
-    sqlx::query("DROP TRIGGER audit_log_no_update").execute(&pool).await.unwrap();
-    sqlx::query(r#"UPDATE audit_log SET detail = '{"a":[1,2],"b":"x","n":999}' WHERE seq = 3"#).execute(&pool).await.unwrap();
+    sqlx::query("DROP TRIGGER audit_log_no_update")
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query(r#"UPDATE audit_log SET detail = '{"a":[1,2],"b":"x","n":999}' WHERE seq = 3"#)
+        .execute(&pool)
+        .await
+        .unwrap();
 
     let after = verify(&pool).await.unwrap();
     assert!(!after.ok);
@@ -194,21 +240,37 @@ async fn removing_an_entry_breaks_the_chain() {
     for i in 0..5 {
         append(&pool, &entry(i)).await.unwrap();
     }
-    sqlx::query("DROP TRIGGER audit_log_no_delete").execute(&pool).await.unwrap();
-    sqlx::query("DELETE FROM audit_log WHERE seq = 3").execute(&pool).await.unwrap();
+    sqlx::query("DROP TRIGGER audit_log_no_delete")
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query("DELETE FROM audit_log WHERE seq = 3")
+        .execute(&pool)
+        .await
+        .unwrap();
     let r = verify(&pool).await.unwrap();
     assert!(!r.ok);
     let broken = r.first_broken.expect("a broken entry");
-    assert_eq!(broken.seq, 4, "the entry after the gap is the first that does not verify: {broken:?}");
+    assert_eq!(
+        broken.seq, 4,
+        "the entry after the gap is the first that does not verify: {broken:?}"
+    );
     assert!(broken.reason.contains("removed"), "{broken:?}");
 }
 
 #[tokio::test]
 async fn fifty_concurrent_appends_make_one_unforked_chain() {
     let path = std::env::temp_dir().join(format!("msync-audit-{}.db", uuid::Uuid::new_v4()));
-    let url = format!("sqlite://{}?mode=rwc", path.display().to_string().replace('\\', "/"));
+    let url = format!(
+        "sqlite://{}?mode=rwc",
+        path.display().to_string().replace('\\', "/")
+    );
     let opts = SqliteConnectOptions::from_str(&url).unwrap();
-    let pool = SqlitePoolOptions::new().max_connections(8).connect_with(opts).await.unwrap();
+    let pool = SqlitePoolOptions::new()
+        .max_connections(8)
+        .connect_with(opts)
+        .await
+        .unwrap();
     sqlx::migrate!("./migrations").run(&pool).await.unwrap();
 
     let mut handles = Vec::new();
@@ -225,7 +287,11 @@ async fn fifty_concurrent_appends_make_one_unforked_chain() {
         }
     }
     let report = verify(&pool).await.unwrap();
-    let rows: Vec<(i64, String, String)> = sqlx::query_as("SELECT seq, prev_hash, hash FROM audit_log ORDER BY seq").fetch_all(&pool).await.unwrap();
+    let rows: Vec<(i64, String, String)> =
+        sqlx::query_as("SELECT seq, prev_hash, hash FROM audit_log ORDER BY seq")
+            .fetch_all(&pool)
+            .await
+            .unwrap();
     pool.close().await;
     for suffix in ["", "-wal", "-shm", "-journal"] {
         let _ = std::fs::remove_file(format!("{}{suffix}", path.display()));
@@ -233,7 +299,11 @@ async fn fifty_concurrent_appends_make_one_unforked_chain() {
 
     assert!(errors.is_empty(), "every append must succeed: {errors:?}");
     seqs.sort_unstable();
-    assert_eq!(seqs, (1..=50).collect::<Vec<i64>>(), "one entry per append, seq 1..=50 with no gap or duplicate");
+    assert_eq!(
+        seqs,
+        (1..=50).collect::<Vec<i64>>(),
+        "one entry per append, seq 1..=50 with no gap or duplicate"
+    );
     assert_eq!(rows.len(), 50);
     for w in rows.windows(2) {
         assert_eq!(w[1].1, w[0].2, "entry {} links to entry {}", w[1].0, w[0].0);
@@ -252,34 +322,85 @@ async fn strict_actions_write_entries_and_the_chain_verifies() {
         &pool,
         &dir,
         TokenCreator::Bootstrap,
-        NewToken { label: "ops".into(), member_id: "bob".into(), scopes: vec![scopes::AUDIT_READ.into()], payee_keys: vec![], expires_at: None },
+        NewToken {
+            label: "ops".into(),
+            member_id: "bob".into(),
+            scopes: vec![scopes::AUDIT_READ.into()],
+            payee_keys: vec![],
+            expires_at: None,
+        },
         Utc::now(),
     )
     .await
     .unwrap();
-    crate::auth::revoke_token(&pool, &dir, TokenCreator::Bootstrap, &t.id, Utc::now()).await.unwrap();
-    crate::auth::revoke_token(&pool, &dir, TokenCreator::Bootstrap, &t.id, Utc::now()).await.unwrap();
+    crate::auth::revoke_token(&pool, &dir, TokenCreator::Bootstrap, &t.id, Utc::now())
+        .await
+        .unwrap();
+    crate::auth::revoke_token(&pool, &dir, TokenCreator::Bootstrap, &t.id, Utc::now())
+        .await
+        .unwrap();
     let stripe = MockStripe::default();
     let id = payable_row(&pool, 1).await;
-    let paid = ledger::approve(&pool, &stripe, &id, "owner1").await.unwrap();
+    let paid = ledger::approve(&pool, &stripe, &id, "owner1")
+        .await
+        .unwrap();
     assert_eq!(paid.status, PAID);
 
     let page = list(&pool, &AuditFilter::default()).await.unwrap();
     let actions: Vec<&str> = page.entries.iter().map(|e| e.action.as_str()).collect();
-    assert_eq!(actions, vec!["token.created", "token.revoked", "payout.transfer.attempt", "payout.transfer.succeeded"]);
+    assert_eq!(
+        actions,
+        vec![
+            "token.created",
+            "token.revoked",
+            "payout.transfer.attempt",
+            "payout.transfer.succeeded"
+        ]
+    );
     assert_eq!(page.entries[0].actor, "admin-token");
     assert_eq!(page.entries[0].actor_kind, "admin_token");
     assert_eq!(page.entries[2].detail["destination"], json!("acct_...sDfG"));
-    assert_eq!(page.entries[2].detail["idempotency_key"], json!(format!("dsync-ledger-{id}")));
+    assert_eq!(
+        page.entries[2].detail["idempotency_key"],
+        json!(format!("dsync-ledger-{id}"))
+    );
 
     // Filters and paging.
-    let only = list(&pool, &AuditFilter { action: Some("payout.*".into()), ..Default::default() }).await.unwrap();
+    let only = list(
+        &pool,
+        &AuditFilter {
+            action: Some("payout.*".into()),
+            ..Default::default()
+        },
+    )
+    .await
+    .unwrap();
     assert_eq!(only.entries.len(), 2);
-    let p1 = list(&pool, &AuditFilter { limit: Some(3), ..Default::default() }).await.unwrap();
+    let p1 = list(
+        &pool,
+        &AuditFilter {
+            limit: Some(3),
+            ..Default::default()
+        },
+    )
+    .await
+    .unwrap();
     assert_eq!(p1.entries.len(), 3);
     assert_eq!(p1.next_after, Some(3));
-    let p2 = list(&pool, &AuditFilter { limit: Some(3), after: p1.next_after, ..Default::default() }).await.unwrap();
-    assert_eq!(p2.entries.iter().map(|e| e.seq).collect::<Vec<_>>(), vec![4]);
+    let p2 = list(
+        &pool,
+        &AuditFilter {
+            limit: Some(3),
+            after: p1.next_after,
+            ..Default::default()
+        },
+    )
+    .await
+    .unwrap();
+    assert_eq!(
+        p2.entries.iter().map(|e| e.seq).collect::<Vec<_>>(),
+        vec![4]
+    );
     assert_eq!(p2.next_after, None);
 
     assert!(verify(&pool).await.unwrap().ok);
@@ -293,7 +414,13 @@ async fn no_secret_or_full_stripe_id_is_ever_stored() {
         &pool,
         &dir,
         TokenCreator::Bootstrap,
-        NewToken { label: "leaky".into(), member_id: "bob".into(), scopes: vec![scopes::PAYOUTS_READ.into()], payee_keys: vec![], expires_at: None },
+        NewToken {
+            label: "leaky".into(),
+            member_id: "bob".into(),
+            scopes: vec![scopes::PAYOUTS_READ.into()],
+            payee_keys: vec![],
+            expires_at: None,
+        },
         Utc::now(),
     )
     .await
@@ -324,21 +451,45 @@ async fn no_secret_or_full_stripe_id_is_ever_stored() {
     assert_eq!(payee.row.stripe_account_id.as_deref(), Some(ACCT));
 
     // A transfer whose Stripe error echoes the full account id and a key.
-    let stripe = MockStripe { fail_with: Some(format!("No such destination: '{ACCT}' (request with sk_test_51HabcDEF)")), ..Default::default() };
+    let stripe = MockStripe {
+        fail_with: Some(format!(
+            "No such destination: '{ACCT}' (request with sk_test_51HabcDEF)"
+        )),
+        ..Default::default()
+    };
     let id = payable_row(&pool, 7).await;
-    let failed = ledger::approve(&pool, &stripe, &id, "owner1").await.unwrap();
+    let failed = ledger::approve(&pool, &stripe, &id, "owner1")
+        .await
+        .unwrap();
     assert_eq!(failed.status, ledger::FAILED);
 
     // An entry built carelessly by a future call site is still redacted.
-    append(&pool, &AuditEntry::new(ActorKind::System, "system:test", "test.careless", ACCT, json!({"token": t.token, "note": t.token}))).await.unwrap();
+    append(
+        &pool,
+        &AuditEntry::new(
+            ActorKind::System,
+            "system:test",
+            "test.careless",
+            ACCT,
+            json!({"token": t.token, "note": t.token}),
+        ),
+    )
+    .await
+    .unwrap();
 
     let all = dump(&pool).await;
     assert!(count(&pool).await >= 5, "{all}");
     assert!(!all.contains(ACCT), "full Stripe account id stored:\n{all}");
     assert!(!all.contains(&secret_half), "token secret stored:\n{all}");
     assert!(!all.contains(&t.token), "token stored:\n{all}");
-    assert!(!all.contains("sk_test_51HabcDEF"), "Stripe key stored:\n{all}");
-    assert!(all.contains("acct_...sDfG"), "the last four are kept:\n{all}");
+    assert!(
+        !all.contains("sk_test_51HabcDEF"),
+        "Stripe key stored:\n{all}"
+    );
+    assert!(
+        all.contains("acct_...sDfG"),
+        "the last four are kept:\n{all}"
+    );
     assert!(verify(&pool).await.unwrap().ok);
 }
 
@@ -355,24 +506,47 @@ async fn a_strict_action_fails_when_its_audit_entry_cannot_be_written() {
         &pool,
         &dir,
         TokenCreator::Bootstrap,
-        NewToken { label: "x".into(), member_id: "bob".into(), scopes: vec![scopes::PAYOUTS_READ.into()], payee_keys: vec![], expires_at: None },
+        NewToken {
+            label: "x".into(),
+            member_id: "bob".into(),
+            scopes: vec![scopes::PAYOUTS_READ.into()],
+            payee_keys: vec![],
+            expires_at: None,
+        },
         Utc::now(),
     )
     .await;
     assert!(t.is_err(), "token created without its audit entry");
-    let tokens: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM api_tokens").fetch_one(&pool).await.unwrap();
+    let tokens: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM api_tokens")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
     assert_eq!(tokens, 0);
 
     // A transfer: refused before Stripe is called, and the row stays claimable.
     let r = ledger::approve(&pool, &stripe, &id, "owner1").await;
     assert!(r.is_err(), "transfer made without its audit entry: {r:?}");
-    assert_eq!(stripe.transfers.lock().unwrap().len(), 0, "Stripe was called");
-    assert_eq!(ledger::get(&pool, &id).await.unwrap().unwrap().status, PENDING);
+    assert_eq!(
+        stripe.transfers.lock().unwrap().len(),
+        0,
+        "Stripe was called"
+    );
+    assert_eq!(
+        ledger::get(&pool, &id).await.unwrap().unwrap().status,
+        PENDING
+    );
 
     // Policy change: refused, and no stored version.
     let p = crate::payments::policy::PayoutPolicy::from_config(&pay_cfg());
-    assert!(crate::payments::policy::put_policy(&pool, &Principal::legacy_admin(), &p, None).await.is_err());
-    let versions: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM payout_policies").fetch_one(&pool).await.unwrap();
+    assert!(
+        crate::payments::policy::put_policy(&pool, &Principal::legacy_admin(), &p, None)
+            .await
+            .is_err()
+    );
+    let versions: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM payout_policies")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
     assert_eq!(versions, 0);
     assert_eq!(count(&pool).await, 0);
 }
@@ -386,16 +560,36 @@ async fn ledger_approval_is_audited_with_the_approver() {
         &pool,
         &dir,
         TokenCreator::Bootstrap,
-        NewToken { label: "o".into(), member_id: "owner1".into(), scopes: vec![scopes::PAYOUTS_APPROVE.into()], payee_keys: vec![], expires_at: None },
+        NewToken {
+            label: "o".into(),
+            member_id: "owner1".into(),
+            scopes: vec![scopes::PAYOUTS_APPROVE.into()],
+            payee_keys: vec![],
+            expires_at: None,
+        },
         Utc::now(),
     )
     .await
     .unwrap();
-    let p = crate::auth::authenticate_token(&pool, &t.token, Utc::now()).await.unwrap();
-    crate::payments::approvals::approve_row(&pool, &dir, &p, &id).await.unwrap();
+    let p = crate::auth::authenticate_token(&pool, &t.token, Utc::now())
+        .await
+        .unwrap();
+    crate::payments::approvals::approve_row(&pool, &dir, &p, &id)
+        .await
+        .unwrap();
     // A second approval by the same member changes nothing and writes nothing.
-    crate::payments::approvals::approve_row(&pool, &dir, &p, &id).await.unwrap();
-    let e = list(&pool, &AuditFilter { action: Some("ledger.approval".into()), ..Default::default() }).await.unwrap();
+    crate::payments::approvals::approve_row(&pool, &dir, &p, &id)
+        .await
+        .unwrap();
+    let e = list(
+        &pool,
+        &AuditFilter {
+            action: Some("ledger.approval".into()),
+            ..Default::default()
+        },
+    )
+    .await
+    .unwrap();
     assert_eq!(e.entries.len(), 1);
     assert_eq!(e.entries[0].actor, "owner1");
     assert_eq!(e.entries[0].target, format!("ledger:{id}"));

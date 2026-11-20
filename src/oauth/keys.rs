@@ -9,7 +9,10 @@
 use base64::Engine;
 use ring::aead::{Aad, LessSafeKey, Nonce, UnboundKey, AES_256_GCM, NONCE_LEN};
 use ring::rand::{SecureRandom, SystemRandom};
-use ring::signature::{EcdsaKeyPair, KeyPair, UnparsedPublicKey, ECDSA_P256_SHA256_FIXED, ECDSA_P256_SHA256_FIXED_SIGNING};
+use ring::signature::{
+    EcdsaKeyPair, KeyPair, UnparsedPublicKey, ECDSA_P256_SHA256_FIXED,
+    ECDSA_P256_SHA256_FIXED_SIGNING,
+};
 use serde_json::{json, Value};
 use sqlx::SqlitePool;
 
@@ -20,7 +23,9 @@ pub const ALG: &str = "ES256";
 
 #[derive(Debug, thiserror::Error)]
 pub enum KeyError {
-    #[error("MSYNC_KEY_ENCRYPTION_KEY is not set or is not 32 bytes (64 hex characters or base64)")]
+    #[error(
+        "MSYNC_KEY_ENCRYPTION_KEY is not set or is not 32 bytes (64 hex characters or base64)"
+    )]
     NoKek,
     #[error("a stored signing key could not be opened (wrong MSYNC_KEY_ENCRYPTION_KEY?)")]
     Unseal,
@@ -47,7 +52,9 @@ impl Kek {
         let bytes = if s.len() == 64 && s.bytes().all(|b| b.is_ascii_hexdigit()) {
             hex::decode(s).ok()?
         } else {
-            B64.decode(s).or_else(|_| B64URL.decode(s.trim_end_matches('='))).ok()?
+            B64.decode(s)
+                .or_else(|_| B64URL.decode(s.trim_end_matches('=')))
+                .ok()?
         };
         <[u8; 32]>::try_from(bytes.as_slice()).ok().map(Kek)
     }
@@ -62,10 +69,16 @@ impl Kek {
 
     pub fn seal(&self, kid: &str, plaintext: &[u8]) -> Result<String, KeyError> {
         let mut nonce = [0u8; NONCE_LEN];
-        SystemRandom::new().fill(&mut nonce).map_err(|_| KeyError::Crypto)?;
+        SystemRandom::new()
+            .fill(&mut nonce)
+            .map_err(|_| KeyError::Crypto)?;
         let mut buf = plaintext.to_vec();
         self.key()
-            .seal_in_place_append_tag(Nonce::assume_unique_for_key(nonce), Aad::from(kid.as_bytes()), &mut buf)
+            .seal_in_place_append_tag(
+                Nonce::assume_unique_for_key(nonce),
+                Aad::from(kid.as_bytes()),
+                &mut buf,
+            )
             .map_err(|_| KeyError::Crypto)?;
         let mut out = nonce.to_vec();
         out.extend_from_slice(&buf);
@@ -78,9 +91,14 @@ impl Kek {
             return Err(KeyError::Unseal);
         }
         let (n, ct) = raw.split_at(NONCE_LEN);
-        let nonce = Nonce::assume_unique_for_key(<[u8; NONCE_LEN]>::try_from(n).map_err(|_| KeyError::Unseal)?);
+        let nonce = Nonce::assume_unique_for_key(
+            <[u8; NONCE_LEN]>::try_from(n).map_err(|_| KeyError::Unseal)?,
+        );
         let mut buf = ct.to_vec();
-        let plain = self.key().open_in_place(nonce, Aad::from(kid.as_bytes()), &mut buf).map_err(|_| KeyError::Unseal)?;
+        let plain = self
+            .key()
+            .open_in_place(nonce, Aad::from(kid.as_bytes()), &mut buf)
+            .map_err(|_| KeyError::Unseal)?;
         Ok(plain.to_vec())
     }
 }
@@ -93,7 +111,10 @@ pub struct SigningKey {
 
 impl SigningKey {
     pub fn sign(&self, msg: &[u8]) -> Result<Vec<u8>, KeyError> {
-        self.pair.sign(&SystemRandom::new(), msg).map(|s| s.as_ref().to_vec()).map_err(|_| KeyError::Crypto)
+        self.pair
+            .sign(&SystemRandom::new(), msg)
+            .map(|s| s.as_ref().to_vec())
+            .map_err(|_| KeyError::Crypto)
     }
 }
 
@@ -107,7 +128,11 @@ pub struct PublicKey {
 
 impl PublicKey {
     pub fn jwk(&self) -> Value {
-        let (x, y) = if self.point.len() == 65 { (&self.point[1..33], &self.point[33..65]) } else { (&[][..], &[][..]) };
+        let (x, y) = if self.point.len() == 65 {
+            (&self.point[1..33], &self.point[33..65])
+        } else {
+            (&[][..], &[][..])
+        };
         json!({
             "kty": "EC",
             "crv": "P-256",
@@ -132,18 +157,25 @@ impl PublicKey {
         let mut point = vec![4u8];
         point.extend(x);
         point.extend(y);
-        Some(PublicKey { kid: j.get("kid")?.as_str()?.to_string(), point })
+        Some(PublicKey {
+            kid: j.get("kid")?.as_str()?.to_string(),
+            point,
+        })
     }
 
     pub fn verify(&self, msg: &[u8], sig: &[u8]) -> bool {
-        UnparsedPublicKey::new(&ECDSA_P256_SHA256_FIXED, &self.point).verify(msg, sig).is_ok()
+        UnparsedPublicKey::new(&ECDSA_P256_SHA256_FIXED, &self.point)
+            .verify(msg, sig)
+            .is_ok()
     }
 }
 
 async fn generate(pool: &SqlitePool, kek: &Kek, now: i64) -> Result<(), KeyError> {
     let rng = SystemRandom::new();
-    let pkcs8 = EcdsaKeyPair::generate_pkcs8(&ECDSA_P256_SHA256_FIXED_SIGNING, &rng).map_err(|_| KeyError::Crypto)?;
-    let pair = EcdsaKeyPair::from_pkcs8(&ECDSA_P256_SHA256_FIXED_SIGNING, pkcs8.as_ref(), &rng).map_err(|_| KeyError::Crypto)?;
+    let pkcs8 = EcdsaKeyPair::generate_pkcs8(&ECDSA_P256_SHA256_FIXED_SIGNING, &rng)
+        .map_err(|_| KeyError::Crypto)?;
+    let pair = EcdsaKeyPair::from_pkcs8(&ECDSA_P256_SHA256_FIXED_SIGNING, pkcs8.as_ref(), &rng)
+        .map_err(|_| KeyError::Crypto)?;
     let mut id = [0u8; 8];
     rng.fill(&mut id).map_err(|_| KeyError::Crypto)?;
     let kid = format!("msk_{}", hex::encode(id));
@@ -170,8 +202,12 @@ pub async fn current(pool: &SqlitePool, kek: &Kek, now: i64) -> Result<SigningKe
         match row {
             Some((kid, sealed)) => {
                 let pkcs8 = kek.open(&kid, &sealed)?;
-                let pair = EcdsaKeyPair::from_pkcs8(&ECDSA_P256_SHA256_FIXED_SIGNING, &pkcs8, &SystemRandom::new())
-                    .map_err(|_| KeyError::Unseal)?;
+                let pair = EcdsaKeyPair::from_pkcs8(
+                    &ECDSA_P256_SHA256_FIXED_SIGNING,
+                    &pkcs8,
+                    &SystemRandom::new(),
+                )
+                .map_err(|_| KeyError::Unseal)?;
                 return Ok(SigningKey { kid, pair });
             }
             None if attempt == 0 => generate(pool, kek, now).await?,
@@ -183,12 +219,23 @@ pub async fn current(pool: &SqlitePool, kek: &Kek, now: i64) -> Result<SigningKe
 
 /// Retire the signing key and start a new one. The retired key stays published for
 /// `publish_for_secs` (at least the longest token lifetime) so tokens it signed still verify.
-pub async fn rotate(pool: &SqlitePool, kek: &Kek, now: i64, publish_for_secs: i64) -> Result<String, KeyError> {
-    sqlx::query("UPDATE oauth_signing_keys SET retired_at = ?, publish_until = ? WHERE retired_at IS NULL")
-        .bind(now)
-        .bind(if crate::accounts::mutant::on("rotation_drops_old") { now } else { now + publish_for_secs })
-        .execute(pool)
-        .await?;
+pub async fn rotate(
+    pool: &SqlitePool,
+    kek: &Kek,
+    now: i64,
+    publish_for_secs: i64,
+) -> Result<String, KeyError> {
+    sqlx::query(
+        "UPDATE oauth_signing_keys SET retired_at = ?, publish_until = ? WHERE retired_at IS NULL",
+    )
+    .bind(now)
+    .bind(if crate::accounts::mutant::on("rotation_drops_old") {
+        now
+    } else {
+        now + publish_for_secs
+    })
+    .execute(pool)
+    .await?;
     generate(pool, kek, now).await?;
     Ok(current(pool, kek, now).await?.kid)
 }

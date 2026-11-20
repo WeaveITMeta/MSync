@@ -32,7 +32,10 @@ use sha2::Sha256;
 use subtle::ConstantTimeEq;
 
 use crate::chat::sync::{SyncRunner, Trigger};
-use crate::chat::{ChatActor, ChatCommand, ChatContext, ChatPlatform, ChatReply, ProjectionApplier, ProjectionPlan, SyncReport};
+use crate::chat::{
+    ChatActor, ChatCommand, ChatContext, ChatPlatform, ChatReply, ProjectionApplier,
+    ProjectionPlan, SyncReport,
+};
 
 pub use api::{SlackApi, SlackWebApi};
 
@@ -50,14 +53,24 @@ pub fn verify_slack_signature(
     if secret.is_empty() {
         return false;
     }
-    let (Some(ts), Some(sig)) = (timestamp, signature) else { return false };
-    let Ok(t) = ts.trim().parse::<i64>() else { return false };
+    let (Some(ts), Some(sig)) = (timestamp, signature) else {
+        return false;
+    };
+    let Ok(t) = ts.trim().parse::<i64>() else {
+        return false;
+    };
     if (now_unix - t).abs() > SLACK_TOLERANCE_SECS {
         return false;
     }
-    let Some(hex_sig) = sig.trim().strip_prefix("v0=") else { return false };
-    let Ok(provided) = hex::decode(hex_sig) else { return false };
-    let Ok(mut mac) = Hmac::<Sha256>::new_from_slice(secret.as_bytes()) else { return false };
+    let Some(hex_sig) = sig.trim().strip_prefix("v0=") else {
+        return false;
+    };
+    let Ok(provided) = hex::decode(hex_sig) else {
+        return false;
+    };
+    let Ok(mut mac) = Hmac::<Sha256>::new_from_slice(secret.as_bytes()) else {
+        return false;
+    };
     mac.update(b"v0:");
     mac.update(ts.as_bytes());
     mac.update(b":");
@@ -124,12 +137,18 @@ pub const WORKING_TEXT: &str = "⏳ Working on it. The result will appear here i
 /// Commands that call the Slack Web API (the admin check, user groups) or Stripe, and so
 /// may take longer than Slack's three seconds.
 pub fn is_deferred(cmd: ChatCommand) -> bool {
-    !crate::chat::sync::mutant("slack_inline") && matches!(cmd, ChatCommand::Sync | ChatCommand::Payouts | ChatCommand::PayoutSetup)
+    !crate::chat::sync::mutant("slack_inline")
+        && matches!(
+            cmd,
+            ChatCommand::Sync | ChatCommand::Payouts | ChatCommand::PayoutSetup
+        )
 }
 
 impl SlackState {
     pub fn enabled(&self) -> bool {
-        self.signing_secret.as_deref().is_some_and(|s| !s.is_empty())
+        self.signing_secret
+            .as_deref()
+            .is_some_and(|s| !s.is_empty())
     }
 
     /// Is `team` the configured team or the CRA-listed one?
@@ -159,14 +178,31 @@ pub struct SlackOutcome {
 
 impl SlackOutcome {
     fn reject(status: StatusCode) -> Self {
-        SlackOutcome { status, body: None, deferred: false }
+        SlackOutcome {
+            status,
+            body: None,
+            deferred: false,
+        }
     }
 }
 
-async fn run_command(chat: &ChatContext, api: &Arc<dyn SlackApi>, sync: &Arc<SyncRunner>, form: &SlackCommandForm, cmd: ChatCommand) -> ChatReply {
-    let is_admin = if cmd.is_admin_only() { api.is_admin(&form.user_id).await } else { None };
+async fn run_command(
+    chat: &ChatContext,
+    api: &Arc<dyn SlackApi>,
+    sync: &Arc<SyncRunner>,
+    form: &SlackCommandForm,
+    cmd: ChatCommand,
+) -> ChatReply {
+    let is_admin = if cmd.is_admin_only() {
+        api.is_admin(&form.user_id).await
+    } else {
+        None
+    };
     let actor = ChatActor::slack(form.team_id.clone(), form.user_id.clone(), is_admin);
-    let applier = SlackApplier { api: api.clone(), sync: Some(sync.clone()) };
+    let applier = SlackApplier {
+        api: api.clone(),
+        sync: Some(sync.clone()),
+    };
     crate::chat::commands::run(chat, &actor, cmd, &form.text, &applier).await
 }
 
@@ -180,23 +216,34 @@ pub async fn handle_command(
 ) -> SlackOutcome {
     // 1. Signature first; nothing in the body is looked at before it passes.
     let secret = state.signing_secret.as_deref().unwrap_or("");
-    if !verify_slack_signature(secret, timestamp, signature, body, now_unix) && !crate::chat::sync::mutant("slack_skip_signature") {
+    if !verify_slack_signature(secret, timestamp, signature, body, now_unix)
+        && !crate::chat::sync::mutant("slack_skip_signature")
+    {
         return SlackOutcome::reject(StatusCode::UNAUTHORIZED);
     }
     // 2. Parse.
-    let Ok(text) = std::str::from_utf8(body) else { return SlackOutcome::reject(StatusCode::BAD_REQUEST) };
+    let Ok(text) = std::str::from_utf8(body) else {
+        return SlackOutcome::reject(StatusCode::BAD_REQUEST);
+    };
     let form = match web::Query::<SlackCommandForm>::from_query(text) {
         Ok(f) => f.into_inner(),
         Err(_) => return SlackOutcome::reject(StatusCode::BAD_REQUEST),
     };
     // 3. Only our workspace.
     if !state.team_allowed(&form.team_id) {
-        tracing::warn!("Slack command from team {} refused: not the configured or CRA-listed team", form.team_id);
+        tracing::warn!(
+            "Slack command from team {} refused: not the configured or CRA-listed team",
+            form.team_id
+        );
         return SlackOutcome::reject(StatusCode::FORBIDDEN);
     }
     // 4. Run: at once, or acknowledged now and finished through `response_url`.
     let Some(cmd) = command_for(&form.command) else {
-        return SlackOutcome { status: StatusCode::OK, body: Some(reply_json(&ChatReply::private("Unknown command"))), deferred: false };
+        return SlackOutcome {
+            status: StatusCode::OK,
+            body: Some(reply_json(&ChatReply::private("Unknown command"))),
+            deferred: false,
+        };
     };
     match form.response_url.clone().filter(|u| !u.is_empty()) {
         Some(url) if is_deferred(cmd) => {
@@ -204,21 +251,42 @@ pub async fn handle_command(
             tokio::spawn(async move {
                 let reply = run_command(&chat, &api, &sync, &form, cmd).await;
                 if let Err(e) = api.respond(&url, &reply_json(&reply)).await {
-                    tracing::warn!("Slack {} result not delivered to response_url: {}", form.command, e);
+                    tracing::warn!(
+                        "Slack {} result not delivered to response_url: {}",
+                        form.command,
+                        e
+                    );
                 }
             });
-            SlackOutcome { status: StatusCode::OK, body: Some(reply_json(&ChatReply::private(WORKING_TEXT))), deferred: true }
+            SlackOutcome {
+                status: StatusCode::OK,
+                body: Some(reply_json(&ChatReply::private(WORKING_TEXT))),
+                deferred: true,
+            }
         }
         _ => {
             let reply = run_command(&state.chat, &state.api, &state.sync, &form, cmd).await;
-            SlackOutcome { status: StatusCode::OK, body: Some(reply_json(&reply)), deferred: false }
+            SlackOutcome {
+                status: StatusCode::OK,
+                body: Some(reply_json(&reply)),
+                deferred: false,
+            }
         }
     }
 }
 
 #[post("/slack/commands")]
-pub async fn slack_commands(req: HttpRequest, body: web::Bytes, state: web::Data<SlackState>) -> HttpResponse {
-    let header = |name: &str| req.headers().get(name).and_then(|v| v.to_str().ok()).map(|s| s.to_string());
+pub async fn slack_commands(
+    req: HttpRequest,
+    body: web::Bytes,
+    state: web::Data<SlackState>,
+) -> HttpResponse {
+    let header = |name: &str| {
+        req.headers()
+            .get(name)
+            .and_then(|v| v.to_str().ok())
+            .map(|s| s.to_string())
+    };
     let ts = header("X-Slack-Request-Timestamp");
     let sig = header("X-Slack-Signature");
     let now = chrono::Utc::now().timestamp();
@@ -243,8 +311,14 @@ impl ProjectionApplier for SlackApplier {
     /// member of a group is never removed; that is reported.
     async fn apply(&self, plan: &ProjectionPlan) -> SyncReport {
         match &self.sync {
-            Some(runner) => runner.run_with_plan(Trigger::Command, plan).await.to_sync_report(ChatPlatform::Slack),
-            None => SyncReport { notes: vec!["Slack role sync is not running.".into()], ..Default::default() },
+            Some(runner) => runner
+                .run_with_plan(Trigger::Command, plan)
+                .await
+                .to_sync_report(ChatPlatform::Slack),
+            None => SyncReport {
+                notes: vec!["Slack role sync is not running.".into()],
+                ..Default::default()
+            },
         }
     }
 

@@ -153,17 +153,31 @@ async fn load_activity(pool: &SqlitePool, only: Option<&str>) -> Result<Vec<ActR
             let host: Option<String> = r.try_get("host")?;
             let repo: Option<String> = r.try_get("repo")?;
             let repo_ref = match (provider, host, repo) {
-                (Some(p), Some(h), Some(rp)) => Some(RepoRef { provider: p, host: h, repo: rp }),
+                (Some(p), Some(h), Some(rp)) => Some(RepoRef {
+                    provider: p,
+                    host: h,
+                    repo: rp,
+                }),
                 _ => None,
             };
             let kind: Option<String> = r.try_get("kind")?;
-            Ok((r.try_get("cid")?, repo_ref, kind_name(&kind.unwrap_or_default()), r.try_get("pts")?))
+            Ok((
+                r.try_get("cid")?,
+                repo_ref,
+                kind_name(&kind.unwrap_or_default()),
+                r.try_get("pts")?,
+            ))
         })
         .collect()
 }
 
 /// Drilldown for one person. Always sums to `total`.
-fn drilldown(total: i64, acts: &[&ActRow], registry: &RepoRegistry, include_private_names: bool) -> Vec<RepoPoints> {
+fn drilldown(
+    total: i64,
+    acts: &[&ActRow],
+    registry: &RepoRegistry,
+    include_private_names: bool,
+) -> Vec<RepoPoints> {
     let mut named: BTreeMap<RepoRef, i64> = BTreeMap::new();
     let mut private_sum = 0i64;
     let mut attributed = 0i64;
@@ -191,10 +205,26 @@ fn drilldown(total: i64, acts: &[&ActRow], registry: &RepoRegistry, include_priv
         })
         .collect();
     if private_sum != 0 {
-        out.push(RepoPoints { kind: BucketKind::PrivateRepositories, label: PRIVATE_LABEL.into(), provider: None, host: None, repo: None, private: true, points: private_sum });
+        out.push(RepoPoints {
+            kind: BucketKind::PrivateRepositories,
+            label: PRIVATE_LABEL.into(),
+            provider: None,
+            host: None,
+            repo: None,
+            private: true,
+            points: private_sum,
+        });
     }
     if unattributed != 0 {
-        out.push(RepoPoints { kind: BucketKind::Unattributed, label: UNATTRIBUTED_LABEL.into(), provider: None, host: None, repo: None, private: false, points: unattributed });
+        out.push(RepoPoints {
+            kind: BucketKind::Unattributed,
+            label: UNATTRIBUTED_LABEL.into(),
+            provider: None,
+            host: None,
+            repo: None,
+            private: false,
+            points: unattributed,
+        });
     }
     out.sort_by(|a, b| b.points.cmp(&a.points).then_with(|| a.label.cmp(&b.label)));
     out
@@ -203,7 +233,11 @@ fn drilldown(total: i64, acts: &[&ActRow], registry: &RepoRegistry, include_priv
 /// Leaderboard. Without `repo`: total XP per person, drilldown by repository. With
 /// `repo`: ranks by that repository's XP alone; people with none are left out. A
 /// private repository queried without `include_private_names` returns nothing.
-pub async fn leaderboard(pool: &SqlitePool, registry: &RepoRegistry, q: LeaderboardQuery) -> Result<Vec<LeaderboardRow>, sqlx::Error> {
+pub async fn leaderboard(
+    pool: &SqlitePool,
+    registry: &RepoRegistry,
+    q: LeaderboardQuery,
+) -> Result<Vec<LeaderboardRow>, sqlx::Error> {
     let people = load_people(pool, None).await?;
     let acts = load_activity(pool, None).await?;
     let mut by_person: BTreeMap<&str, Vec<&ActRow>> = BTreeMap::new();
@@ -211,7 +245,11 @@ pub async fn leaderboard(pool: &SqlitePool, registry: &RepoRegistry, q: Leaderbo
         by_person.entry(a.0.as_str()).or_default().push(a);
     }
 
-    let target = q.repo.as_ref().map(|r| RepoRef { provider: r.provider.to_ascii_lowercase(), host: r.host.to_ascii_lowercase(), repo: r.repo.trim_matches('/').to_ascii_lowercase() });
+    let target = q.repo.as_ref().map(|r| RepoRef {
+        provider: r.provider.to_ascii_lowercase(),
+        host: r.host.to_ascii_lowercase(),
+        repo: r.repo.trim_matches('/').to_ascii_lowercase(),
+    });
     if let Some(t) = &target {
         if !q.include_private_names && !registry.is_public(t) {
             return Ok(Vec::new());
@@ -222,14 +260,23 @@ pub async fn leaderboard(pool: &SqlitePool, registry: &RepoRegistry, q: Leaderbo
     for p in &people {
         let mine = by_person.get(p.id.as_str()).cloned().unwrap_or_default();
         let (total, by_repo) = match &target {
-            None => (p.total, drilldown(p.total, &mine, registry, q.include_private_names)),
+            None => (
+                p.total,
+                drilldown(p.total, &mine, registry, q.include_private_names),
+            ),
             Some(t) => {
-                let only: Vec<&ActRow> = mine.into_iter().filter(|a| a.1.as_ref() == Some(t)).collect();
+                let only: Vec<&ActRow> = mine
+                    .into_iter()
+                    .filter(|a| a.1.as_ref() == Some(t))
+                    .collect();
                 let sum: i64 = only.iter().map(|a| a.3).sum();
                 if sum == 0 {
                     continue;
                 }
-                (sum, drilldown(sum, &only, registry, q.include_private_names))
+                (
+                    sum,
+                    drilldown(sum, &only, registry, q.include_private_names),
+                )
             }
         };
         rows.push(LeaderboardRow {
@@ -242,7 +289,11 @@ pub async fn leaderboard(pool: &SqlitePool, registry: &RepoRegistry, q: Leaderbo
             by_repo,
         });
     }
-    rows.sort_by(|a, b| b.total_points.cmp(&a.total_points).then_with(|| a.github_username.cmp(&b.github_username)));
+    rows.sort_by(|a, b| {
+        b.total_points
+            .cmp(&a.total_points)
+            .then_with(|| a.github_username.cmp(&b.github_username))
+    });
     if q.limit > 0 {
         rows.truncate(q.limit);
     }
@@ -253,9 +304,16 @@ pub async fn leaderboard(pool: &SqlitePool, registry: &RepoRegistry, q: Leaderbo
 }
 
 /// One person's XP by repository and by event kind. Both lists sum to the total.
-pub async fn member_merit(pool: &SqlitePool, registry: &RepoRegistry, contributor_id: Uuid, include_private_names: bool) -> Result<Option<MemberMerit>, sqlx::Error> {
+pub async fn member_merit(
+    pool: &SqlitePool,
+    registry: &RepoRegistry,
+    contributor_id: Uuid,
+    include_private_names: bool,
+) -> Result<Option<MemberMerit>, sqlx::Error> {
     let id = contributor_id.to_string();
-    let Some(p) = load_people(pool, Some(&id)).await?.into_iter().next() else { return Ok(None) };
+    let Some(p) = load_people(pool, Some(&id)).await?.into_iter().next() else {
+        return Ok(None);
+    };
     let acts = load_activity(pool, Some(&id)).await?;
     let refs: Vec<&ActRow> = acts.iter().collect();
     let by_repo = drilldown(p.total, &refs, registry, include_private_names);
@@ -269,10 +327,20 @@ pub async fn member_merit(pool: &SqlitePool, registry: &RepoRegistry, contributo
     if p.total - sum != 0 {
         *kinds.entry("other".into()).or_default() += p.total - sum;
     }
-    let mut by_kind: Vec<KindPoints> = kinds.into_iter().filter(|(_, v)| *v != 0).map(|(kind, points)| KindPoints { kind, points }).collect();
+    let mut by_kind: Vec<KindPoints> = kinds
+        .into_iter()
+        .filter(|(_, v)| *v != 0)
+        .map(|(kind, points)| KindPoints { kind, points })
+        .collect();
     by_kind.sort_by(|a, b| b.points.cmp(&a.points).then_with(|| a.kind.cmp(&b.kind)));
 
-    Ok(Some(MemberMerit { contributor_id: p.id, github_username: p.github_username, total_points: p.total, by_repo, by_kind }))
+    Ok(Some(MemberMerit {
+        contributor_id: p.id,
+        github_username: p.github_username,
+        total_points: p.total,
+        by_repo,
+        by_kind,
+    }))
 }
 
 #[cfg(test)]
@@ -288,7 +356,11 @@ mod tests {
     const SPEC: &str = "github:github.com:org/alpha, github:github.com:org/beta, gitlab:gitlab.com:grp/proj, github:github.com:org/secret-sauce:private";
 
     async fn pool() -> SqlitePool {
-        let pool = SqlitePoolOptions::new().max_connections(1).connect("sqlite::memory:").await.unwrap();
+        let pool = SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect("sqlite::memory:")
+            .await
+            .unwrap();
         sqlx::migrate!("./migrations").run(&pool).await.unwrap();
         pool
     }
@@ -318,8 +390,14 @@ mod tests {
     /// Open + merge a GitLab MR by `login` in grp/proj (5 + 10 points).
     async fn gl_mr(p: &FoundryProcessor, login: &str) {
         for action in ["open", "merge"] {
-            let payload: gitlab::GitLabWebhookPayload =
-                serde_json::from_value(mr_hook(action, (77, login), 77, "grp/proj", "https://gitlab.com/grp/proj")).unwrap();
+            let payload: gitlab::GitLabWebhookPayload = serde_json::from_value(mr_hook(
+                action,
+                (77, login),
+                77,
+                "grp/proj",
+                "https://gitlab.com/grp/proj",
+            ))
+            .unwrap();
             let ev = gitlab::normalize(&payload, None).unwrap().unwrap();
             p.process(&ev).await.unwrap();
         }
@@ -335,23 +413,66 @@ mod tests {
         let p = proc_(&pool);
         gh_pr(&p, "org/alpha", 1, "alice").await;
         gh_pr(&p, "org/beta", 2, "alice").await;
-        let alice = find_contributor(&pool, FoundryProvider::GitHub, "github.com", "alice").await.unwrap().unwrap();
-        link_foundry_identity(&pool, alice.id, FoundryProvider::GitLab, "gitlab.com", "alice-gl").await.unwrap();
+        let alice = find_contributor(&pool, FoundryProvider::GitHub, "github.com", "alice")
+            .await
+            .unwrap()
+            .unwrap();
+        link_foundry_identity(
+            &pool,
+            alice.id,
+            FoundryProvider::GitLab,
+            "gitlab.com",
+            "alice-gl",
+        )
+        .await
+        .unwrap();
         gl_mr(&p, "alice-gl").await;
 
-        let m = member_merit(&pool, &reg(), alice.id, true).await.unwrap().unwrap();
+        let m = member_merit(&pool, &reg(), alice.id, true)
+            .await
+            .unwrap()
+            .unwrap();
         assert_eq!(m.total_points, 45);
         assert_eq!(sum(&m.by_repo), m.total_points);
         let labels: Vec<&str> = m.by_repo.iter().map(|l| l.label.as_str()).collect();
-        assert_eq!(labels, vec!["github.com/org/alpha", "github.com/org/beta", "gitlab.com/grp/proj"]);
+        assert_eq!(
+            labels,
+            vec![
+                "github.com/org/alpha",
+                "github.com/org/beta",
+                "gitlab.com/grp/proj"
+            ]
+        );
         assert!(m.by_repo.iter().all(|l| l.points == 15));
-        assert_eq!(m.by_kind.iter().map(|k| k.points).sum::<i64>(), m.total_points);
-        assert_eq!(m.by_kind, vec![
-            KindPoints { kind: "pull_request_merged".into(), points: 30 },
-            KindPoints { kind: "pull_request_opened".into(), points: 15 },
-        ]);
+        assert_eq!(
+            m.by_kind.iter().map(|k| k.points).sum::<i64>(),
+            m.total_points
+        );
+        assert_eq!(
+            m.by_kind,
+            vec![
+                KindPoints {
+                    kind: "pull_request_merged".into(),
+                    points: 30
+                },
+                KindPoints {
+                    kind: "pull_request_opened".into(),
+                    points: 15
+                },
+            ]
+        );
 
-        let rows = leaderboard(&pool, &reg(), LeaderboardQuery { repo: None, limit: 10, include_private_names: false }).await.unwrap();
+        let rows = leaderboard(
+            &pool,
+            &reg(),
+            LeaderboardQuery {
+                repo: None,
+                limit: 10,
+                include_private_names: false,
+            },
+        )
+        .await
+        .unwrap();
         assert_eq!(rows.len(), 1, "two identities, one person");
         assert_eq!(rows[0].total_points, 45);
         assert_eq!(sum(&rows[0].by_repo), 45);
@@ -364,24 +485,61 @@ mod tests {
         gh_pr(&p, "org/alpha", 1, "alice").await;
         gh_pr(&p, "org/secret-sauce", 2, "alice").await;
 
-        let rows = leaderboard(&pool, &reg(), LeaderboardQuery { repo: None, limit: 25, include_private_names: false }).await.unwrap();
+        let rows = leaderboard(
+            &pool,
+            &reg(),
+            LeaderboardQuery {
+                repo: None,
+                limit: 25,
+                include_private_names: false,
+            },
+        )
+        .await
+        .unwrap();
         let json = serde_json::to_string(&crate::routes::public_leaderboard_json(&rows)).unwrap();
-        assert!(!json.contains("secret-sauce"), "private name leaked: {json}");
+        assert!(
+            !json.contains("secret-sauce"),
+            "private name leaked: {json}"
+        );
         assert!(json.contains(PRIVATE_LABEL));
         assert_eq!(rows[0].total_points, 30);
         assert_eq!(sum(&rows[0].by_repo), 30);
-        let private = rows[0].by_repo.iter().find(|l| l.kind == BucketKind::PrivateRepositories).unwrap();
+        let private = rows[0]
+            .by_repo
+            .iter()
+            .find(|l| l.kind == BucketKind::PrivateRepositories)
+            .unwrap();
         assert_eq!(private.points, 15);
         let json_rows = serde_json::to_string(&rows).unwrap();
         assert!(!json_rows.contains("secret-sauce"));
 
         // Asking for the private repository by name on a public query reveals nothing.
-        let q = LeaderboardQuery { repo: Some(RepoRef::new(FoundryProvider::GitHub, "github.com", "org/secret-sauce")), limit: 25, include_private_names: false };
+        let q = LeaderboardQuery {
+            repo: Some(RepoRef::new(
+                FoundryProvider::GitHub,
+                "github.com",
+                "org/secret-sauce",
+            )),
+            limit: 25,
+            include_private_names: false,
+        };
         assert!(leaderboard(&pool, &reg(), q).await.unwrap().is_empty());
 
         // An authorized caller sees the name.
-        let rows = leaderboard(&pool, &reg(), LeaderboardQuery { repo: None, limit: 25, include_private_names: true }).await.unwrap();
-        assert!(serde_json::to_string(&rows).unwrap().contains("secret-sauce"));
+        let rows = leaderboard(
+            &pool,
+            &reg(),
+            LeaderboardQuery {
+                repo: None,
+                limit: 25,
+                include_private_names: true,
+            },
+        )
+        .await
+        .unwrap();
+        assert!(serde_json::to_string(&rows)
+            .unwrap()
+            .contains("secret-sauce"));
     }
 
     #[tokio::test]
@@ -395,17 +553,59 @@ mod tests {
         gh_pr(&p, "org/alpha", 20, "alice").await;
         gh_pr(&p, "org/beta", 21, "alice").await;
 
-        let all = leaderboard(&pool, &reg(), LeaderboardQuery { repo: None, limit: 25, include_private_names: false }).await.unwrap();
-        assert_eq!(all.iter().map(|r| (r.github_username.as_str(), r.total_points)).collect::<Vec<_>>(), vec![("bob", 45), ("alice", 30)]);
+        let all = leaderboard(
+            &pool,
+            &reg(),
+            LeaderboardQuery {
+                repo: None,
+                limit: 25,
+                include_private_names: false,
+            },
+        )
+        .await
+        .unwrap();
+        assert_eq!(
+            all.iter()
+                .map(|r| (r.github_username.as_str(), r.total_points))
+                .collect::<Vec<_>>(),
+            vec![("bob", 45), ("alice", 30)]
+        );
 
-        let q = LeaderboardQuery { repo: Some(RepoRef::new(FoundryProvider::GitHub, "github.com", "Org/Alpha")), limit: 25, include_private_names: false };
+        let q = LeaderboardQuery {
+            repo: Some(RepoRef::new(
+                FoundryProvider::GitHub,
+                "github.com",
+                "Org/Alpha",
+            )),
+            limit: 25,
+            include_private_names: false,
+        };
         let alpha = leaderboard(&pool, &reg(), q).await.unwrap();
-        assert_eq!(alpha.iter().map(|r| (r.rank, r.github_username.as_str(), r.total_points)).collect::<Vec<_>>(), vec![(1, "alice", 15)]);
+        assert_eq!(
+            alpha
+                .iter()
+                .map(|r| (r.rank, r.github_username.as_str(), r.total_points))
+                .collect::<Vec<_>>(),
+            vec![(1, "alice", 15)]
+        );
         assert_eq!(sum(&alpha[0].by_repo), 15);
 
-        let q = LeaderboardQuery { repo: Some(RepoRef::new(FoundryProvider::GitHub, "github.com", "org/beta")), limit: 1, include_private_names: false };
+        let q = LeaderboardQuery {
+            repo: Some(RepoRef::new(
+                FoundryProvider::GitHub,
+                "github.com",
+                "org/beta",
+            )),
+            limit: 1,
+            include_private_names: false,
+        };
         let beta = leaderboard(&pool, &reg(), q).await.unwrap();
-        assert_eq!(beta.iter().map(|r| (r.github_username.as_str(), r.total_points)).collect::<Vec<_>>(), vec![("bob", 45)]);
+        assert_eq!(
+            beta.iter()
+                .map(|r| (r.github_username.as_str(), r.total_points))
+                .collect::<Vec<_>>(),
+            vec![("bob", 45)]
+        );
     }
 
     #[tokio::test]
@@ -414,23 +614,64 @@ mod tests {
         let p = proc_(&pool);
         gh_pr(&p, "org/alpha", 1, "alice").await;
         gl_mr(&p, "bob-gl").await;
-        let alice = find_contributor(&pool, FoundryProvider::GitHub, "github.com", "alice").await.unwrap().unwrap();
-        let bob = find_contributor(&pool, FoundryProvider::GitLab, "gitlab.com", "bob-gl").await.unwrap().unwrap();
+        let alice = find_contributor(&pool, FoundryProvider::GitHub, "github.com", "alice")
+            .await
+            .unwrap()
+            .unwrap();
+        let bob = find_contributor(&pool, FoundryProvider::GitLab, "gitlab.com", "bob-gl")
+            .await
+            .unwrap()
+            .unwrap();
 
         // Owned through foundry_identities
-        let e = link_foundry_identity(&pool, alice.id, FoundryProvider::GitLab, "gitlab.com", "BOB-GL").await;
+        let e = link_foundry_identity(
+            &pool,
+            alice.id,
+            FoundryProvider::GitLab,
+            "gitlab.com",
+            "BOB-GL",
+        )
+        .await;
         assert!(matches!(e, Err(LinkError::Conflict(_))), "{e:?}");
         // Owned through the legacy github_username key only (no identity row)
-        sqlx::query("DELETE FROM foundry_identities WHERE login = 'alice'").execute(&pool).await.unwrap();
-        let e = link_foundry_identity(&pool, bob.id, FoundryProvider::GitHub, "github.com", "alice").await;
+        sqlx::query("DELETE FROM foundry_identities WHERE login = 'alice'")
+            .execute(&pool)
+            .await
+            .unwrap();
+        let e = link_foundry_identity(
+            &pool,
+            bob.id,
+            FoundryProvider::GitHub,
+            "github.com",
+            "alice",
+        )
+        .await;
         assert!(matches!(e, Err(LinkError::Conflict(_))), "{e:?}");
         // Unknown contributor
-        let e = link_foundry_identity(&pool, Uuid::new_v4(), FoundryProvider::GitHub, "github.com", "zed").await;
+        let e = link_foundry_identity(
+            &pool,
+            Uuid::new_v4(),
+            FoundryProvider::GitHub,
+            "github.com",
+            "zed",
+        )
+        .await;
         assert!(matches!(e, Err(LinkError::UnknownContributor)), "{e:?}");
         // Same contributor again: idempotent
-        link_foundry_identity(&pool, bob.id, FoundryProvider::GitLab, "gitlab.com", "bob-gl").await.unwrap();
+        link_foundry_identity(
+            &pool,
+            bob.id,
+            FoundryProvider::GitLab,
+            "gitlab.com",
+            "bob-gl",
+        )
+        .await
+        .unwrap();
         // Nothing moved
-        let still = find_contributor(&pool, FoundryProvider::GitLab, "gitlab.com", "bob-gl").await.unwrap().unwrap();
+        let still = find_contributor(&pool, FoundryProvider::GitLab, "gitlab.com", "bob-gl")
+            .await
+            .unwrap()
+            .unwrap();
         assert_eq!(still.id, bob.id);
     }
 
@@ -448,14 +689,27 @@ mod tests {
                 .bind(Uuid::new_v4()).bind(id).bind(pts).execute(&pool).await.unwrap();
         }
         // and 5 points with no activity row at all
-        let m = member_merit(&pool, &reg(), id, false).await.unwrap().unwrap();
+        let m = member_merit(&pool, &reg(), id, false)
+            .await
+            .unwrap()
+            .unwrap();
         assert_eq!(m.total_points, 40);
         assert_eq!(m.by_repo.len(), 1);
         assert_eq!(m.by_repo[0].kind, BucketKind::Unattributed);
         assert_eq!(m.by_repo[0].label, UNATTRIBUTED_LABEL);
         assert_eq!(m.by_repo[0].points, 40);
         assert_eq!(m.by_kind.iter().map(|k| k.points).sum::<i64>(), 40);
-        let rows = leaderboard(&pool, &reg(), LeaderboardQuery { repo: None, limit: 25, include_private_names: false }).await.unwrap();
+        let rows = leaderboard(
+            &pool,
+            &reg(),
+            LeaderboardQuery {
+                repo: None,
+                limit: 25,
+                include_private_names: false,
+            },
+        )
+        .await
+        .unwrap();
         assert_eq!(rows[0].by_repo, m.by_repo);
     }
 }

@@ -48,7 +48,9 @@ pub fn check_dev_mode_stripe<F: Fn(&str) -> Option<String>>(get: F) -> Result<()
     if !dev_mode_from(&get) {
         return Ok(());
     }
-    let allow_live = env_var_with("MSYNC_STRIPE_ALLOW_LIVE", &get).map(|v| v.trim() == "true").unwrap_or(false);
+    let allow_live = env_var_with("MSYNC_STRIPE_ALLOW_LIVE", &get)
+        .map(|v| v.trim() == "true")
+        .unwrap_or(false);
     if allow_live {
         anyhow::bail!("MSYNC_DEV_MODE=true refuses to start with MSYNC_STRIPE_ALLOW_LIVE=true; dev mode never moves real money");
     }
@@ -95,13 +97,21 @@ impl SlackConfig {
 /// `DISCORD_APPLICATION_ID`. Slack is configured when `MSYNC_SLACK_SIGNING_SECRET` is set
 /// and not empty. Neither configured is an error (the service would have no chat platform),
 /// except in dev mode (`MSYNC_DEV_MODE=true`), where it is a warning.
-pub fn chat_platforms_from<F: Fn(&str) -> Option<String>>(get: F) -> Result<(Option<DiscordConfig>, SlackConfig)> {
-    let non_empty = |k: &str| env_var_with(k, &get).map(|v| v.trim().to_string()).filter(|v| !v.is_empty());
+pub fn chat_platforms_from<F: Fn(&str) -> Option<String>>(
+    get: F,
+) -> Result<(Option<DiscordConfig>, SlackConfig)> {
+    let non_empty = |k: &str| {
+        env_var_with(k, &get)
+            .map(|v| v.trim().to_string())
+            .filter(|v| !v.is_empty())
+    };
     let discord = match non_empty("DISCORD_TOKEN") {
         Some(token) => Some(DiscordConfig {
             token,
             application_id: non_empty("DISCORD_APPLICATION_ID")
-                .context("DISCORD_APPLICATION_ID not found in environment (needed with DISCORD_TOKEN)")?
+                .context(
+                    "DISCORD_APPLICATION_ID not found in environment (needed with DISCORD_TOKEN)",
+                )?
                 .parse()
                 .context("DISCORD_APPLICATION_ID must be a valid u64")?,
         }),
@@ -182,8 +192,13 @@ impl Default for CraConfig {
 
 /// `MSYNC_CRA_LOCAL_DIR`, checked: refused unless dev mode is on, refused together with
 /// `MSYNC_CRA_REPO`, and the directory must contain `.msync/`.
-pub fn local_cra_dir_from<F: Fn(&str) -> Option<String>>(get: F) -> Result<Option<std::path::PathBuf>> {
-    let Some(dir) = env_var_with("MSYNC_CRA_LOCAL_DIR", &get).map(|v| v.trim().to_string()).filter(|v| !v.is_empty()) else {
+pub fn local_cra_dir_from<F: Fn(&str) -> Option<String>>(
+    get: F,
+) -> Result<Option<std::path::PathBuf>> {
+    let Some(dir) = env_var_with("MSYNC_CRA_LOCAL_DIR", &get)
+        .map(|v| v.trim().to_string())
+        .filter(|v| !v.is_empty())
+    else {
         return Ok(None);
     };
     if !dev_mode_from(&get) {
@@ -225,7 +240,9 @@ impl CraConfig {
 }
 
 fn non_empty_env(key: &str) -> Option<String> {
-    env_var(key).map(|v| v.trim().to_string()).filter(|v| !v.is_empty())
+    env_var(key)
+        .map(|v| v.trim().to_string())
+        .filter(|v| !v.is_empty())
 }
 
 /// Prefix of every MSync environment variable.
@@ -256,7 +273,8 @@ pub fn env_var_with<F: Fn(&str) -> Option<String>>(name: &str, get: F) -> Option
 
 /// `MSYNC_X` -> `DSYNC_X`; None for a name outside the MSync prefix.
 pub fn legacy_env_name(name: &str) -> Option<String> {
-    name.strip_prefix(ENV_PREFIX).map(|rest| format!("{LEGACY_ENV_PREFIX}{rest}"))
+    name.strip_prefix(ENV_PREFIX)
+        .map(|rest| format!("{LEGACY_ENV_PREFIX}{rest}"))
 }
 
 fn warn_legacy_once(legacy: &str, name: &str) {
@@ -269,7 +287,9 @@ fn warn_legacy_once(legacy: &str, name: &str) {
         .map(|mut seen| seen.insert(legacy.to_string()))
         .unwrap_or(false);
     if first {
-        tracing::warn!("{legacy} is deprecated; rename it to {name}. It is read only because {name} is unset.");
+        tracing::warn!(
+            "{legacy} is deprecated; rename it to {name}. It is read only because {name} is unset."
+        );
     }
 }
 
@@ -325,7 +345,10 @@ impl Config {
 /// Env var name holding the Discord role ID for a merit role,
 /// e.g. "Active Contributor" -> "DISCORD_ROLE_ID_ACTIVE_CONTRIBUTOR".
 pub fn discord_role_env_var(role_name: &str) -> String {
-    format!("DISCORD_ROLE_ID_{}", role_name.trim().to_uppercase().replace(' ', "_"))
+    format!(
+        "DISCORD_ROLE_ID_{}",
+        role_name.trim().to_uppercase().replace(' ', "_")
+    )
 }
 
 /// Discord role ID for a merit role from the environment, or None if unset/invalid.
@@ -343,7 +366,10 @@ mod tests {
     use std::collections::HashMap;
 
     fn lookup(pairs: &[(&str, &str)]) -> impl Fn(&str) -> Option<String> {
-        let m: HashMap<String, String> = pairs.iter().map(|(k, v)| (k.to_string(), v.to_string())).collect();
+        let m: HashMap<String, String> = pairs
+            .iter()
+            .map(|(k, v)| (k.to_string(), v.to_string()))
+            .collect();
         move |k: &str| m.get(k).cloned()
     }
 
@@ -363,24 +389,44 @@ mod tests {
     fn neither_name_set_gives_none_so_the_caller_default_applies() {
         let get = lookup(&[("DSYNC_Y", "other"), ("MSYNC_Y", "other")]);
         assert_eq!(env_var_with("MSYNC_X", &get), None);
-        assert_eq!(env_var_with("MSYNC_X", &get).unwrap_or_else(|| "default".into()), "default");
+        assert_eq!(
+            env_var_with("MSYNC_X", &get).unwrap_or_else(|| "default".into()),
+            "default"
+        );
     }
 
     #[test]
     fn names_outside_the_prefix_have_no_fallback() {
-        let get = lookup(&[("DSYNC_DATABASE_URL", "x"), ("DATABASE_URL", "sqlite://a.db")]);
-        assert_eq!(env_var_with("DATABASE_URL", &get).as_deref(), Some("sqlite://a.db"));
+        let get = lookup(&[
+            ("DSYNC_DATABASE_URL", "x"),
+            ("DATABASE_URL", "sqlite://a.db"),
+        ]);
+        assert_eq!(
+            env_var_with("DATABASE_URL", &get).as_deref(),
+            Some("sqlite://a.db")
+        );
         assert_eq!(env_var_with("STRIPE_SECRET_KEY", &get), None);
-        assert_eq!(legacy_env_name("MSYNC_PAY_MAX_CENTS").as_deref(), Some("DSYNC_PAY_MAX_CENTS"));
+        assert_eq!(
+            legacy_env_name("MSYNC_PAY_MAX_CENTS").as_deref(),
+            Some("DSYNC_PAY_MAX_CENTS")
+        );
         assert_eq!(legacy_env_name("DATABASE_URL"), None);
     }
 
     #[test]
     fn discord_only_slack_only_and_both_configure() {
-        let (d, s) = chat_platforms_from(lookup(&[("DISCORD_TOKEN", "t"), ("DISCORD_APPLICATION_ID", "7")])).unwrap();
+        let (d, s) = chat_platforms_from(lookup(&[
+            ("DISCORD_TOKEN", "t"),
+            ("DISCORD_APPLICATION_ID", "7"),
+        ]))
+        .unwrap();
         assert_eq!(d.map(|d| d.application_id), Some(7));
         assert!(!s.enabled());
-        let (d, s) = chat_platforms_from(lookup(&[("MSYNC_SLACK_SIGNING_SECRET", "sec"), ("MSYNC_SLACK_TEAM_ID", "T1")])).unwrap();
+        let (d, s) = chat_platforms_from(lookup(&[
+            ("MSYNC_SLACK_SIGNING_SECRET", "sec"),
+            ("MSYNC_SLACK_TEAM_ID", "T1"),
+        ]))
+        .unwrap();
         assert!(d.is_none(), "Slack only: no Discord token is needed");
         assert!(s.enabled());
         assert_eq!(s.team_id.as_deref(), Some("T1"));
@@ -397,9 +443,17 @@ mod tests {
     fn no_chat_platform_fails_startup() {
         assert!(chat_platforms_from(lookup(&[])).is_err());
         // An empty secret or token does not count.
-        assert!(chat_platforms_from(lookup(&[("MSYNC_SLACK_SIGNING_SECRET", " "), ("DISCORD_TOKEN", "")])).is_err());
+        assert!(chat_platforms_from(lookup(&[
+            ("MSYNC_SLACK_SIGNING_SECRET", " "),
+            ("DISCORD_TOKEN", "")
+        ]))
+        .is_err());
         // A Discord token without its application id is an error, not "Discord off".
-        assert!(chat_platforms_from(lookup(&[("DISCORD_TOKEN", "t"), ("MSYNC_SLACK_SIGNING_SECRET", "s")])).is_err());
+        assert!(chat_platforms_from(lookup(&[
+            ("DISCORD_TOKEN", "t"),
+            ("MSYNC_SLACK_SIGNING_SECRET", "s")
+        ]))
+        .is_err());
     }
 
     #[test]
@@ -418,12 +472,22 @@ mod tests {
         let dir = std::env::temp_dir().join(format!("msync-local-cra-{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(dir.join(".msync")).unwrap();
         let d = dir.to_string_lossy().to_string();
-        let err = local_cra_dir_from(lookup(&[("MSYNC_CRA_LOCAL_DIR", &d)])).unwrap_err().to_string();
+        let err = local_cra_dir_from(lookup(&[("MSYNC_CRA_LOCAL_DIR", &d)]))
+            .unwrap_err()
+            .to_string();
         assert!(err.contains("MSYNC_DEV_MODE"), "{err}");
-        let err = local_cra_dir_from(lookup(&[("MSYNC_CRA_LOCAL_DIR", &d), ("MSYNC_DEV_MODE", "false")])).unwrap_err();
+        let err = local_cra_dir_from(lookup(&[
+            ("MSYNC_CRA_LOCAL_DIR", &d),
+            ("MSYNC_DEV_MODE", "false"),
+        ]))
+        .unwrap_err();
         assert!(err.to_string().contains("MSYNC_DEV_MODE"));
         assert_eq!(
-            local_cra_dir_from(lookup(&[("MSYNC_CRA_LOCAL_DIR", &d), ("MSYNC_DEV_MODE", "true")])).unwrap(),
+            local_cra_dir_from(lookup(&[
+                ("MSYNC_CRA_LOCAL_DIR", &d),
+                ("MSYNC_DEV_MODE", "true")
+            ]))
+            .unwrap(),
             Some(std::path::PathBuf::from(&d))
         );
         // Not together with a real CRA repository, and the directory must hold .msync/.
@@ -433,11 +497,19 @@ mod tests {
             ("MSYNC_CRA_REPO", "github:github.com:o/r"),
         ]))
         .is_err());
-        let empty = std::env::temp_dir().join(format!("msync-local-empty-{}", uuid::Uuid::new_v4()));
+        let empty =
+            std::env::temp_dir().join(format!("msync-local-empty-{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(&empty).unwrap();
         let e = empty.to_string_lossy().to_string();
-        assert!(local_cra_dir_from(lookup(&[("MSYNC_CRA_LOCAL_DIR", &e), ("MSYNC_DEV_MODE", "true")])).is_err());
-        assert_eq!(local_cra_dir_from(lookup(&[("MSYNC_DEV_MODE", "true")])).unwrap(), None);
+        assert!(local_cra_dir_from(lookup(&[
+            ("MSYNC_CRA_LOCAL_DIR", &e),
+            ("MSYNC_DEV_MODE", "true")
+        ]))
+        .is_err());
+        assert_eq!(
+            local_cra_dir_from(lookup(&[("MSYNC_DEV_MODE", "true")])).unwrap(),
+            None
+        );
         let _ = std::fs::remove_dir_all(&dir);
         let _ = std::fs::remove_dir_all(&empty);
     }
@@ -445,15 +517,30 @@ mod tests {
     #[test]
     fn dev_mode_refuses_a_live_stripe_configuration() {
         let dev = ("MSYNC_DEV_MODE", "true");
-        assert!(check_dev_mode_stripe(lookup(&[dev, ("MSYNC_STRIPE_ALLOW_LIVE", "true")])).is_err());
-        assert!(check_dev_mode_stripe(lookup(&[dev, ("STRIPE_SECRET_KEY", "sk_live_abc")])).is_err());
-        assert!(check_dev_mode_stripe(lookup(&[dev, ("STRIPE_SECRET_KEY", " rk_live_abc")])).is_err());
-        assert!(check_dev_mode_stripe(lookup(&[dev, ("DSYNC_STRIPE_ALLOW_LIVE", "true")])).is_err(), "the old name counts too");
+        assert!(
+            check_dev_mode_stripe(lookup(&[dev, ("MSYNC_STRIPE_ALLOW_LIVE", "true")])).is_err()
+        );
+        assert!(
+            check_dev_mode_stripe(lookup(&[dev, ("STRIPE_SECRET_KEY", "sk_live_abc")])).is_err()
+        );
+        assert!(
+            check_dev_mode_stripe(lookup(&[dev, ("STRIPE_SECRET_KEY", " rk_live_abc")])).is_err()
+        );
+        assert!(
+            check_dev_mode_stripe(lookup(&[dev, ("DSYNC_STRIPE_ALLOW_LIVE", "true")])).is_err(),
+            "the old name counts too"
+        );
         // A test key, or no key, is fine in dev mode.
-        assert!(check_dev_mode_stripe(lookup(&[dev, ("STRIPE_SECRET_KEY", "sk_test_abc")])).is_ok());
+        assert!(
+            check_dev_mode_stripe(lookup(&[dev, ("STRIPE_SECRET_KEY", "sk_test_abc")])).is_ok()
+        );
         assert!(check_dev_mode_stripe(lookup(&[dev])).is_ok());
         // Outside dev mode this check does not apply (the live guard in StripeClient does).
-        assert!(check_dev_mode_stripe(lookup(&[("MSYNC_STRIPE_ALLOW_LIVE", "true"), ("STRIPE_SECRET_KEY", "sk_live_x")])).is_ok());
+        assert!(check_dev_mode_stripe(lookup(&[
+            ("MSYNC_STRIPE_ALLOW_LIVE", "true"),
+            ("STRIPE_SECRET_KEY", "sk_live_x")
+        ]))
+        .is_ok());
     }
 
     /// Pinned (contract 12.1): the default database keeps its pre-rename file name.

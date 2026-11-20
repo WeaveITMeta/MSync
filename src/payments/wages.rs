@@ -62,7 +62,9 @@ pub fn rate_on(rates: &[WageRate], day: NaiveDate) -> Option<&WageRate> {
     rates
         .iter()
         .filter(|r| r.effective_from <= day)
-        .max_by(|a, b| (a.effective_from, &a.created_at, &a.id).cmp(&(b.effective_from, &b.created_at, &b.id)))
+        .max_by(|a, b| {
+            (a.effective_from, &a.created_at, &a.id).cmp(&(b.effective_from, &b.created_at, &b.id))
+        })
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -108,7 +110,9 @@ impl NewWage {
     pub fn validate(&self) -> Vec<String> {
         let mut errs = Vec::new();
         if !(0..=MAX_RATE_CENTS_PER_HOUR).contains(&self.rate_cents_per_hour) {
-            errs.push(format!("rate_cents_per_hour must be between 0 and {MAX_RATE_CENTS_PER_HOUR}"));
+            errs.push(format!(
+                "rate_cents_per_hour must be between 0 and {MAX_RATE_CENTS_PER_HOUR}"
+            ));
         }
         if !(2000..=2100).contains(&chrono::Datelike::year(&self.effective_from)) {
             errs.push("effective_from must be between 2000 and 2100".into());
@@ -117,15 +121,23 @@ impl NewWage {
             (None, None) => {}
             (Some(m), Some(b)) => {
                 if !(0..=MAX_OVERTIME_AFTER_MINUTES).contains(&m) {
-                    errs.push(format!("overtime_after_minutes must be between 0 and {MAX_OVERTIME_AFTER_MINUTES}"));
+                    errs.push(format!(
+                        "overtime_after_minutes must be between 0 and {MAX_OVERTIME_AFTER_MINUTES}"
+                    ));
                 }
                 if !(MIN_OVERTIME_BPS..=MAX_OVERTIME_BPS).contains(&b) {
                     errs.push(format!("overtime_bps must be between {MIN_OVERTIME_BPS} (1x) and {MAX_OVERTIME_BPS} (5x)"));
                 }
             }
-            _ => errs.push("overtime_after_minutes and overtime_bps are set together, or not at all".into()),
+            _ => errs.push(
+                "overtime_after_minutes and overtime_bps are set together, or not at all".into(),
+            ),
         }
-        if self.memo.as_deref().is_some_and(|m| m.chars().count() > 500) {
+        if self
+            .memo
+            .as_deref()
+            .is_some_and(|m| m.chars().count() > 500)
+        {
             errs.push("memo must be at most 500 characters".into());
         }
         errs
@@ -137,12 +149,20 @@ fn required(policy: &PayoutPolicy) -> i64 {
 }
 
 async fn load_row(pool: &SqlitePool, id: &str) -> Result<Option<WageRow>, sqlx::Error> {
-    sqlx::query_as::<_, WageRow>("SELECT * FROM payee_wages WHERE id = ?").bind(id).fetch_optional(pool).await
+    sqlx::query_as::<_, WageRow>("SELECT * FROM payee_wages WHERE id = ?")
+        .bind(id)
+        .fetch_optional(pool)
+        .await
 }
 
 /// The approvals of one rate that satisfy the policy: distinct, not the setter, not the payee,
 /// rank >= min_approver_rank.
-pub async fn wage_approvals(pool: &SqlitePool, directory: &dyn Directory, policy: &PayoutPolicy, row: &WageRow) -> Result<(Vec<OrderApproval>, i64), sqlx::Error> {
+pub async fn wage_approvals(
+    pool: &SqlitePool,
+    directory: &dyn Directory,
+    policy: &PayoutPolicy,
+    row: &WageRow,
+) -> Result<(Vec<OrderApproval>, i64), sqlx::Error> {
     let rows: Vec<(String, String)> =
         sqlx::query_as("SELECT approver_member_id, created_at FROM payee_wage_approvals WHERE wage_id = ? ORDER BY created_at, approver_member_id")
             .bind(&row.id)
@@ -171,24 +191,47 @@ pub async fn wage_approvals(pool: &SqlitePool, directory: &dyn Directory, policy
         if reason.is_none() {
             counted.insert(m.clone());
         }
-        out.push(OrderApproval { approver_member_id: m, created_at: at, counts: reason.is_none(), reason });
+        out.push(OrderApproval {
+            approver_member_id: m,
+            created_at: at,
+            counts: reason.is_none(),
+            reason,
+        });
     }
     let n = counted.len() as i64;
     Ok((out, n))
 }
 
-async fn view(pool: &SqlitePool, directory: &dyn Directory, policy: &PayoutPolicy, row: WageRow) -> Result<WageView, sqlx::Error> {
+async fn view(
+    pool: &SqlitePool,
+    directory: &dyn Directory,
+    policy: &PayoutPolicy,
+    row: WageRow,
+) -> Result<WageView, sqlx::Error> {
     let (approvals, counted) = wage_approvals(pool, directory, policy, &row).await?;
     let need = required(policy);
-    Ok(WageView { row, approvals, approvals_counted: counted, approvals_required: need, approved: counted >= need })
+    Ok(WageView {
+        row,
+        approvals,
+        approvals_counted: counted,
+        approvals_required: need,
+        approved: counted >= need,
+    })
 }
 
 /// The approved rates of a payee, for the pay functions. Approvals are counted now.
-pub async fn approved_rates(pool: &SqlitePool, directory: &dyn Directory, policy: &PayoutPolicy, payee_id: &str) -> Result<Vec<WageRate>, sqlx::Error> {
-    let rows = sqlx::query_as::<_, WageRow>("SELECT * FROM payee_wages WHERE payee_id = ? ORDER BY effective_from, created_at, id")
-        .bind(payee_id)
-        .fetch_all(pool)
-        .await?;
+pub async fn approved_rates(
+    pool: &SqlitePool,
+    directory: &dyn Directory,
+    policy: &PayoutPolicy,
+    payee_id: &str,
+) -> Result<Vec<WageRate>, sqlx::Error> {
+    let rows = sqlx::query_as::<_, WageRow>(
+        "SELECT * FROM payee_wages WHERE payee_id = ? ORDER BY effective_from, created_at, id",
+    )
+    .bind(payee_id)
+    .fetch_all(pool)
+    .await?;
     let mut out = Vec::new();
     for r in rows {
         let (_, counted) = wage_approvals(pool, directory, policy, &r).await?;
@@ -196,7 +239,10 @@ pub async fn approved_rates(pool: &SqlitePool, directory: &dyn Directory, policy
             continue;
         }
         let Ok(effective_from) = NaiveDate::parse_from_str(&r.effective_from, "%Y-%m-%d") else {
-            tracing::error!("wage {} has an unreadable effective_from; it pays nothing", r.id);
+            tracing::error!(
+                "wage {} has an unreadable effective_from; it pays nothing",
+                r.id
+            );
             continue;
         };
         out.push(WageRate {
@@ -211,8 +257,14 @@ pub async fn approved_rates(pool: &SqlitePool, directory: &dyn Directory, policy
     Ok(out)
 }
 
-async fn scoped_payee(pool: &SqlitePool, principal: &Principal, payee_id: &str) -> Result<payees::Payee, PayoutError> {
-    let p = payees::load(pool, payee_id).await?.ok_or(PayoutError::NotFound("payee"))?;
+async fn scoped_payee(
+    pool: &SqlitePool,
+    principal: &Principal,
+    payee_id: &str,
+) -> Result<payees::Payee, PayoutError> {
+    let p = payees::load(pool, payee_id)
+        .await?
+        .ok_or(PayoutError::NotFound("payee"))?;
     if p.row.org_id != principal.org_id {
         return Err(PayoutError::NotFound("payee"));
     }
@@ -240,8 +292,13 @@ pub async fn history(
         wages.push(view(pool, directory, &eff.policy, r).await?);
     }
     let rates = approved_rates(pool, directory, &eff.policy, &payee.row.id).await?;
-    let in_force = rate_on(&rates, now.date_naive()).and_then(|r| wages.iter().find(|w| w.row.id == r.id).cloned());
-    Ok(WageHistory { payee_id: payee.row.id, in_force, wages })
+    let in_force = rate_on(&rates, now.date_naive())
+        .and_then(|r| wages.iter().find(|w| w.row.id == r.id).cloned());
+    Ok(WageHistory {
+        payee_id: payee.row.id,
+        in_force,
+        wages,
+    })
 }
 
 /// POST /api/v1/payees/{id}/wage (`payees.manage`). A new rate row, waiting for approvals.
@@ -257,8 +314,12 @@ pub async fn set(
 ) -> Result<WageView, PayoutError> {
     super::timeclock::need(principal, scopes::PAYEES_MANAGE)?;
     let payee = scoped_payee(pool, principal, payee_id).await?;
-    if payees::principal_is_payee_of(pool, directory, principal, &payee.row.id).await? && !super::mutant::on("payee_sets_own_wage") {
-        return Err(PayoutError::Forbidden("a payee cannot set their own rate".into()));
+    if payees::principal_is_payee_of(pool, directory, principal, &payee.row.id).await?
+        && !super::mutant::on("payee_sets_own_wage")
+    {
+        return Err(PayoutError::Forbidden(
+            "a payee cannot set their own rate".into(),
+        ));
     }
     if payee.row.status == "closed" {
         return Err(PayoutError::InvalidState("the payee is closed".into()));
@@ -268,9 +329,16 @@ pub async fn set(
         return Err(PayoutError::Invalid(errs));
     }
     let eff = policy::load_effective(pool, &payee.row.org_id, cfg).await?;
-    let currency = input.currency.as_deref().map(|c| c.trim().to_lowercase()).unwrap_or_else(|| eff.policy.currency.to_lowercase());
+    let currency = input
+        .currency
+        .as_deref()
+        .map(|c| c.trim().to_lowercase())
+        .unwrap_or_else(|| eff.policy.currency.to_lowercase());
     if !currency.eq_ignore_ascii_case(&eff.policy.currency) {
-        return Err(PayoutError::Invalid(vec![format!("currency must be the payout policy currency {}", eff.policy.currency)]));
+        return Err(PayoutError::Invalid(vec![format!(
+            "currency must be the payout policy currency {}",
+            eff.policy.currency
+        )]));
     }
     let row = WageRow {
         id: Uuid::new_v4().to_string(),
@@ -281,7 +349,12 @@ pub async fn set(
         effective_from: input.effective_from.format("%Y-%m-%d").to_string(),
         overtime_after_minutes: input.overtime_after_minutes,
         overtime_bps: input.overtime_bps,
-        memo: input.memo.as_deref().map(str::trim).filter(|m| !m.is_empty()).map(str::to_string),
+        memo: input
+            .memo
+            .as_deref()
+            .map(str::trim)
+            .filter(|m| !m.is_empty())
+            .map(str::to_string),
         set_by: principal.member_id.clone(),
         created_at: format_db_time(now),
     };
@@ -347,15 +420,23 @@ pub async fn approve(
 ) -> Result<ApproveWageResult, PayoutError> {
     super::timeclock::need(principal, scopes::PAYORDERS_APPROVE)?;
     let payee = scoped_payee(pool, principal, payee_id).await?;
-    let row = load_row(pool, wage_id).await?.ok_or(PayoutError::NotFound("wage"))?;
+    let row = load_row(pool, wage_id)
+        .await?
+        .ok_or(PayoutError::NotFound("wage"))?;
     if row.payee_id != payee.row.id {
         return Err(PayoutError::NotFound("wage"));
     }
     if principal.member_id == row.set_by && !super::mutant::on("wage_setter_counts") {
-        return Err(PayoutError::Forbidden("the member who set a rate can never approve it".into()));
+        return Err(PayoutError::Forbidden(
+            "the member who set a rate can never approve it".into(),
+        ));
     }
-    if payees::principal_is_payee_of(pool, directory, principal, &row.payee_id).await? && !super::mutant::on("payee_approves_own_wage") {
-        return Err(PayoutError::Forbidden("a payee cannot approve their own rate".into()));
+    if payees::principal_is_payee_of(pool, directory, principal, &row.payee_id).await?
+        && !super::mutant::on("payee_approves_own_wage")
+    {
+        return Err(PayoutError::Forbidden(
+            "a payee cannot approve their own rate".into(),
+        ));
     }
     let mut tx = pool.begin().await?;
     let res = sqlx::query(
@@ -384,7 +465,11 @@ pub async fn approve(
     tx.commit().await?;
     let eff = policy::load_effective(pool, &row.org_id, cfg).await?;
     Ok(ApproveWageResult {
-        result: if recorded { "recorded" } else { "already_approved" },
+        result: if recorded {
+            "recorded"
+        } else {
+            "already_approved"
+        },
         approver_member_id: principal.member_id.clone(),
         wage: view(pool, directory, &eff.policy, row).await?,
     })

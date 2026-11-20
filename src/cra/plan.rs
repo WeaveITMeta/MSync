@@ -209,7 +209,13 @@ fn render(v: &toml::Value) -> String {
 /// indexed by their identifying field (`key`, `repo`, `branch`, `id`,
 /// `role`) when present, so reordering entries is not a change.
 pub fn flatten(prefix: &str, v: &toml::Value, out: &mut BTreeMap<String, String>) {
-    let join = |k: &str| if prefix.is_empty() { k.to_string() } else { format!("{prefix}.{k}") };
+    let join = |k: &str| {
+        if prefix.is_empty() {
+            k.to_string()
+        } else {
+            format!("{prefix}.{k}")
+        }
+    };
     match v {
         toml::Value::Table(t) => {
             for (k, v) in t {
@@ -220,7 +226,11 @@ pub fn flatten(prefix: &str, v: &toml::Value, out: &mut BTreeMap<String, String>
             for (i, item) in items.iter().enumerate() {
                 let id = item
                     .as_table()
-                    .and_then(|t| ID_FIELDS.iter().find_map(|f| t.get(*f).and_then(|x| x.as_str())))
+                    .and_then(|t| {
+                        ID_FIELDS
+                            .iter()
+                            .find_map(|f| t.get(*f).and_then(|x| x.as_str()))
+                    })
                     .map(|s| s.to_string())
                     .unwrap_or_else(|| i.to_string());
                 flatten(&format!("{prefix}[{id}]"), item, out);
@@ -245,14 +255,23 @@ fn diff_maps(old: &BTreeMap<String, String>, new: &BTreeMap<String, String>) -> 
     keys.into_iter()
         .filter_map(|k| {
             let (o, n) = (old.get(k), new.get(k));
-            (o != n).then(|| FieldChange { path: k.clone(), old: o.cloned(), new: n.cloned() })
+            (o != n).then(|| FieldChange {
+                path: k.clone(),
+                old: o.cloned(),
+                new: n.cloned(),
+            })
         })
         .collect()
 }
 
 fn org_flat(s: &Snapshot) -> BTreeMap<String, String> {
     let mut m = flat_of(&s.org);
-    m.retain(|k, _| k != "schema" && k.strip_prefix("org.") != Some("mode") && k != "policy" && !k.starts_with("policy."));
+    m.retain(|k, _| {
+        k != "schema"
+            && k.strip_prefix("org.") != Some("mode")
+            && k != "policy"
+            && !k.starts_with("policy.")
+    });
     m
 }
 
@@ -277,22 +296,37 @@ fn holders(snaps: &[&Snapshot], role: &str) -> Vec<String> {
 }
 
 fn role_rank_either(snaps: &[&Snapshot], role: &str) -> u32 {
-    snaps.iter().filter_map(|s| s.role(role)).map(|r| r.rank).max().unwrap_or(0)
+    snaps
+        .iter()
+        .filter_map(|s| s.role(role))
+        .map(|r| r.rank)
+        .max()
+        .unwrap_or(0)
 }
 
 fn foundry_ids(m: &Member) -> Vec<FoundryIdentity> {
     let mut v = Vec::new();
     if let Some(l) = &m.identities.github {
-        v.push(FoundryIdentity { provider: FoundryProvider::Github, login: l.clone() });
+        v.push(FoundryIdentity {
+            provider: FoundryProvider::Github,
+            login: l.clone(),
+        });
     }
     if let Some(l) = &m.identities.gitlab {
-        v.push(FoundryIdentity { provider: FoundryProvider::Gitlab, login: l.clone() });
+        v.push(FoundryIdentity {
+            provider: FoundryProvider::Gitlab,
+            login: l.clone(),
+        });
     }
     v
 }
 
 fn target(snaps: &[&Snapshot], id: &str) -> MemberTarget {
-    let mut rank = snaps.iter().map(|s| s.policy.promotion_merit_rank_ceiling).max().unwrap_or(0);
+    let mut rank = snaps
+        .iter()
+        .map(|s| s.policy.promotion_merit_rank_ceiling)
+        .max()
+        .unwrap_or(0);
     let mut name = String::new();
     let mut ids: Vec<FoundryIdentity> = Vec::new();
     for s in snaps {
@@ -308,20 +342,32 @@ fn target(snaps: &[&Snapshot], id: &str) -> MemberTarget {
             }
         }
     }
-    MemberTarget { id: id.to_string(), name, rank, foundry_identities: ids }
+    MemberTarget {
+        id: id.to_string(),
+        name,
+        rank,
+        foundry_identities: ids,
+    }
 }
 
 /// `(projected id, member id)` for every active position grant, where the
 /// projected id is what `pick` reads from the role (its Discord role or its
 /// Slack user group).
-fn position_pairs(s: &Snapshot, pick: fn(&super::model::Role) -> Option<&String>) -> BTreeSet<(String, String)> {
+fn position_pairs(
+    s: &Snapshot,
+    pick: fn(&super::model::Role) -> Option<&String>,
+) -> BTreeSet<(String, String)> {
     let mut out = BTreeSet::new();
     for m in &s.members.members {
         if m.status != MemberStatus::Active {
             continue;
         }
         for g in &m.grants {
-            if let Some(d) = s.role(&g.role).filter(|r| r.kind == RoleKind::Position).and_then(|r| pick(r).cloned()) {
+            if let Some(d) = s
+                .role(&g.role)
+                .filter(|r| r.kind == RoleKind::Position)
+                .and_then(|r| pick(r).cloned())
+            {
                 out.insert((d, m.id.clone()));
             }
         }
@@ -346,20 +392,48 @@ pub fn plan_change(old: Option<&Snapshot>, new: &Snapshot) -> ChangePlan {
     // Mode and policy.
     let mode_change = match old {
         Some(o) if o.mode_label == new.mode_label => None,
-        Some(o) => Some(ModeChange { old: Some(o.mode_label), new: new.mode_label }),
-        None => Some(ModeChange { old: None, new: new.mode_label }),
+        Some(o) => Some(ModeChange {
+            old: Some(o.mode_label),
+            new: new.mode_label,
+        }),
+        None => Some(ModeChange {
+            old: None,
+            new: new.mode_label,
+        }),
     };
-    let new_policy: BTreeMap<String, String> =
-        new.policy.entries().into_iter().map(|(k, v)| (k.to_string(), v)).collect();
+    let new_policy: BTreeMap<String, String> = new
+        .policy
+        .entries()
+        .into_iter()
+        .map(|(k, v)| (k.to_string(), v))
+        .collect();
     let old_policy: BTreeMap<String, String> = old
-        .map(|o| o.policy.entries().into_iter().map(|(k, v)| (k.to_string(), v)).collect())
+        .map(|o| {
+            o.policy
+                .entries()
+                .into_iter()
+                .map(|(k, v)| (k.to_string(), v))
+                .collect()
+        })
         .unwrap_or_default();
     let policy_changes = diff_maps(&old_policy, &new_policy);
 
-    let org_changes = diff_maps(old.map(org_flat).as_ref().unwrap_or(&empty_flat), &org_flat(new));
-    let merit_changes = diff_maps(old.map(|o| file_flat(&o.merit)).as_ref().unwrap_or(&empty_flat), &file_flat(&new.merit));
-    let payout_changes =
-        diff_maps(old.map(|o| file_flat(&o.payouts)).as_ref().unwrap_or(&empty_flat), &file_flat(&new.payouts));
+    let org_changes = diff_maps(
+        old.map(org_flat).as_ref().unwrap_or(&empty_flat),
+        &org_flat(new),
+    );
+    let merit_changes = diff_maps(
+        old.map(|o| file_flat(&o.merit))
+            .as_ref()
+            .unwrap_or(&empty_flat),
+        &file_flat(&new.merit),
+    );
+    let payout_changes = diff_maps(
+        old.map(|o| file_flat(&o.payouts))
+            .as_ref()
+            .unwrap_or(&empty_flat),
+        &file_flat(&new.payouts),
+    );
 
     // Roles.
     let mut roles_added = Vec::new();
@@ -408,7 +482,13 @@ pub fn plan_change(old: Option<&Snapshot>, new: &Snapshot) -> ChangePlan {
     let mut status_changes = Vec::new();
     let mut identity_changes = Vec::new();
 
-    let ids_of = |m: &Member| m.identities.entries().into_iter().map(|(p, v)| (p.to_string(), v.to_string())).collect::<Vec<_>>();
+    let ids_of = |m: &Member| {
+        m.identities
+            .entries()
+            .into_iter()
+            .map(|(p, v)| (p.to_string(), v.to_string()))
+            .collect::<Vec<_>>()
+    };
     let grant_delta = |snaps: &[&Snapshot], m: &Member, g: &super::model::Grant| GrantDelta {
         member: target(snaps, &m.id),
         role: g.role.clone(),
@@ -421,14 +501,22 @@ pub fn plan_change(old: Option<&Snapshot>, new: &Snapshot) -> ChangePlan {
         let prev = old.and_then(|o| o.member(&m.id));
         match prev {
             None => {
-                members_added.push(MemberDelta { member: target(&snaps, &m.id), status: m.status, identities: ids_of(m) });
+                members_added.push(MemberDelta {
+                    member: target(&snaps, &m.id),
+                    status: m.status,
+                    identities: ids_of(m),
+                });
                 for g in &m.grants {
                     grants_added.push(grant_delta(&snaps, m, g));
                 }
             }
             Some(p) => {
                 if p.status != m.status {
-                    status_changes.push(StatusChange { member: target(&snaps, &m.id), old: p.status, new: m.status });
+                    status_changes.push(StatusChange {
+                        member: target(&snaps, &m.id),
+                        old: p.status,
+                        new: m.status,
+                    });
                 }
                 let pairs = [
                     ("github", &p.identities.github, &m.identities.github),
@@ -480,7 +568,11 @@ pub fn plan_change(old: Option<&Snapshot>, new: &Snapshot) -> ChangePlan {
     if let Some(o) = old {
         for p in &o.members.members {
             if new.member(&p.id).is_none() {
-                members_removed.push(MemberDelta { member: target(&snaps, &p.id), status: p.status, identities: ids_of(p) });
+                members_removed.push(MemberDelta {
+                    member: target(&snaps, &p.id),
+                    status: p.status,
+                    identities: ids_of(p),
+                });
                 for x in &p.grants {
                     grants_removed.push(grant_delta(&snaps, p, x));
                 }
@@ -489,27 +581,51 @@ pub fn plan_change(old: Option<&Snapshot>, new: &Snapshot) -> ChangePlan {
     }
 
     // Thresholds.
-    let tps: Vec<u32> = snaps.iter().map(|s| s.policy.grants_two_person_min_rank).collect();
+    let tps: Vec<u32> = snaps
+        .iter()
+        .map(|s| s.policy.grants_two_person_min_rank)
+        .collect();
     let two_person_min_rank = tps.iter().copied().min().unwrap_or(0);
     let org_change_rank = tps.iter().copied().max().unwrap_or(0);
 
     // Impact.
-    let old_pairs = old.map(|o| position_pairs(o, discord_of)).unwrap_or_default();
+    let old_pairs = old
+        .map(|o| position_pairs(o, discord_of))
+        .unwrap_or_default();
     let new_pairs = position_pairs(new, discord_of);
-    let mut impact = Impact { new_merit_rank_ceiling: new.policy.promotion_merit_rank_ceiling, ..Default::default() };
+    let mut impact = Impact {
+        new_merit_rank_ceiling: new.policy.promotion_merit_rank_ceiling,
+        ..Default::default()
+    };
     for (d, m) in new_pairs.difference(&old_pairs) {
-        impact.discord_role_gains.entry(d.clone()).or_default().push(m.clone());
+        impact
+            .discord_role_gains
+            .entry(d.clone())
+            .or_default()
+            .push(m.clone());
     }
     for (d, m) in old_pairs.difference(&new_pairs) {
-        impact.discord_role_losses.entry(d.clone()).or_default().push(m.clone());
+        impact
+            .discord_role_losses
+            .entry(d.clone())
+            .or_default()
+            .push(m.clone());
     }
     let old_groups = old.map(|o| position_pairs(o, slack_of)).unwrap_or_default();
     let new_groups = position_pairs(new, slack_of);
     for (g, m) in new_groups.difference(&old_groups) {
-        impact.slack_usergroup_gains.entry(g.clone()).or_default().push(m.clone());
+        impact
+            .slack_usergroup_gains
+            .entry(g.clone())
+            .or_default()
+            .push(m.clone());
     }
     for (g, m) in old_groups.difference(&new_groups) {
-        impact.slack_usergroup_losses.entry(g.clone()).or_default().push(m.clone());
+        impact
+            .slack_usergroup_losses
+            .entry(g.clone())
+            .or_default()
+            .push(m.clone());
     }
     let mut tiers: BTreeMap<String, u32> = BTreeMap::new();
     for s in &snaps {
@@ -518,8 +634,10 @@ pub fn plan_change(old: Option<&Snapshot>, new: &Snapshot) -> ChangePlan {
             *e = (*e).max(r.rank);
         }
     }
-    impact.tiers_exceeding_new_ceiling =
-        tiers.into_iter().filter(|(_, rank)| *rank > impact.new_merit_rank_ceiling).collect();
+    impact.tiers_exceeding_new_ceiling = tiers
+        .into_iter()
+        .filter(|(_, rank)| *rank > impact.new_merit_rank_ceiling)
+        .collect();
 
     ChangePlan {
         old_hash: old.map(|o| o.content_hash.clone()),
@@ -550,7 +668,9 @@ pub fn plan_change(old: Option<&Snapshot>, new: &Snapshot) -> ChangePlan {
 // -------------------------------------------------------------- rendering
 
 fn opt(v: &Option<String>) -> String {
-    v.as_deref().map(|s| format!("`{s}`")).unwrap_or_else(|| "(none)".into())
+    v.as_deref()
+        .map(|s| format!("`{s}`"))
+        .unwrap_or_else(|| "(none)".into())
 }
 
 fn date(d: &Option<NaiveDate>) -> String {
@@ -605,10 +725,17 @@ impl ChangePlan {
         field_table(&mut out, "Policy (effective values)", &self.policy_changes);
         field_table(&mut out, "Organization", &self.org_changes);
 
-        if !self.roles_added.is_empty() || !self.roles_removed.is_empty() || !self.roles_changed.is_empty() {
+        if !self.roles_added.is_empty()
+            || !self.roles_removed.is_empty()
+            || !self.roles_changed.is_empty()
+        {
             let _ = writeln!(out, "### Roles\n");
             for r in &self.roles_added {
-                let _ = writeln!(out, "- Added {:?} `{}` \"{}\" rank {}", r.kind, r.key, r.title, r.rank);
+                let _ = writeln!(
+                    out,
+                    "- Added {:?} `{}` \"{}\" rank {}",
+                    r.kind, r.key, r.title, r.rank
+                );
             }
             for r in &self.roles_removed {
                 let _ = writeln!(
@@ -618,11 +745,19 @@ impl ChangePlan {
                     r.key,
                     r.title,
                     r.rank,
-                    if r.holders.is_empty() { "none".into() } else { r.holders.join(", ") }
+                    if r.holders.is_empty() {
+                        "none".into()
+                    } else {
+                        r.holders.join(", ")
+                    }
                 );
             }
             for r in &self.roles_changed {
-                let _ = writeln!(out, "- Changed `{}` \"{}\" rank {} to {}", r.key, r.title, r.old_rank, r.new_rank);
+                let _ = writeln!(
+                    out,
+                    "- Changed `{}` \"{}\" rank {} to {}",
+                    r.key, r.title, r.old_rank, r.new_rank
+                );
                 for c in &r.changes {
                     let _ = writeln!(out, "  - `{}`: {} to {}", c.path, opt(&c.old), opt(&c.new));
                 }
@@ -637,28 +772,67 @@ impl ChangePlan {
         if any_members {
             let _ = writeln!(out, "### Members\n");
             for m in &self.members_added {
-                let ids: Vec<String> = m.identities.iter().map(|(p, v)| format!("{p}:{v}")).collect();
-                let _ = writeln!(out, "- Added `{}` ({}), status {}, identities [{}]", m.member.id, m.member.name, m.status.as_str(), ids.join(", "));
+                let ids: Vec<String> = m
+                    .identities
+                    .iter()
+                    .map(|(p, v)| format!("{p}:{v}"))
+                    .collect();
+                let _ = writeln!(
+                    out,
+                    "- Added `{}` ({}), status {}, identities [{}]",
+                    m.member.id,
+                    m.member.name,
+                    m.status.as_str(),
+                    ids.join(", ")
+                );
             }
             for m in &self.members_removed {
                 let _ = writeln!(out, "- Removed `{}` ({})", m.member.id, m.member.name);
             }
             for s in &self.status_changes {
-                let _ = writeln!(out, "- Status of `{}`: {} to {}", s.member.id, s.old.as_str(), s.new.as_str());
+                let _ = writeln!(
+                    out,
+                    "- Status of `{}`: {} to {}",
+                    s.member.id,
+                    s.old.as_str(),
+                    s.new.as_str()
+                );
             }
             for i in &self.identity_changes {
-                let _ = writeln!(out, "- `{}` {}: {} to {}", i.member.id, i.field, opt(&i.old), opt(&i.new));
+                let _ = writeln!(
+                    out,
+                    "- `{}` {}: {} to {}",
+                    i.member.id,
+                    i.field,
+                    opt(&i.old),
+                    opt(&i.new)
+                );
             }
             out.push('\n');
         }
 
-        if !self.grants_added.is_empty() || !self.grants_removed.is_empty() || !self.grants_changed.is_empty() {
+        if !self.grants_added.is_empty()
+            || !self.grants_removed.is_empty()
+            || !self.grants_changed.is_empty()
+        {
             let _ = writeln!(out, "### Grants\n");
             for g in &self.grants_added {
-                let _ = writeln!(out, "- Grant `{}` (rank {}) to `{}`, granted_by `{}`, expires {}", g.role, g.role_rank, g.member.id, g.granted_by, date(&g.expires));
+                let _ = writeln!(
+                    out,
+                    "- Grant `{}` (rank {}) to `{}`, granted_by `{}`, expires {}",
+                    g.role,
+                    g.role_rank,
+                    g.member.id,
+                    g.granted_by,
+                    date(&g.expires)
+                );
             }
             for g in &self.grants_removed {
-                let _ = writeln!(out, "- Revoke `{}` (rank {}) from `{}`", g.role, g.role_rank, g.member.id);
+                let _ = writeln!(
+                    out,
+                    "- Revoke `{}` (rank {}) from `{}`",
+                    g.role, g.role_rank, g.member.id
+                );
             }
             for g in &self.grants_changed {
                 let _ = writeln!(
@@ -683,25 +857,58 @@ impl ChangePlan {
             let _ = writeln!(out, "- No member gains or loses a position Discord role.");
         }
         for (d, ms) in &self.impact.discord_role_gains {
-            let _ = writeln!(out, "- Discord role `{d}`: {} member(s) gain it ({})", ms.len(), ms.join(", "));
+            let _ = writeln!(
+                out,
+                "- Discord role `{d}`: {} member(s) gain it ({})",
+                ms.len(),
+                ms.join(", ")
+            );
         }
         for (d, ms) in &self.impact.discord_role_losses {
-            let _ = writeln!(out, "- Discord role `{d}`: {} member(s) lose it ({})", ms.len(), ms.join(", "));
+            let _ = writeln!(
+                out,
+                "- Discord role `{d}`: {} member(s) lose it ({})",
+                ms.len(),
+                ms.join(", ")
+            );
         }
-        if self.impact.slack_usergroup_gains.is_empty() && self.impact.slack_usergroup_losses.is_empty() {
-            let _ = writeln!(out, "- No member joins or leaves a position Slack user group.");
+        if self.impact.slack_usergroup_gains.is_empty()
+            && self.impact.slack_usergroup_losses.is_empty()
+        {
+            let _ = writeln!(
+                out,
+                "- No member joins or leaves a position Slack user group."
+            );
         }
         for (g, ms) in &self.impact.slack_usergroup_gains {
-            let _ = writeln!(out, "- Slack user group `{g}`: {} member(s) join it ({})", ms.len(), ms.join(", "));
+            let _ = writeln!(
+                out,
+                "- Slack user group `{g}`: {} member(s) join it ({})",
+                ms.len(),
+                ms.join(", ")
+            );
         }
         for (g, ms) in &self.impact.slack_usergroup_losses {
-            let _ = writeln!(out, "- Slack user group `{g}`: {} member(s) leave it ({})", ms.len(), ms.join(", "));
+            let _ = writeln!(
+                out,
+                "- Slack user group `{g}`: {} member(s) leave it ({})",
+                ms.len(),
+                ms.join(", ")
+            );
         }
         if self.impact.tiers_exceeding_new_ceiling.is_empty() {
-            let _ = writeln!(out, "- No tier exceeds the new merit rank ceiling ({}).", self.impact.new_merit_rank_ceiling);
+            let _ = writeln!(
+                out,
+                "- No tier exceeds the new merit rank ceiling ({}).",
+                self.impact.new_merit_rank_ceiling
+            );
         } else {
-            let list: Vec<String> =
-                self.impact.tiers_exceeding_new_ceiling.iter().map(|(k, r)| format!("`{k}` (rank {r})")).collect();
+            let list: Vec<String> = self
+                .impact
+                .tiers_exceeding_new_ceiling
+                .iter()
+                .map(|(k, r)| format!("`{k}` (rank {r})"))
+                .collect();
             let _ = writeln!(
                 out,
                 "- {} tier(s) exceed the new merit rank ceiling {}: {}. They must be lowered or removed, or the snapshot is refused.",
@@ -722,7 +929,11 @@ impl ChangePlan {
                     r.item.replace('|', "\\|"),
                     r.permission,
                     r.rank,
-                    if r.two_person { format!("yes, approver needs `{}`", r.approver_permission) } else { "no".into() }
+                    if r.two_person {
+                        format!("yes, approver needs `{}`", r.approver_permission)
+                    } else {
+                        "no".into()
+                    }
                 );
             }
             out.push('\n');

@@ -72,7 +72,12 @@ pub struct OAuthContext {
 }
 
 impl OAuthContext {
-    pub fn from_env(pool: SqlitePool, public_url: &str, cra: CraHandle, sign_in_providers: Vec<Provider>) -> Self {
+    pub fn from_env(
+        pool: SqlitePool,
+        public_url: &str,
+        cra: CraHandle,
+        sign_in_providers: Vec<Provider>,
+    ) -> Self {
         let kek = crate::config::env_var("MSYNC_KEY_ENCRYPTION_KEY").filter(|v| !v.trim().is_empty()).and_then(|v| {
             let k = Kek::parse(&v);
             if k.is_none() {
@@ -80,21 +85,38 @@ impl OAuthContext {
             }
             k
         });
-        OAuthContext { pool, issuer: public_url.trim_end_matches('/').to_string(), kek, cra, sign_in_providers, today: None }
+        OAuthContext {
+            pool,
+            issuer: public_url.trim_end_matches('/').to_string(),
+            kek,
+            cra,
+            sign_in_providers,
+            today: None,
+        }
     }
 
     pub fn today(&self) -> NaiveDate {
-        self.today.unwrap_or_else(|| chrono::Utc::now().date_naive())
+        self.today
+            .unwrap_or_else(|| chrono::Utc::now().date_naive())
     }
 }
 
 /// The active CRA member an account is, or `None` (no snapshot, not listed, ambiguous, or not
 /// active). Only such a member gets tokens.
-pub async fn active_member(pool: &SqlitePool, cra: &CraHandle, account_id: &str) -> Result<Option<String>, sqlx::Error> {
-    let Some(active) = cra.active() else { return Ok(None) };
-    let Some(m) = accounts::member_for_account(pool, &active.snapshot, account_id).await? else { return Ok(None) };
+pub async fn active_member(
+    pool: &SqlitePool,
+    cra: &CraHandle,
+    account_id: &str,
+) -> Result<Option<String>, sqlx::Error> {
+    let Some(active) = cra.active() else {
+        return Ok(None);
+    };
+    let Some(m) = accounts::member_for_account(pool, &active.snapshot, account_id).await? else {
+        return Ok(None);
+    };
     let status = active.snapshot.member(&m).map(|x| x.status);
-    if status == Some(MemberStatus::Active) || crate::accounts::mutant::on("suspended_gets_tokens") {
+    if status == Some(MemberStatus::Active) || crate::accounts::mutant::on("suspended_gets_tokens")
+    {
         Ok(Some(m))
     } else {
         Ok(None)
@@ -102,11 +124,20 @@ pub async fn active_member(pool: &SqlitePool, cra: &CraHandle, account_id: &str)
 }
 
 /// The member claims for `scopes`, filtered by the client's allowlist.
-pub fn member_claims(ctx: &OAuthContext, client: &clients::Client, member_id: &str, scopes: &[String]) -> Map<String, Value> {
+pub fn member_claims(
+    ctx: &OAuthContext,
+    client: &clients::Client,
+    member_id: &str,
+    scopes: &[String],
+) -> Map<String, Value> {
     let mut out = Map::new();
-    let Some(active) = ctx.cra.active() else { return out };
+    let Some(active) = ctx.cra.active() else {
+        return out;
+    };
     let snap = &active.snapshot;
-    let Some(m) = snap.member(member_id) else { return out };
+    let Some(m) = snap.member(member_id) else {
+        return out;
+    };
     let merit = ctx.cra.merit_of(member_id);
     let standing = crate::cra::standing(snap, member_id, merit, ctx.today());
     for scope in scopes {
@@ -118,7 +149,12 @@ pub fn member_claims(ctx: &OAuthContext, client: &clients::Client, member_id: &s
                 "name" => Value::from(m.name.clone()),
                 "handle" => Value::from(m.id.clone()),
                 "groups" => Value::from(groups_of(standing.as_ref())),
-                "titles" => Value::from(standing.as_ref().map(|s| s.titles.clone()).unwrap_or_default()),
+                "titles" => Value::from(
+                    standing
+                        .as_ref()
+                        .map(|s| s.titles.clone())
+                        .unwrap_or_default(),
+                ),
                 "rank" => Value::from(standing.as_ref().map(|s| s.rank).unwrap_or(0)),
                 "merit" => Value::from(merit),
                 _ => continue,
@@ -144,38 +180,56 @@ pub fn groups_of(st: Option<&crate::cra::standing::Standing>) -> Vec<String> {
 }
 
 /// Revoke one token family: the grant and every refresh token issued in it.
-pub async fn revoke_grant(pool: &SqlitePool, grant_id: &str, reason: &str, now: i64) -> Result<(), sqlx::Error> {
+pub async fn revoke_grant(
+    pool: &SqlitePool,
+    grant_id: &str,
+    reason: &str,
+    now: i64,
+) -> Result<(), sqlx::Error> {
     sqlx::query("UPDATE oauth_grants SET revoked_at = ?, revoked_reason = ? WHERE id = ? AND revoked_at IS NULL")
         .bind(now)
         .bind(reason)
         .bind(grant_id)
         .execute(pool)
         .await?;
-    sqlx::query("UPDATE oauth_refresh_tokens SET revoked_at = ? WHERE grant_id = ? AND revoked_at IS NULL")
-        .bind(now)
-        .bind(grant_id)
-        .execute(pool)
-        .await?;
+    sqlx::query(
+        "UPDATE oauth_refresh_tokens SET revoked_at = ? WHERE grant_id = ? AND revoked_at IS NULL",
+    )
+    .bind(now)
+    .bind(grant_id)
+    .execute(pool)
+    .await?;
     Ok(())
 }
 
 /// Called by the CRA loader when a snapshot is activated: every token family whose account is
 /// not an active member of `snap` (suspended, removed, or no longer listed) is revoked.
 /// Returns how many families were revoked.
-pub async fn revoke_inactive_member_grants(pool: &SqlitePool, snap: &Snapshot) -> Result<u64, sqlx::Error> {
+pub async fn revoke_inactive_member_grants(
+    pool: &SqlitePool,
+    snap: &Snapshot,
+) -> Result<u64, sqlx::Error> {
     if crate::accounts::mutant::on("no_revoke_at_activation") {
         return Ok(0);
     }
     let now = chrono::Utc::now().timestamp();
-    let grants: Vec<(String, String)> = sqlx::query_as("SELECT id, account_id FROM oauth_grants WHERE revoked_at IS NULL")
-        .fetch_all(pool)
-        .await?;
+    let grants: Vec<(String, String)> =
+        sqlx::query_as("SELECT id, account_id FROM oauth_grants WHERE revoked_at IS NULL")
+            .fetch_all(pool)
+            .await?;
     let mut revoked = 0;
     for (gid, account) in grants {
         let member = accounts::member_for_account(pool, snap, &account).await?;
-        let active = member.and_then(|m| snap.member(&m).map(|x| x.status)) == Some(MemberStatus::Active);
+        let active =
+            member.and_then(|m| snap.member(&m).map(|x| x.status)) == Some(MemberStatus::Active);
         if !active {
-            revoke_grant(pool, &gid, "the member is not active in the activated CRA snapshot", now).await?;
+            revoke_grant(
+                pool,
+                &gid,
+                "the member is not active in the activated CRA snapshot",
+                now,
+            )
+            .await?;
             revoked += 1;
         }
     }

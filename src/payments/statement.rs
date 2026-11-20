@@ -42,7 +42,12 @@ pub struct Statement {
 pub fn summarize(rows: Vec<LedgerEntry>) -> (Vec<SourceTotals>, i64, i64) {
     let mut by: BTreeMap<String, SourceTotals> = BTreeMap::new();
     for r in rows {
-        let t = by.entry(r.source_kind.clone()).or_insert_with(|| SourceTotals { source_kind: r.source_kind.clone(), ..Default::default() });
+        let t = by
+            .entry(r.source_kind.clone())
+            .or_insert_with(|| SourceTotals {
+                source_kind: r.source_kind.clone(),
+                ..Default::default()
+            });
         match r.status.as_str() {
             s if s == PAID => t.paid_cents += r.amount_cents,
             s if s == PENDING || s == APPROVED || s == FAILED => t.pending_cents += r.amount_cents,
@@ -59,25 +64,47 @@ pub fn summarize(rows: Vec<LedgerEntry>) -> (Vec<SourceTotals>, i64, i64) {
 
 /// GET /api/v1/payouts/statement?payee=&from=&to= (`payouts.read`). `from` and `to` are
 /// YYYY-MM-DD, inclusive.
-pub async fn statement(pool: &SqlitePool, principal: &Principal, payee_id: &str, from: &str, to: &str) -> Result<Statement, PayoutError> {
+pub async fn statement(
+    pool: &SqlitePool,
+    principal: &Principal,
+    payee_id: &str,
+    from: &str,
+    to: &str,
+) -> Result<Statement, PayoutError> {
     principal.require(scopes::PAYOUTS_READ)?;
-    let parse = |s: &str, f: &str| NaiveDate::parse_from_str(s.trim(), "%Y-%m-%d").map_err(|_| format!("{f} must be a date (YYYY-MM-DD)"));
+    let parse = |s: &str, f: &str| {
+        NaiveDate::parse_from_str(s.trim(), "%Y-%m-%d")
+            .map_err(|_| format!("{f} must be a date (YYYY-MM-DD)"))
+    };
     let (from_d, to_d) = match (parse(from, "from"), parse(to, "to")) {
         (Ok(a), Ok(b)) => (a, b),
-        (a, b) => return Err(PayoutError::Invalid([a.err(), b.err()].into_iter().flatten().collect())),
+        (a, b) => {
+            return Err(PayoutError::Invalid(
+                [a.err(), b.err()].into_iter().flatten().collect(),
+            ))
+        }
     };
     if to_d < from_d {
-        return Err(PayoutError::Invalid(vec!["to must be on or after from".into()]));
+        return Err(PayoutError::Invalid(vec![
+            "to must be on or after from".into()
+        ]));
     }
     if (to_d - from_d).num_days() > MAX_RANGE_DAYS {
-        return Err(PayoutError::Invalid(vec![format!("the range is at most {MAX_RANGE_DAYS} days")]));
+        return Err(PayoutError::Invalid(vec![format!(
+            "the range is at most {MAX_RANGE_DAYS} days"
+        )]));
     }
-    let payee = payees::load(pool, payee_id).await?.ok_or(PayoutError::NotFound("payee"))?;
+    let payee = payees::load(pool, payee_id)
+        .await?
+        .ok_or(PayoutError::NotFound("payee"))?;
     if payee.row.org_id != principal.org_id {
         return Err(PayoutError::NotFound("payee"));
     }
     let start = format!("{} 00:00:00", from_d.format("%Y-%m-%d"));
-    let end = format!("{} 00:00:00", (to_d + chrono::Duration::days(1)).format("%Y-%m-%d"));
+    let end = format!(
+        "{} 00:00:00",
+        (to_d + chrono::Duration::days(1)).format("%Y-%m-%d")
+    );
     let rows = sqlx::query_as::<_, LedgerEntry>(
         "SELECT * FROM payout_ledger
          WHERE (payee_id = ? OR (source_kind = 'merit' AND lower(github_username) IN (SELECT payee_key FROM payee_keys WHERE payee_id = ?)))

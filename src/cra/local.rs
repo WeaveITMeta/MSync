@@ -22,7 +22,9 @@ use async_trait::async_trait;
 use chrono::NaiveDate;
 
 use super::source::{CraRepo, CraSource, SourceError, MAX_FILE_BYTES};
-use super::{ChangeContext, CraFileKind, CraFiles, FoundryIdentity, FoundryProvider as CraProvider};
+use super::{
+    ChangeContext, CraFileKind, CraFiles, FoundryIdentity, FoundryProvider as CraProvider,
+};
 use crate::foundry::FoundryProvider;
 
 /// The host of every local CRA repository. `.invalid` is reserved (RFC 2606).
@@ -39,7 +41,10 @@ pub fn read_dir_files(dir: &Path) -> Result<CraFiles, Vec<String>> {
         let path = base.join(kind.file_name());
         match std::fs::read(&path) {
             Ok(bytes) if bytes.len() > MAX_FILE_BYTES => {
-                errors.push(format!("{}: larger than {MAX_FILE_BYTES} bytes", path.display()));
+                errors.push(format!(
+                    "{}: larger than {MAX_FILE_BYTES} bytes",
+                    path.display()
+                ));
                 String::new()
             }
             Ok(bytes) => match String::from_utf8(bytes) {
@@ -78,8 +83,14 @@ pub fn local_actor(owners: &[String]) -> Option<FoundryIdentity> {
             return None;
         }
         match p.trim().to_ascii_lowercase().as_str() {
-            "github" => Some(FoundryIdentity { provider: CraProvider::Github, login: login.to_string() }),
-            "gitlab" => Some(FoundryIdentity { provider: CraProvider::Gitlab, login: login.to_string() }),
+            "github" => Some(FoundryIdentity {
+                provider: CraProvider::Github,
+                login: login.to_string(),
+            }),
+            "gitlab" => Some(FoundryIdentity {
+                provider: CraProvider::Gitlab,
+                login: login.to_string(),
+            }),
             _ => None,
         }
     })
@@ -94,10 +105,24 @@ pub fn local_repo(dir: &Path) -> CraRepo {
         .map(|n| n.to_string_lossy().to_string())
         .unwrap_or_default()
         .chars()
-        .map(|c| if c.is_ascii_alphanumeric() || c == '-' || c == '_' || c == '.' { c } else { '-' })
+        .map(|c| {
+            if c.is_ascii_alphanumeric() || c == '-' || c == '_' || c == '.' {
+                c
+            } else {
+                '-'
+            }
+        })
         .collect();
-    let name = if name.trim_matches('.').is_empty() { "cra".to_string() } else { name };
-    CraRepo::new(FoundryProvider::GitHub, LOCAL_HOST, &format!("local/{name}"))
+    let name = if name.trim_matches('.').is_empty() {
+        "cra".to_string()
+    } else {
+        name
+    };
+    CraRepo::new(
+        FoundryProvider::GitHub,
+        LOCAL_HOST,
+        &format!("local/{name}"),
+    )
 }
 
 pub struct LocalDirSource {
@@ -110,7 +135,11 @@ impl LocalDirSource {
     /// `None` when no owner entry has the `provider:login` form (there would be no actor).
     pub fn new(dir: PathBuf, owners: &[String]) -> Option<Self> {
         let actor = local_actor(owners)?;
-        Some(LocalDirSource { repo: local_repo(&dir), dir, actor })
+        Some(LocalDirSource {
+            repo: local_repo(&dir),
+            dir,
+            actor,
+        })
     }
 
     pub fn dir(&self) -> &Path {
@@ -148,7 +177,13 @@ impl CraSource for LocalDirSource {
         _pusher: Option<&FoundryIdentity>,
         today: NaiveDate,
     ) -> Result<ChangeContext, SourceError> {
-        Ok(ChangeContext { actor: self.actor.clone(), via_pull_request: false, author: None, approvers: Vec::new(), today })
+        Ok(ChangeContext {
+            actor: self.actor.clone(),
+            via_pull_request: false,
+            author: None,
+            approvers: Vec::new(),
+            today,
+        })
     }
 
     async fn branch_head(&self, _branch: &str) -> Result<String, SourceError> {
@@ -166,8 +201,15 @@ mod tests {
 
     #[test]
     fn the_actor_is_the_first_provider_owner() {
-        let owners = vec!["mckale".to_string(), "github:example-founder".to_string(), "gitlab:other".to_string()];
-        assert_eq!(local_actor(&owners), Some(FoundryIdentity::github("example-founder")));
+        let owners = vec![
+            "mckale".to_string(),
+            "github:example-founder".to_string(),
+            "gitlab:other".to_string(),
+        ];
+        assert_eq!(
+            local_actor(&owners),
+            Some(FoundryIdentity::github("example-founder"))
+        );
         assert_eq!(local_actor(&["mckale".to_string()]), None);
         assert_eq!(local_actor(&["github:".to_string()]), None);
         assert!(LocalDirSource::new(example_dir(), &["mckale".to_string()]).is_none());
@@ -178,25 +220,37 @@ mod tests {
         let r = local_repo(&example_dir());
         assert_eq!(r.host, LOCAL_HOST);
         assert_eq!(r.path, "local/eustress-engine");
-        assert!(!r.matches(FoundryProvider::GitHub, "github.com", "local/eustress-engine"));
+        assert!(!r.matches(
+            FoundryProvider::GitHub,
+            "github.com",
+            "local/eustress-engine"
+        ));
     }
 
     #[tokio::test]
     async fn head_is_the_content_hash_and_fetch_checks_it() {
-        let src = LocalDirSource::new(example_dir(), &["github:example-founder".to_string()]).unwrap();
+        let src =
+            LocalDirSource::new(example_dir(), &["github:example-founder".to_string()]).unwrap();
         let head = src.branch_head(LOCAL_BRANCH).await.unwrap();
         assert_eq!(head.len(), 64);
         assert!(src.fetch_files(&head).await.is_ok());
         let other = "a".repeat(64);
-        assert!(matches!(src.fetch_files(&other).await, Err(SourceError::Ambiguous(_))));
-        let ctx = src.change_context(&head, None, NaiveDate::from_ymd_opt(2026, 11, 20).unwrap()).await.unwrap();
+        assert!(matches!(
+            src.fetch_files(&other).await,
+            Err(SourceError::Ambiguous(_))
+        ));
+        let ctx = src
+            .change_context(&head, None, NaiveDate::from_ymd_opt(2026, 11, 20).unwrap())
+            .await
+            .unwrap();
         assert!(!ctx.via_pull_request && ctx.approvers.is_empty());
         assert_eq!(ctx.actor, FoundryIdentity::github("example-founder"));
     }
 
     #[test]
     fn a_missing_file_is_named() {
-        let dir = std::env::temp_dir().join(format!("msync-local-missing-{}", uuid::Uuid::new_v4()));
+        let dir =
+            std::env::temp_dir().join(format!("msync-local-missing-{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(dir.join(".msync")).unwrap();
         let errs = read_dir_files(&dir).unwrap_err();
         assert_eq!(errs.len(), 5);

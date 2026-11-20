@@ -17,7 +17,10 @@ pub struct RpcError {
 
 impl RpcError {
     pub fn new(code: i64, message: impl Into<String>) -> Self {
-        Self { code, message: message.into() }
+        Self {
+            code,
+            message: message.into(),
+        }
     }
     pub fn invalid_params(message: impl Into<String>) -> Self {
         Self::new(INVALID_PARAMS, message)
@@ -28,7 +31,11 @@ impl RpcError {
 #[derive(Debug, Clone, PartialEq)]
 pub enum Incoming {
     /// Has an id: needs a response.
-    Request { id: Value, method: String, params: Option<Value> },
+    Request {
+        id: Value,
+        method: String,
+        params: Option<Value>,
+    },
     /// No id: never answered with a body.
     Notification { method: String },
     /// A response to a server request. This server sends none, so it is accepted and ignored.
@@ -53,34 +60,80 @@ fn recover_id(obj: &Map<String, Value>) -> Value {
 
 /// Parse a request body. On failure returns the id to answer with (null when unknown) and the error.
 pub fn parse(body: &[u8]) -> Result<Incoming, (Value, RpcError)> {
-    let v: Value = serde_json::from_slice(body).map_err(|_| (Value::Null, RpcError::new(PARSE_ERROR, "parse error: the body is not valid JSON")))?;
+    let v: Value = serde_json::from_slice(body).map_err(|_| {
+        (
+            Value::Null,
+            RpcError::new(PARSE_ERROR, "parse error: the body is not valid JSON"),
+        )
+    })?;
     let obj = match v {
         Value::Object(o) => o,
-        Value::Array(_) => return Err((Value::Null, RpcError::new(INVALID_REQUEST, "invalid request: batch requests are not supported"))),
-        _ => return Err((Value::Null, RpcError::new(INVALID_REQUEST, "invalid request: expected a JSON-RPC 2.0 object"))),
+        Value::Array(_) => {
+            return Err((
+                Value::Null,
+                RpcError::new(
+                    INVALID_REQUEST,
+                    "invalid request: batch requests are not supported",
+                ),
+            ))
+        }
+        _ => {
+            return Err((
+                Value::Null,
+                RpcError::new(
+                    INVALID_REQUEST,
+                    "invalid request: expected a JSON-RPC 2.0 object",
+                ),
+            ))
+        }
     };
     let id = recover_id(&obj);
     if obj.get("jsonrpc").and_then(Value::as_str) != Some("2.0") {
-        return Err((id, RpcError::new(INVALID_REQUEST, "invalid request: jsonrpc must be \"2.0\"")));
+        return Err((
+            id,
+            RpcError::new(INVALID_REQUEST, "invalid request: jsonrpc must be \"2.0\""),
+        ));
     }
     let has_id = obj.contains_key("id");
     if has_id && !matches!(obj.get("id"), Some(Value::String(_) | Value::Number(_))) {
-        return Err((Value::Null, RpcError::new(INVALID_REQUEST, "invalid request: id must be a string or a number")));
+        return Err((
+            Value::Null,
+            RpcError::new(
+                INVALID_REQUEST,
+                "invalid request: id must be a string or a number",
+            ),
+        ));
     }
     let method = match obj.get("method") {
         Some(Value::String(m)) if !m.is_empty() => m.clone(),
-        Some(_) => return Err((id, RpcError::new(INVALID_REQUEST, "invalid request: method must be a non-empty string"))),
+        Some(_) => {
+            return Err((
+                id,
+                RpcError::new(
+                    INVALID_REQUEST,
+                    "invalid request: method must be a non-empty string",
+                ),
+            ))
+        }
         None => {
             if has_id && (obj.contains_key("result") || obj.contains_key("error")) {
                 return Ok(Incoming::Response);
             }
-            return Err((id, RpcError::new(INVALID_REQUEST, "invalid request: method is required")));
+            return Err((
+                id,
+                RpcError::new(INVALID_REQUEST, "invalid request: method is required"),
+            ));
         }
     };
     let params = match obj.get("params") {
         None | Some(Value::Null) => None,
         Some(p @ Value::Object(_)) => Some(p.clone()),
-        Some(_) => return Err((id, RpcError::new(INVALID_REQUEST, "invalid request: params must be an object"))),
+        Some(_) => {
+            return Err((
+                id,
+                RpcError::new(INVALID_REQUEST, "invalid request: params must be an object"),
+            ))
+        }
     };
     if has_id {
         Ok(Incoming::Request { id, method, params })
@@ -103,23 +156,55 @@ mod tests {
         assert_eq!(code(""), PARSE_ERROR);
         assert_eq!(code("[]"), INVALID_REQUEST);
         assert_eq!(code("7"), INVALID_REQUEST);
-        assert_eq!(code(r#"{"jsonrpc":"1.0","id":1,"method":"ping"}"#), INVALID_REQUEST);
+        assert_eq!(
+            code(r#"{"jsonrpc":"1.0","id":1,"method":"ping"}"#),
+            INVALID_REQUEST
+        );
         assert_eq!(code(r#"{"jsonrpc":"2.0","id":1}"#), INVALID_REQUEST);
-        assert_eq!(code(r#"{"jsonrpc":"2.0","id":null,"method":"ping"}"#), INVALID_REQUEST);
-        assert_eq!(code(r#"{"jsonrpc":"2.0","id":[1],"method":"ping"}"#), INVALID_REQUEST);
-        assert_eq!(code(r#"{"jsonrpc":"2.0","id":1,"method":5}"#), INVALID_REQUEST);
-        assert_eq!(code(r#"{"jsonrpc":"2.0","id":1,"method":"ping","params":"x"}"#), INVALID_REQUEST);
-        assert_eq!(code(r#"{"jsonrpc":"2.0","id":1,"method":"ping","params":[1]}"#), INVALID_REQUEST);
+        assert_eq!(
+            code(r#"{"jsonrpc":"2.0","id":null,"method":"ping"}"#),
+            INVALID_REQUEST
+        );
+        assert_eq!(
+            code(r#"{"jsonrpc":"2.0","id":[1],"method":"ping"}"#),
+            INVALID_REQUEST
+        );
+        assert_eq!(
+            code(r#"{"jsonrpc":"2.0","id":1,"method":5}"#),
+            INVALID_REQUEST
+        );
+        assert_eq!(
+            code(r#"{"jsonrpc":"2.0","id":1,"method":"ping","params":"x"}"#),
+            INVALID_REQUEST
+        );
+        assert_eq!(
+            code(r#"{"jsonrpc":"2.0","id":1,"method":"ping","params":[1]}"#),
+            INVALID_REQUEST
+        );
         assert_eq!(
             parse(br#"{"jsonrpc":"2.0","id":"a","method":"ping"}"#).unwrap(),
-            Incoming::Request { id: json!("a"), method: "ping".into(), params: None }
+            Incoming::Request {
+                id: json!("a"),
+                method: "ping".into(),
+                params: None
+            }
         );
         assert_eq!(
             parse(br#"{"jsonrpc":"2.0","method":"notifications/initialized"}"#).unwrap(),
-            Incoming::Notification { method: "notifications/initialized".into() }
+            Incoming::Notification {
+                method: "notifications/initialized".into()
+            }
         );
-        assert_eq!(parse(br#"{"jsonrpc":"2.0","id":3,"result":{}}"#).unwrap(), Incoming::Response);
+        assert_eq!(
+            parse(br#"{"jsonrpc":"2.0","id":3,"result":{}}"#).unwrap(),
+            Incoming::Response
+        );
         // The id is echoed on an invalid request when it can be read.
-        assert_eq!(parse(br#"{"jsonrpc":"2.0","id":9,"method":""}"#).unwrap_err().0, json!(9));
+        assert_eq!(
+            parse(br#"{"jsonrpc":"2.0","id":9,"method":""}"#)
+                .unwrap_err()
+                .0,
+            json!(9)
+        );
     }
 }

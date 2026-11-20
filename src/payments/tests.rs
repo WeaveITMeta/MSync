@@ -45,12 +45,21 @@ pub(super) fn cfg() -> PaymentConfig {
 }
 
 pub(super) async fn pool() -> SqlitePool {
-    let pool = SqlitePoolOptions::new().max_connections(1).connect("sqlite::memory:").await.unwrap();
+    let pool = SqlitePoolOptions::new()
+        .max_connections(1)
+        .connect("sqlite::memory:")
+        .await
+        .unwrap();
     sqlx::migrate!("./migrations").run(&pool).await.unwrap();
     pool
 }
 
-pub(super) async fn add_contributor(pool: &SqlitePool, gh: &str, acct: Option<&str>, enabled: bool) {
+pub(super) async fn add_contributor(
+    pool: &SqlitePool,
+    gh: &str,
+    acct: Option<&str>,
+    enabled: bool,
+) {
     sqlx::query(
         "INSERT INTO contributors (id, github_username, discord_user_id, created_at, updated_at, stripe_account_id, stripe_payouts_enabled)
          VALUES (?, ?, 42, datetime('now'), datetime('now'), ?, ?)",
@@ -110,7 +119,13 @@ fn payment_config_falls_back_to_dsync_names_and_msync_wins() {
 
     let neither = PaymentConfig::from_lookup(|_| None);
     assert_eq!(neither.max_cents, 10_000);
-    assert_eq!(neither.amount_for("main", 0), Some((super::config::DEFAULT_BASE_CENTS, super::config::DEFAULT_BASE_CENTS)));
+    assert_eq!(
+        neither.amount_for("main", 0),
+        Some((
+            super::config::DEFAULT_BASE_CENTS,
+            super::config::DEFAULT_BASE_CENTS
+        ))
+    );
 }
 
 /// Pinned (contract 12.1): the Stripe idempotency key keeps its pre-rename prefix. A payout
@@ -120,25 +135,39 @@ fn payment_config_falls_back_to_dsync_names_and_msync_wins() {
 fn stripe_idempotency_key_keeps_its_old_name() {
     assert_eq!(ledger::stripe_idempotency_key("0f3a"), "dsync-ledger-0f3a");
     // Same reasoning for the Express account creation key.
-    assert_eq!(super::stripe::account_idempotency_key("alice"), "dsync-account-alice");
+    assert_eq!(
+        super::stripe::account_idempotency_key("alice"),
+        "dsync-account-alice"
+    );
 }
 
 #[tokio::test]
 async fn ledger_is_idempotent_on_pr_id_and_merge_sha() {
     let pool = pool().await;
     let c = cfg();
-    let first = ledger::record_merge(&pool, &c, &merge(1, "abc", "main")).await.unwrap();
+    let first = ledger::record_merge(&pool, &c, &merge(1, "abc", "main"))
+        .await
+        .unwrap();
     assert!(first.is_some());
     let e = first.unwrap();
     assert_eq!(e.status, PENDING);
     assert_eq!(e.amount_cents, 3000);
 
     // Duplicate webhook delivery: no new row
-    assert!(ledger::record_merge(&pool, &c, &merge(1, "abc", "main")).await.unwrap().is_none());
+    assert!(ledger::record_merge(&pool, &c, &merge(1, "abc", "main"))
+        .await
+        .unwrap()
+        .is_none());
     // Untracked branch: no row
-    assert!(ledger::record_merge(&pool, &c, &merge(2, "def", "dev")).await.unwrap().is_none());
+    assert!(ledger::record_merge(&pool, &c, &merge(2, "def", "dev"))
+        .await
+        .unwrap()
+        .is_none());
     // Different merge sha for same PR (e.g. reopened + re-merged): new row
-    assert!(ledger::record_merge(&pool, &c, &merge(1, "xyz", "main")).await.unwrap().is_some());
+    assert!(ledger::record_merge(&pool, &c, &merge(1, "xyz", "main"))
+        .await
+        .unwrap()
+        .is_some());
 
     assert_eq!(ledger::list(&pool, None).await.unwrap().len(), 2);
 }
@@ -147,16 +176,28 @@ async fn ledger_is_idempotent_on_pr_id_and_merge_sha() {
 async fn approve_requires_onboarded_account_and_never_transfers_otherwise() {
     let pool = pool().await;
     let stripe = MockStripe::default();
-    let e = ledger::record_merge(&pool, &cfg(), &merge(1, "abc", "main")).await.unwrap().unwrap();
+    let e = ledger::record_merge(&pool, &cfg(), &merge(1, "abc", "main"))
+        .await
+        .unwrap()
+        .unwrap();
 
     // No contributor / account at all
-    assert!(matches!(ledger::approve(&pool, &stripe, &e.id, "admin").await, Err(LedgerError::NotPayable(_))));
+    assert!(matches!(
+        ledger::approve(&pool, &stripe, &e.id, "admin").await,
+        Err(LedgerError::NotPayable(_))
+    ));
     // Account exists but onboarding incomplete
     add_contributor(&pool, "alice", Some("acct_1"), false).await;
-    assert!(matches!(ledger::approve(&pool, &stripe, &e.id, "admin").await, Err(LedgerError::NotPayable(_))));
+    assert!(matches!(
+        ledger::approve(&pool, &stripe, &e.id, "admin").await,
+        Err(LedgerError::NotPayable(_))
+    ));
 
     assert!(stripe.transfers.lock().unwrap().is_empty());
-    assert_eq!(ledger::get(&pool, &e.id).await.unwrap().unwrap().status, PENDING);
+    assert_eq!(
+        ledger::get(&pool, &e.id).await.unwrap().unwrap().status,
+        PENDING
+    );
 }
 
 #[tokio::test]
@@ -164,12 +205,17 @@ async fn approve_pays_once_with_idempotency_key() {
     let pool = pool().await;
     add_contributor(&pool, "alice", Some("acct_1"), true).await;
     let stripe = MockStripe::default();
-    let e = ledger::record_merge(&pool, &cfg(), &merge(1, "abc", "main")).await.unwrap().unwrap();
+    let e = ledger::record_merge(&pool, &cfg(), &merge(1, "abc", "main"))
+        .await
+        .unwrap()
+        .unwrap();
 
     // Recording a merge never transfers
     assert!(stripe.transfers.lock().unwrap().is_empty());
 
-    let paid = ledger::approve(&pool, &stripe, &e.id, "maintainer").await.unwrap();
+    let paid = ledger::approve(&pool, &stripe, &e.id, "maintainer")
+        .await
+        .unwrap();
     assert_eq!(paid.status, PAID);
     assert_eq!(paid.stripe_transfer_id.as_deref(), Some("tr_mock_1"));
     assert_eq!(paid.decided_by.as_deref(), Some("maintainer"));
@@ -182,7 +228,10 @@ async fn approve_pays_once_with_idempotency_key() {
     }
 
     // Second approve is refused and does not transfer again
-    assert!(matches!(ledger::approve(&pool, &stripe, &e.id, "maintainer").await, Err(LedgerError::InvalidState(..))));
+    assert!(matches!(
+        ledger::approve(&pool, &stripe, &e.id, "maintainer").await,
+        Err(LedgerError::InvalidState(..))
+    ));
     assert_eq!(stripe.transfers.lock().unwrap().len(), 1);
 }
 
@@ -190,10 +239,18 @@ async fn approve_pays_once_with_idempotency_key() {
 async fn failed_transfer_marks_failed_and_can_retry_with_same_key() {
     let pool = pool().await;
     add_contributor(&pool, "alice", Some("acct_1"), true).await;
-    let failing = MockStripe { fail: true, ..Default::default() };
-    let e = ledger::record_merge(&pool, &cfg(), &merge(1, "abc", "main")).await.unwrap().unwrap();
+    let failing = MockStripe {
+        fail: true,
+        ..Default::default()
+    };
+    let e = ledger::record_merge(&pool, &cfg(), &merge(1, "abc", "main"))
+        .await
+        .unwrap()
+        .unwrap();
 
-    let failed = ledger::approve(&pool, &failing, &e.id, "admin").await.unwrap();
+    let failed = ledger::approve(&pool, &failing, &e.id, "admin")
+        .await
+        .unwrap();
     assert_eq!(failed.status, FAILED);
     assert!(failed.failure_reason.unwrap().contains("card_declined"));
 
@@ -211,24 +268,46 @@ async fn rejected_entries_cannot_be_approved() {
     let pool = pool().await;
     add_contributor(&pool, "alice", Some("acct_1"), true).await;
     let stripe = MockStripe::default();
-    let e = ledger::record_merge(&pool, &cfg(), &merge(1, "abc", "main")).await.unwrap().unwrap();
+    let e = ledger::record_merge(&pool, &cfg(), &merge(1, "abc", "main"))
+        .await
+        .unwrap()
+        .unwrap();
 
-    let r = ledger::reject(&pool, &e.id, "admin", "duplicate work").await.unwrap();
+    let r = ledger::reject(&pool, &e.id, "admin", "duplicate work")
+        .await
+        .unwrap();
     assert_eq!(r.status, REJECTED);
-    assert!(matches!(ledger::approve(&pool, &stripe, &e.id, "admin").await, Err(LedgerError::InvalidState(..))));
+    assert!(matches!(
+        ledger::approve(&pool, &stripe, &e.id, "admin").await,
+        Err(LedgerError::InvalidState(..))
+    ));
     assert!(stripe.transfers.lock().unwrap().is_empty());
-    assert!(matches!(ledger::approve(&pool, &stripe, "nope", "admin").await, Err(LedgerError::NotFound)));
+    assert!(matches!(
+        ledger::approve(&pool, &stripe, "nope", "admin").await,
+        Err(LedgerError::NotFound)
+    ));
 }
 
 #[tokio::test]
 async fn account_updated_toggles_payout_eligibility() {
     let pool = pool().await;
     add_contributor(&pool, "alice", Some("acct_1"), false).await;
-    assert_eq!(ledger::update_account_status(&pool, "acct_1", true).await.unwrap(), 1);
-    assert_eq!(ledger::update_account_status(&pool, "acct_unknown", true).await.unwrap(), 0);
+    assert_eq!(
+        ledger::update_account_status(&pool, "acct_1", true)
+            .await
+            .unwrap(),
+        1
+    );
+    assert_eq!(
+        ledger::update_account_status(&pool, "acct_unknown", true)
+            .await
+            .unwrap(),
+        0
+    );
 
     let ok = serde_json::json!({"payouts_enabled": true, "capabilities": {"transfers": "active"}});
-    let pending = serde_json::json!({"payouts_enabled": true, "capabilities": {"transfers": "pending"}});
+    let pending =
+        serde_json::json!({"payouts_enabled": true, "capabilities": {"transfers": "pending"}});
     assert!(account_transfers_enabled(&ok));
     assert!(!account_transfers_enabled(&pending));
 }
@@ -241,15 +320,51 @@ fn stripe_signature_verification() {
     let sig = stripe_v1_signature(secret, t, body);
     let header = format!("t={t},v1={sig}");
 
-    assert!(verify_stripe_signature(secret, body, Some(&header), t + 10, 300));
+    assert!(verify_stripe_signature(
+        secret,
+        body,
+        Some(&header),
+        t + 10,
+        300
+    ));
     // multiple v1 entries (secret rotation), one valid
-    assert!(verify_stripe_signature(secret, body, Some(&format!("t={t},v1=00ff,v1={sig}")), t, 300));
-    assert!(!verify_stripe_signature(secret, b"tampered", Some(&header), t, 300));
-    assert!(!verify_stripe_signature("whsec_other", body, Some(&header), t, 300));
-    assert!(!verify_stripe_signature(secret, body, Some(&header), t + 301, 300)); // too old
+    assert!(verify_stripe_signature(
+        secret,
+        body,
+        Some(&format!("t={t},v1=00ff,v1={sig}")),
+        t,
+        300
+    ));
+    assert!(!verify_stripe_signature(
+        secret,
+        b"tampered",
+        Some(&header),
+        t,
+        300
+    ));
+    assert!(!verify_stripe_signature(
+        "whsec_other",
+        body,
+        Some(&header),
+        t,
+        300
+    ));
+    assert!(!verify_stripe_signature(
+        secret,
+        body,
+        Some(&header),
+        t + 301,
+        300
+    )); // too old
     assert!(!verify_stripe_signature(secret, body, None, t, 300));
     assert!(!verify_stripe_signature("", body, Some(&header), t, 300));
-    assert!(!verify_stripe_signature(secret, body, Some("v1=abcd"), t, 300));
+    assert!(!verify_stripe_signature(
+        secret,
+        body,
+        Some("v1=abcd"),
+        t,
+        300
+    ));
 }
 
 #[test]
@@ -280,20 +395,36 @@ async fn onboarding_creates_account_once_and_requires_linked_discord() {
     ));
 
     add_contributor(&pool, "alice", None, false).await;
-    let first = onboarding::onboarding_link_for_github(&pool, &stripe, &c, "alice").await.unwrap();
-    let second = onboarding::onboarding_link_for_github(&pool, &stripe, &c, "alice").await.unwrap();
+    let first = onboarding::onboarding_link_for_github(&pool, &stripe, &c, "alice")
+        .await
+        .unwrap();
+    let second = onboarding::onboarding_link_for_github(&pool, &stripe, &c, "alice")
+        .await
+        .unwrap();
     assert_eq!(first.account_id, "acct_mock");
     assert_eq!(second.account_id, "acct_mock");
-    assert_eq!(*stripe.accounts_created.lock().unwrap(), 1, "account reused, not recreated");
-    assert_eq!(onboarding::contributor_for_discord(&pool, 42).await.unwrap(), Some(("alice".into(), false)));
+    assert_eq!(
+        *stripe.accounts_created.lock().unwrap(),
+        1,
+        "account reused, not recreated"
+    );
+    assert_eq!(
+        onboarding::contributor_for_discord(&pool, 42)
+            .await
+            .unwrap(),
+        Some(("alice".into(), false))
+    );
 }
 
 #[test]
 fn refresh_links_are_signed() {
-    use super::onboarding::{refresh_url, verify_refresh_sig, refresh_sig};
+    use super::onboarding::{refresh_sig, refresh_url, verify_refresh_sig};
     let mut c = cfg();
     c.public_url = "https://msync.example".into();
-    assert_eq!(refresh_url(&c, "acct_1"), "https://msync.example/payouts/refresh"); // no key -> unsigned
+    assert_eq!(
+        refresh_url(&c, "acct_1"),
+        "https://msync.example/payouts/refresh"
+    ); // no key -> unsigned
     assert!(!verify_refresh_sig(&c, "acct_1", "anything"));
 
     c.admin_token = Some("admin-secret".into());
@@ -311,7 +442,10 @@ async fn legacy_reject_and_stripe_account_status_are_audited() {
     use std::sync::Arc;
     let pool = pool().await;
     add_contributor(&pool, "alice", Some("acct_1234WXYZ"), false).await;
-    let e = ledger::record_merge(&pool, &cfg(), &merge(41, "abc41", "main")).await.unwrap().unwrap();
+    let e = ledger::record_merge(&pool, &cfg(), &merge(41, "abc41", "main"))
+        .await
+        .unwrap()
+        .unwrap();
 
     let mut payments = cfg();
     payments.admin_token = Some("admin-secret".into());
@@ -327,15 +461,24 @@ async fn legacy_reject_and_stripe_account_status_are_audited() {
     let state = web::Data::new(crate::AppState {
         config,
         db_pool: pool.clone(),
-        merit_tracker: Arc::new(tokio::sync::RwLock::new(crate::merit::tracker::MeritTracker::new(pool.clone()))),
+        merit_tracker: Arc::new(tokio::sync::RwLock::new(
+            crate::merit::tracker::MeritTracker::new(pool.clone()),
+        )),
         discord_http: Arc::new(serenity::http::Http::new("x")),
         payments: Arc::new(payments),
         stripe: Arc::new(MockStripe::default()),
         directory: dir.clone(),
-        cra: Arc::new(crate::cra::CraContext::disabled(pool.clone(), crate::cra::CraHandle::new(), dir)),
+        cra: Arc::new(crate::cra::CraContext::disabled(
+            pool.clone(),
+            crate::cra::CraHandle::new(),
+            dir,
+        )),
     });
     let app = atest::init_service(
-        App::new().app_data(state).service(super::routes::reject_entry).service(super::routes::stripe_webhook),
+        App::new()
+            .app_data(state)
+            .service(super::routes::reject_entry)
+            .service(super::routes::stripe_webhook),
     )
     .await;
 
@@ -358,15 +501,29 @@ async fn legacy_reject_and_stripe_account_status_are_audited() {
         .to_request();
     assert_eq!(atest::call_service(&app, req).await.status().as_u16(), 200);
 
-    let rows: Vec<(String, String, String)> = sqlx::query_as("SELECT action, actor, detail FROM audit_log ORDER BY seq")
-        .fetch_all(&pool)
-        .await
-        .unwrap();
-    let rejected = rows.iter().find(|r| r.0 == "ledger.rejected").expect("ledger.rejected audited");
+    let rows: Vec<(String, String, String)> =
+        sqlx::query_as("SELECT action, actor, detail FROM audit_log ORDER BY seq")
+            .fetch_all(&pool)
+            .await
+            .unwrap();
+    let rejected = rows
+        .iter()
+        .find(|r| r.0 == "ledger.rejected")
+        .expect("ledger.rejected audited");
     assert_eq!(rejected.1, "admin-token");
     assert!(rejected.2.contains("duplicate"));
-    let acct = rows.iter().find(|r| r.0 == "stripe.account_status").expect("stripe.account_status audited");
-    assert!(acct.2.contains("acct_...WXYZ") && acct.2.contains("\"transfers_enabled\":true"), "{}", acct.2);
-    assert!(!acct.2.contains("acct_1234WXYZ"), "the full Stripe account id is never written");
+    let acct = rows
+        .iter()
+        .find(|r| r.0 == "stripe.account_status")
+        .expect("stripe.account_status audited");
+    assert!(
+        acct.2.contains("acct_...WXYZ") && acct.2.contains("\"transfers_enabled\":true"),
+        "{}",
+        acct.2
+    );
+    assert!(
+        !acct.2.contains("acct_1234WXYZ"),
+        "the full Stripe account id is never written"
+    );
     assert!(crate::audit::verify(&pool).await.unwrap().ok);
 }

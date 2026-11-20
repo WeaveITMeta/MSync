@@ -31,11 +31,12 @@ pub async fn onboarding_link_for_github(
     cfg: &PaymentConfig,
     github_username: &str,
 ) -> Result<OnboardLink, OnboardError> {
-    let row: Option<(Option<i64>, Option<String>)> =
-        sqlx::query_as("SELECT discord_user_id, stripe_account_id FROM contributors WHERE github_username = ?")
-            .bind(github_username)
-            .fetch_optional(pool)
-            .await?;
+    let row: Option<(Option<i64>, Option<String>)> = sqlx::query_as(
+        "SELECT discord_user_id, stripe_account_id FROM contributors WHERE github_username = ?",
+    )
+    .bind(github_username)
+    .fetch_optional(pool)
+    .await?;
     let existing = match row {
         None => return Err(OnboardError::UnknownContributor),
         Some((None, _)) => return Err(OnboardError::NotLinked),
@@ -54,12 +55,22 @@ pub async fn onboarding_link_for_verified_login(
     cfg: &PaymentConfig,
     github_username: &str,
 ) -> Result<OnboardLink, OnboardError> {
-    let row: Option<(Option<String>,)> = sqlx::query_as("SELECT stripe_account_id FROM contributors WHERE github_username = ?")
-        .bind(github_username)
-        .fetch_optional(pool)
-        .await?;
-    let Some((acct,)) = row else { return Err(OnboardError::UnknownContributor) };
-    account_and_link(pool, stripe, cfg, github_username, acct.filter(|a| !a.is_empty())).await
+    let row: Option<(Option<String>,)> =
+        sqlx::query_as("SELECT stripe_account_id FROM contributors WHERE github_username = ?")
+            .bind(github_username)
+            .fetch_optional(pool)
+            .await?;
+    let Some((acct,)) = row else {
+        return Err(OnboardError::UnknownContributor);
+    };
+    account_and_link(
+        pool,
+        stripe,
+        cfg,
+        github_username,
+        acct.filter(|a| !a.is_empty()),
+    )
+    .await
 }
 
 /// Reuse `existing` or create the Express account (same idempotency key as before), then
@@ -86,9 +97,17 @@ async fn account_and_link(
     Ok(OnboardLink { account_id, url })
 }
 
-pub async fn link_for_account(stripe: &dyn StripeApi, cfg: &PaymentConfig, account_id: &str) -> Result<String, OnboardError> {
+pub async fn link_for_account(
+    stripe: &dyn StripeApi,
+    cfg: &PaymentConfig,
+    account_id: &str,
+) -> Result<String, OnboardError> {
     stripe
-        .create_account_link(account_id, &refresh_url(cfg, account_id), &format!("{}/payouts/return", cfg.public_url))
+        .create_account_link(
+            account_id,
+            &refresh_url(cfg, account_id),
+            &format!("{}/payouts/return", cfg.public_url),
+        )
         .await
         .map_err(|e| OnboardError::Stripe(e.to_string()))
 }
@@ -96,7 +115,10 @@ pub async fn link_for_account(stripe: &dyn StripeApi, cfg: &PaymentConfig, accou
 /// Refresh URL carries an HMAC (keyed by MSYNC_ADMIN_TOKEN) so only links MSync issued can be regenerated.
 pub fn refresh_url(cfg: &PaymentConfig, account_id: &str) -> String {
     match refresh_sig(cfg, account_id) {
-        Some(sig) => format!("{}/payouts/refresh?account={}&sig={}", cfg.public_url, account_id, sig),
+        Some(sig) => format!(
+            "{}/payouts/refresh?account={}&sig={}",
+            cfg.public_url, account_id, sig
+        ),
         None => format!("{}/payouts/refresh", cfg.public_url),
     }
 }
@@ -114,7 +136,10 @@ pub fn verify_refresh_sig(cfg: &PaymentConfig, account_id: &str, sig: &str) -> b
 }
 
 /// (github_username, payouts_enabled) for a Discord user, if linked.
-pub async fn contributor_for_discord(pool: &SqlitePool, discord_user_id: i64) -> Result<Option<(String, bool)>, sqlx::Error> {
+pub async fn contributor_for_discord(
+    pool: &SqlitePool,
+    discord_user_id: i64,
+) -> Result<Option<(String, bool)>, sqlx::Error> {
     let row: Option<(String, i64)> =
         sqlx::query_as("SELECT github_username, stripe_payouts_enabled FROM contributors WHERE discord_user_id = ?")
             .bind(discord_user_id)

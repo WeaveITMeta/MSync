@@ -62,7 +62,10 @@ fn scan(text: &str, out: &mut BTreeSet<Route>) {
     while let Some(i) = rest.find("web::resource(\"") {
         let after = &rest[i + "web::resource(\"".len()..];
         let path = after.split('"').next().unwrap().to_string();
-        let end = after[1..].find("web::resource(\"").map(|j| j + 1).unwrap_or(after.len());
+        let end = after[1..]
+            .find("web::resource(\"")
+            .map(|j| j + 1)
+            .unwrap_or(after.len());
         let body = &after[..end];
         for m in METHODS {
             let cap = format!("{}{}", m[..1].to_ascii_uppercase(), &m[1..]);
@@ -77,7 +80,8 @@ fn scan(text: &str, out: &mut BTreeSet<Route>) {
 /// Paths and methods in `openapi.yaml`. The file keeps one strict layout: a path is a
 /// two-space-indented key starting with `/` under `paths:`, a method a four-space key.
 fn documented_routes() -> BTreeSet<Route> {
-    let text = std::fs::read_to_string(Path::new(env!("CARGO_MANIFEST_DIR")).join("openapi.yaml")).expect("openapi.yaml at the repository root");
+    let text = std::fs::read_to_string(Path::new(env!("CARGO_MANIFEST_DIR")).join("openapi.yaml"))
+        .expect("openapi.yaml at the repository root");
     let mut out = BTreeSet::new();
     let mut in_paths = false;
     let mut current: Option<String> = None;
@@ -98,7 +102,10 @@ fn documented_routes() -> BTreeSet<Route> {
             }
             continue;
         }
-        if let (Some(path), Some(k)) = (&current, line.strip_prefix("    ").filter(|l| !l.starts_with(' '))) {
+        if let (Some(path), Some(k)) = (
+            &current,
+            line.strip_prefix("    ").filter(|l| !l.starts_with(' ')),
+        ) {
             let k = k.trim_end().trim_end_matches(':');
             if METHODS.contains(&k) {
                 out.insert((k.to_ascii_uppercase(), path.clone()));
@@ -111,7 +118,13 @@ fn documented_routes() -> BTreeSet<Route> {
 /// `/a/{id}/b` -> `/a/probe/b`.
 fn concrete(path: &str) -> String {
     path.split('/')
-        .map(|seg| if seg.starts_with('{') && seg.ends_with('}') { "probe" } else { seg })
+        .map(|seg| {
+            if seg.starts_with('{') && seg.ends_with('}') {
+                "probe"
+            } else {
+                seg
+            }
+        })
         .collect::<Vec<_>>()
         .join("/")
 }
@@ -120,7 +133,9 @@ async fn routed(routes: &BTreeSet<Route>) -> BTreeSet<Route> {
     let app = atest::init_service(
         App::new()
             .configure(crate::server::configure_routes)
-            .default_service(web::to(|| async { HttpResponse::build(StatusCode::from_u16(SENTINEL).unwrap()).finish() })),
+            .default_service(web::to(|| async {
+                HttpResponse::build(StatusCode::from_u16(SENTINEL).unwrap()).finish()
+            })),
     )
     .await;
     let mut out = BTreeSet::new();
@@ -142,31 +157,54 @@ async fn routed(routes: &BTreeSet<Route>) -> BTreeSet<Route> {
 }
 
 fn show(set: &BTreeSet<Route>) -> String {
-    set.iter().map(|(m, p)| format!("  {m} {p}")).collect::<Vec<_>>().join("\n")
+    set.iter()
+        .map(|(m, p)| format!("  {m} {p}"))
+        .collect::<Vec<_>>()
+        .join("\n")
 }
 
 #[actix_web::test]
 async fn openapi_lists_every_registered_route() {
     let declared = declared_routes();
-    assert!(declared.len() > 60, "the source scan found only {} routes", declared.len());
+    assert!(
+        declared.len() > 60,
+        "the source scan found only {} routes",
+        declared.len()
+    );
     let registered = routed(&declared).await;
     let documented = documented_routes();
     let missing: BTreeSet<Route> = registered.difference(&documented).cloned().collect();
-    assert!(missing.is_empty(), "registered but missing from openapi.yaml:\n{}", show(&missing));
+    assert!(
+        missing.is_empty(),
+        "registered but missing from openapi.yaml:\n{}",
+        show(&missing)
+    );
 }
 
 #[actix_web::test]
 async fn openapi_lists_no_route_that_does_not_exist() {
     let documented = documented_routes();
-    assert!(documented.len() > 60, "openapi.yaml parsed to only {} operations", documented.len());
+    assert!(
+        documented.len() > 60,
+        "openapi.yaml parsed to only {} operations",
+        documented.len()
+    );
     let routed = routed(&documented).await;
     let extra: BTreeSet<Route> = documented.difference(&routed).cloned().collect();
-    assert!(extra.is_empty(), "in openapi.yaml but not routed by the app:\n{}", show(&extra));
+    assert!(
+        extra.is_empty(),
+        "in openapi.yaml but not routed by the app:\n{}",
+        show(&extra)
+    );
     // Every documented route is also declared in the source (so it is not matched only by
     // a wider pattern such as /api/v1/members/{subject}).
     let declared = declared_routes();
     let undeclared: BTreeSet<Route> = documented.difference(&declared).cloned().collect();
-    assert!(undeclared.is_empty(), "in openapi.yaml but declared nowhere in src/:\n{}", show(&undeclared));
+    assert!(
+        undeclared.is_empty(),
+        "in openapi.yaml but declared nowhere in src/:\n{}",
+        show(&undeclared)
+    );
 }
 
 #[test]

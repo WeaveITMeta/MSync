@@ -9,8 +9,9 @@ pub mod tokens;
 
 pub use directory::{CraDirectory, Directory, EnvDirectory, OWNER_RANK};
 pub use tokens::{
-    authenticate, authenticate_token, create_token, is_payee, member_payee_keys, revoke_token, AuthError,
-    CreatedToken, NewToken, Principal, TokenCreator, TokenError, DEFAULT_ORG, LEGACY_ADMIN_MEMBER,
+    authenticate, authenticate_token, create_token, is_payee, member_payee_keys, revoke_token,
+    AuthError, CreatedToken, NewToken, Principal, TokenCreator, TokenError, DEFAULT_ORG,
+    LEGACY_ADMIN_MEMBER,
 };
 
 /// Scopes (contract section 7).

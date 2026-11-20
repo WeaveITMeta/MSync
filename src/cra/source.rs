@@ -53,15 +53,23 @@ impl CraRepo {
     pub fn parse(spec: &str) -> Result<Self, String> {
         let parts: Vec<&str> = spec.trim().split(':').map(str::trim).collect();
         if parts.len() != 3 {
-            return Err(format!("MSYNC_CRA_REPO: '{spec}' is not provider:host:path"));
+            return Err(format!(
+                "MSYNC_CRA_REPO: '{spec}' is not provider:host:path"
+            ));
         }
         let provider = FoundryProvider::parse(parts[0])
             .ok_or_else(|| format!("MSYNC_CRA_REPO: unknown provider '{}'", parts[0]))?;
         let repo = CraRepo::new(provider, parts[1], parts[2]);
         if repo.host.is_empty() || repo.path.is_empty() || !repo.path.contains('/') {
-            return Err(format!("MSYNC_CRA_REPO: '{spec}' needs a host and an owner/repo path"));
+            return Err(format!(
+                "MSYNC_CRA_REPO: '{spec}' needs a host and an owner/repo path"
+            ));
         }
-        if repo.path.split('/').any(|s| s.is_empty() || s == "." || s == "..") {
+        if repo
+            .path
+            .split('/')
+            .any(|s| s.is_empty() || s == "." || s == "..")
+        {
             return Err(format!("MSYNC_CRA_REPO: '{spec}' has an invalid path"));
         }
         Ok(repo)
@@ -71,7 +79,10 @@ impl CraRepo {
     pub fn matches(&self, provider: FoundryProvider, host: &str, repo: &str) -> bool {
         provider == self.provider
             && host.trim().eq_ignore_ascii_case(&self.host)
-            && repo.trim().trim_matches('/').eq_ignore_ascii_case(&self.path)
+            && repo
+                .trim()
+                .trim_matches('/')
+                .eq_ignore_ascii_case(&self.path)
     }
 
     pub fn spec(&self) -> String {
@@ -118,10 +129,15 @@ pub trait CraSource: Send + Sync {
 /// so files can only ever be read at an exact commit.
 pub fn normalize_sha(sha: &str) -> Result<String, SourceError> {
     let s = sha.trim().to_ascii_lowercase();
-    if (s.len() == 40 || s.len() == 64) && s.bytes().all(|b| b.is_ascii_hexdigit()) && s.bytes().any(|b| b != b'0') {
+    if (s.len() == 40 || s.len() == 64)
+        && s.bytes().all(|b| b.is_ascii_hexdigit())
+        && s.bytes().any(|b| b != b'0')
+    {
         Ok(s)
     } else {
-        Err(SourceError::Invalid(format!("'{sha}' is not a full commit SHA")))
+        Err(SourceError::Invalid(format!(
+            "'{sha}' is not a full commit SHA"
+        )))
     }
 }
 
@@ -146,7 +162,10 @@ fn cra_provider(p: FoundryProvider) -> super::FoundryProvider {
 }
 
 fn identity(p: FoundryProvider, login: &str) -> FoundryIdentity {
-    FoundryIdentity { provider: cra_provider(p), login: login.to_string() }
+    FoundryIdentity {
+        provider: cra_provider(p),
+        login: login.to_string(),
+    }
 }
 
 fn http_client() -> reqwest::Client {
@@ -160,21 +179,35 @@ fn http_client() -> reqwest::Client {
 async fn read_text(resp: reqwest::Response, what: &str) -> Result<String, SourceError> {
     let status = resp.status();
     if !status.is_success() {
-        return Err(SourceError::Api(format!("{what}: HTTP {}", status.as_u16())));
+        return Err(SourceError::Api(format!(
+            "{what}: HTTP {}",
+            status.as_u16()
+        )));
     }
-    let bytes = resp.bytes().await.map_err(|e| SourceError::Api(format!("{what}: {e}")))?;
+    let bytes = resp
+        .bytes()
+        .await
+        .map_err(|e| SourceError::Api(format!("{what}: {e}")))?;
     if bytes.len() > MAX_FILE_BYTES {
-        return Err(SourceError::Invalid(format!("{what}: larger than {MAX_FILE_BYTES} bytes")));
+        return Err(SourceError::Invalid(format!(
+            "{what}: larger than {MAX_FILE_BYTES} bytes"
+        )));
     }
-    String::from_utf8(bytes.to_vec()).map_err(|_| SourceError::Invalid(format!("{what}: not UTF-8")))
+    String::from_utf8(bytes.to_vec())
+        .map_err(|_| SourceError::Invalid(format!("{what}: not UTF-8")))
 }
 
 async fn read_json(resp: reqwest::Response, what: &str) -> Result<Value, SourceError> {
     let status = resp.status();
     if !status.is_success() {
-        return Err(SourceError::Api(format!("{what}: HTTP {}", status.as_u16())));
+        return Err(SourceError::Api(format!(
+            "{what}: HTTP {}",
+            status.as_u16()
+        )));
     }
-    resp.json::<Value>().await.map_err(|e| SourceError::Api(format!("{what}: invalid JSON: {e}")))
+    resp.json::<Value>()
+        .await
+        .map_err(|e| SourceError::Api(format!("{what}: invalid JSON: {e}")))
 }
 
 fn str_at<'a>(v: &'a Value, path: &[&str]) -> Option<&'a str> {
@@ -186,7 +219,8 @@ fn str_at<'a>(v: &'a Value, path: &[&str]) -> Option<&'a str> {
 }
 
 fn array<'a>(v: &'a Value, what: &str) -> Result<&'a Vec<Value>, SourceError> {
-    v.as_array().ok_or_else(|| SourceError::Ambiguous(format!("{what}: expected a list")))
+    v.as_array()
+        .ok_or_else(|| SourceError::Ambiguous(format!("{what}: expected a list")))
 }
 
 fn same_login(a: &str, b: &str) -> bool {
@@ -194,20 +228,36 @@ fn same_login(a: &str, b: &str) -> bool {
 }
 
 /// The pusher of a direct push. Without one the actor is unknown and the load is refused.
-fn direct_push(provider: FoundryProvider, pusher: Option<&FoundryIdentity>, today: NaiveDate) -> Result<ChangeContext, SourceError> {
+fn direct_push(
+    provider: FoundryProvider,
+    pusher: Option<&FoundryIdentity>,
+    today: NaiveDate,
+) -> Result<ChangeContext, SourceError> {
     let pusher = pusher.ok_or_else(|| {
         SourceError::Invalid(
             "the commit did not arrive through a merged request and no verified push webhook names its pusher".into(),
         )
     })?;
     if pusher.provider != cra_provider(provider) || pusher.login.trim().is_empty() {
-        return Err(SourceError::Invalid(format!("pusher {pusher} is not a {provider} identity")));
+        return Err(SourceError::Invalid(format!(
+            "pusher {pusher} is not a {provider} identity"
+        )));
     }
-    Ok(ChangeContext { actor: pusher.clone(), via_pull_request: false, author: None, approvers: Vec::new(), today })
+    Ok(ChangeContext {
+        actor: pusher.clone(),
+        via_pull_request: false,
+        author: None,
+        approvers: Vec::new(),
+        today,
+    })
 }
 
 /// The merger must be the pusher when a verified webhook names one.
-fn check_merger(provider: FoundryProvider, merger: &str, pusher: Option<&FoundryIdentity>) -> Result<(), SourceError> {
+fn check_merger(
+    provider: FoundryProvider,
+    merger: &str,
+    pusher: Option<&FoundryIdentity>,
+) -> Result<(), SourceError> {
     if let Some(p) = pusher {
         if p.provider != cra_provider(provider) || !same_login(&p.login, merger) {
             return Err(SourceError::Ambiguous(format!(
@@ -277,7 +327,10 @@ impl GitHubSource {
         let mut all = Vec::new();
         for page in 1..=MAX_PAGES {
             let v = self
-                .json(&format!("/pulls/{number}/reviews?per_page={PER_PAGE}&page={page}"), "reviews")
+                .json(
+                    &format!("/pulls/{number}/reviews?per_page={PER_PAGE}&page={page}"),
+                    "reviews",
+                )
                 .await?;
             let items = array(&v, "reviews")?;
             let n = items.len();
@@ -286,7 +339,10 @@ impl GitHubSource {
                 return Ok(all);
             }
         }
-        Err(SourceError::Ambiguous(format!("more than {} reviews", PER_PAGE * MAX_PAGES)))
+        Err(SourceError::Ambiguous(format!(
+            "more than {} reviews",
+            PER_PAGE * MAX_PAGES
+        )))
     }
 }
 
@@ -296,14 +352,27 @@ impl GitHubSource {
 pub fn github_approvers(reviews: &[Value], head_sha: &str) -> Vec<String> {
     let mut latest: BTreeMap<String, (String, String, Option<String>)> = BTreeMap::new();
     for r in reviews {
-        let Some(login) = str_at(r, &["user", "login"]) else { continue };
-        let Some(state) = r.get("state").and_then(Value::as_str) else { continue };
+        let Some(login) = str_at(r, &["user", "login"]) else {
+            continue;
+        };
+        let Some(state) = r.get("state").and_then(Value::as_str) else {
+            continue;
+        };
         let state = state.to_ascii_uppercase();
-        if !matches!(state.as_str(), "APPROVED" | "CHANGES_REQUESTED" | "DISMISSED") {
+        if !matches!(
+            state.as_str(),
+            "APPROVED" | "CHANGES_REQUESTED" | "DISMISSED"
+        ) {
             continue; // COMMENTED and PENDING do not change a reviewer's verdict
         }
-        let commit = r.get("commit_id").and_then(Value::as_str).map(|s| s.to_ascii_lowercase());
-        latest.insert(login.to_ascii_lowercase(), (login.to_string(), state, commit));
+        let commit = r
+            .get("commit_id")
+            .and_then(Value::as_str)
+            .map(|s| s.to_ascii_lowercase());
+        latest.insert(
+            login.to_ascii_lowercase(),
+            (login.to_string(), state, commit),
+        );
     }
     latest
         .into_values()
@@ -321,7 +390,13 @@ impl CraSource for GitHubSource {
     async fn fetch_files(&self, sha: &str) -> Result<CraFiles, SourceError> {
         let sha = normalize_sha(sha)?;
         let mut out = CraFiles::default();
-        for kind in [CraFileKind::Org, CraFileKind::Roles, CraFileKind::Members, CraFileKind::Merit, CraFileKind::Payouts] {
+        for kind in [
+            CraFileKind::Org,
+            CraFileKind::Roles,
+            CraFileKind::Members,
+            CraFileKind::Merit,
+            CraFileKind::Payouts,
+        ] {
             let name = kind.file_name();
             let url = self.url(&format!("/contents/.msync/{name}?ref={sha}"));
             let resp = self
@@ -341,15 +416,28 @@ impl CraSource for GitHubSource {
         Ok(out)
     }
 
-    async fn change_context(&self, sha: &str, pusher: Option<&FoundryIdentity>, today: NaiveDate) -> Result<ChangeContext, SourceError> {
+    async fn change_context(
+        &self,
+        sha: &str,
+        pusher: Option<&FoundryIdentity>,
+        today: NaiveDate,
+    ) -> Result<ChangeContext, SourceError> {
         let sha = normalize_sha(sha)?;
-        let prs = self.json(&format!("/commits/{sha}/pulls?per_page={PER_PAGE}"), "pulls for commit").await?;
+        let prs = self
+            .json(
+                &format!("/commits/{sha}/pulls?per_page={PER_PAGE}"),
+                "pulls for commit",
+            )
+            .await?;
         let prs = array(&prs, "pulls for commit")?;
         let merged: Vec<&Value> = prs
             .iter()
             .filter(|p| {
                 p.get("merged_at").is_some_and(|m| !m.is_null())
-                    && p.get("merge_commit_sha").and_then(Value::as_str).map(|s| s.eq_ignore_ascii_case(&sha)).unwrap_or(false)
+                    && p.get("merge_commit_sha")
+                        .and_then(Value::as_str)
+                        .map(|s| s.eq_ignore_ascii_case(&sha))
+                        .unwrap_or(false)
             })
             .collect();
         let number = match merged.as_slice() {
@@ -358,23 +446,40 @@ impl CraSource for GitHubSource {
                 .get("number")
                 .and_then(Value::as_i64)
                 .ok_or_else(|| SourceError::Ambiguous("pull request without a number".into()))?,
-            _ => return Err(SourceError::Ambiguous(format!("{} merged pull requests claim commit {sha}", merged.len()))),
+            _ => {
+                return Err(SourceError::Ambiguous(format!(
+                    "{} merged pull requests claim commit {sha}",
+                    merged.len()
+                )))
+            }
         };
 
         // Re-read the pull request itself: the list form has no merged_by.
-        let pr = self.json(&format!("/pulls/{number}"), "pull request").await?;
+        let pr = self
+            .json(&format!("/pulls/{number}"), "pull request")
+            .await?;
         let is_merged = pr.get("merged").and_then(Value::as_bool) == Some(true);
-        let merge_sha_ok = pr.get("merge_commit_sha").and_then(Value::as_str).map(|s| s.eq_ignore_ascii_case(&sha)).unwrap_or(false);
+        let merge_sha_ok = pr
+            .get("merge_commit_sha")
+            .and_then(Value::as_str)
+            .map(|s| s.eq_ignore_ascii_case(&sha))
+            .unwrap_or(false);
         if !is_merged || !merge_sha_ok {
-            return Err(SourceError::Ambiguous(format!("pull request #{number} is not merged as commit {sha}")));
+            return Err(SourceError::Ambiguous(format!(
+                "pull request #{number} is not merged as commit {sha}"
+            )));
         }
-        let merger = str_at(&pr, &["merged_by", "login"])
-            .ok_or_else(|| SourceError::Ambiguous(format!("pull request #{number} has no merged_by")))?;
-        let author = str_at(&pr, &["user", "login"])
-            .ok_or_else(|| SourceError::Ambiguous(format!("pull request #{number} has no author")))?;
+        let merger = str_at(&pr, &["merged_by", "login"]).ok_or_else(|| {
+            SourceError::Ambiguous(format!("pull request #{number} has no merged_by"))
+        })?;
+        let author = str_at(&pr, &["user", "login"]).ok_or_else(|| {
+            SourceError::Ambiguous(format!("pull request #{number} has no author"))
+        })?;
         let head = str_at(&pr, &["head", "sha"])
             .map(str::to_ascii_lowercase)
-            .ok_or_else(|| SourceError::Ambiguous(format!("pull request #{number} has no head commit")))?;
+            .ok_or_else(|| {
+                SourceError::Ambiguous(format!("pull request #{number} has no head commit"))
+            })?;
         check_merger(FoundryProvider::GitHub, merger, pusher)?;
 
         let reviews = self.reviews(number).await?;
@@ -383,14 +488,20 @@ impl CraSource for GitHubSource {
             actor: identity(FoundryProvider::GitHub, merger),
             via_pull_request: true,
             author: Some(identity(FoundryProvider::GitHub, author)),
-            approvers: approvers.iter().map(|a| identity(FoundryProvider::GitHub, a)).collect(),
+            approvers: approvers
+                .iter()
+                .map(|a| identity(FoundryProvider::GitHub, a))
+                .collect(),
             today,
         })
     }
 
     async fn branch_head(&self, branch: &str) -> Result<String, SourceError> {
-        let v = self.json(&format!("/branches/{}", encode_component(branch)), "branch").await?;
-        let sha = str_at(&v, &["commit", "sha"]).ok_or_else(|| SourceError::Ambiguous("branch without a head commit".into()))?;
+        let v = self
+            .json(&format!("/branches/{}", encode_component(branch)), "branch")
+            .await?;
+        let sha = str_at(&v, &["commit", "sha"])
+            .ok_or_else(|| SourceError::Ambiguous("branch without a head commit".into()))?;
         normalize_sha(sha)
     }
 }
@@ -418,7 +529,12 @@ impl GitLabSource {
     }
 
     fn url(&self, rest: &str) -> String {
-        format!("{}/projects/{}{}", self.api_base, encode_component(&self.repo.path), rest)
+        format!(
+            "{}/projects/{}{}",
+            self.api_base,
+            encode_component(&self.repo.path),
+            rest
+        )
     }
 
     fn get(&self, url: String) -> reqwest::RequestBuilder {
@@ -430,7 +546,11 @@ impl GitLabSource {
     }
 
     async fn json(&self, rest: &str, what: &str) -> Result<Value, SourceError> {
-        let resp = self.get(self.url(rest)).send().await.map_err(|e| SourceError::Api(format!("{what}: {e}")))?;
+        let resp = self
+            .get(self.url(rest))
+            .send()
+            .await
+            .map_err(|e| SourceError::Api(format!("{what}: {e}")))?;
         read_json(resp, what).await
     }
 
@@ -438,7 +558,9 @@ impl GitLabSource {
         let sep = if rest.contains('?') { '&' } else { '?' };
         let mut all = Vec::new();
         for page in 1..=MAX_PAGES {
-            let v = self.json(&format!("{rest}{sep}per_page={PER_PAGE}&page={page}"), what).await?;
+            let v = self
+                .json(&format!("{rest}{sep}per_page={PER_PAGE}&page={page}"), what)
+                .await?;
             let items = array(&v, what)?;
             let n = items.len();
             all.extend(items.iter().cloned());
@@ -446,7 +568,10 @@ impl GitLabSource {
                 return Ok(all);
             }
         }
-        Err(SourceError::Ambiguous(format!("{what}: more than {} entries", PER_PAGE * MAX_PAGES)))
+        Err(SourceError::Ambiguous(format!(
+            "{what}: more than {} entries",
+            PER_PAGE * MAX_PAGES
+        )))
     }
 }
 
@@ -466,15 +591,29 @@ fn parse_time(v: &Value, key: &str) -> Option<DateTime<Utc>> {
 ///
 /// Missing notes, versions or timestamps mean the approval does not count.
 pub fn gitlab_approvers(approvals: &Value, notes: &[Value], versions: &[Value]) -> Vec<String> {
-    let Some(last_push) = versions.iter().filter_map(|v| parse_time(v, "created_at")).max() else {
+    let Some(last_push) = versions
+        .iter()
+        .filter_map(|v| parse_time(v, "created_at"))
+        .max()
+    else {
         return Vec::new();
     };
     let mut verdict: BTreeMap<String, (bool, Option<DateTime<Utc>>)> = BTreeMap::new();
-    let mut ordered: Vec<&Value> = notes.iter().filter(|n| n.get("system").and_then(Value::as_bool) == Some(true)).collect();
+    let mut ordered: Vec<&Value> = notes
+        .iter()
+        .filter(|n| n.get("system").and_then(Value::as_bool) == Some(true))
+        .collect();
     ordered.sort_by_key(|n| parse_time(n, "created_at"));
     for n in ordered {
-        let Some(login) = str_at(n, &["author", "username"]) else { continue };
-        let body = n.get("body").and_then(Value::as_str).unwrap_or("").trim().to_ascii_lowercase();
+        let Some(login) = str_at(n, &["author", "username"]) else {
+            continue;
+        };
+        let body = n
+            .get("body")
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .trim()
+            .to_ascii_lowercase();
         let approved = if body.starts_with("approved this merge request") {
             true
         } else if body.starts_with("unapproved this merge request") {
@@ -482,12 +621,19 @@ pub fn gitlab_approvers(approvals: &Value, notes: &[Value], versions: &[Value]) 
         } else {
             continue;
         };
-        verdict.insert(login.to_ascii_lowercase(), (approved, parse_time(n, "created_at")));
+        verdict.insert(
+            login.to_ascii_lowercase(),
+            (approved, parse_time(n, "created_at")),
+        );
     }
-    let Some(list) = approvals.get("approved_by").and_then(Value::as_array) else { return Vec::new() };
+    let Some(list) = approvals.get("approved_by").and_then(Value::as_array) else {
+        return Vec::new();
+    };
     let mut out = Vec::new();
     for a in list {
-        let Some(login) = str_at(a, &["user", "username"]) else { continue };
+        let Some(login) = str_at(a, &["user", "username"]) else {
+            continue;
+        };
         match verdict.get(&login.to_ascii_lowercase()) {
             Some((true, Some(at))) if *at > last_push => out.push(login.to_string()),
             _ => {}
@@ -507,7 +653,13 @@ impl CraSource for GitLabSource {
     async fn fetch_files(&self, sha: &str) -> Result<CraFiles, SourceError> {
         let sha = normalize_sha(sha)?;
         let mut out = CraFiles::default();
-        for kind in [CraFileKind::Org, CraFileKind::Roles, CraFileKind::Members, CraFileKind::Merit, CraFileKind::Payouts] {
+        for kind in [
+            CraFileKind::Org,
+            CraFileKind::Roles,
+            CraFileKind::Members,
+            CraFileKind::Merit,
+            CraFileKind::Payouts,
+        ] {
             let name = kind.file_name();
             let file = encode_component(&format!(".msync/{name}"));
             let resp = self
@@ -527,15 +679,28 @@ impl CraSource for GitLabSource {
         Ok(out)
     }
 
-    async fn change_context(&self, sha: &str, pusher: Option<&FoundryIdentity>, today: NaiveDate) -> Result<ChangeContext, SourceError> {
+    async fn change_context(
+        &self,
+        sha: &str,
+        pusher: Option<&FoundryIdentity>,
+        today: NaiveDate,
+    ) -> Result<ChangeContext, SourceError> {
         let sha = normalize_sha(sha)?;
-        let mrs = self.json(&format!("/repository/commits/{sha}/merge_requests"), "merge requests for commit").await?;
+        let mrs = self
+            .json(
+                &format!("/repository/commits/{sha}/merge_requests"),
+                "merge requests for commit",
+            )
+            .await?;
         let mrs = array(&mrs, "merge requests for commit")?;
         let merged: Vec<&Value> = mrs
             .iter()
             .filter(|m| {
                 m.get("state").and_then(Value::as_str) == Some("merged")
-                    && m.get("merge_commit_sha").and_then(Value::as_str).map(|s| s.eq_ignore_ascii_case(&sha)).unwrap_or(false)
+                    && m.get("merge_commit_sha")
+                        .and_then(Value::as_str)
+                        .map(|s| s.eq_ignore_ascii_case(&sha))
+                        .unwrap_or(false)
             })
             .collect();
         let iid = match merged.as_slice() {
@@ -544,38 +709,71 @@ impl CraSource for GitLabSource {
                 .get("iid")
                 .and_then(Value::as_i64)
                 .ok_or_else(|| SourceError::Ambiguous("merge request without an iid".into()))?,
-            _ => return Err(SourceError::Ambiguous(format!("{} merged merge requests claim commit {sha}", merged.len()))),
+            _ => {
+                return Err(SourceError::Ambiguous(format!(
+                    "{} merged merge requests claim commit {sha}",
+                    merged.len()
+                )))
+            }
         };
 
-        let mr = self.json(&format!("/merge_requests/{iid}"), "merge request").await?;
+        let mr = self
+            .json(&format!("/merge_requests/{iid}"), "merge request")
+            .await?;
         let state_ok = mr.get("state").and_then(Value::as_str) == Some("merged");
-        let sha_ok = mr.get("merge_commit_sha").and_then(Value::as_str).map(|s| s.eq_ignore_ascii_case(&sha)).unwrap_or(false);
+        let sha_ok = mr
+            .get("merge_commit_sha")
+            .and_then(Value::as_str)
+            .map(|s| s.eq_ignore_ascii_case(&sha))
+            .unwrap_or(false);
         if !state_ok || !sha_ok {
-            return Err(SourceError::Ambiguous(format!("merge request !{iid} is not merged as commit {sha}")));
+            return Err(SourceError::Ambiguous(format!(
+                "merge request !{iid} is not merged as commit {sha}"
+            )));
         }
         let merger = str_at(&mr, &["merge_user", "username"])
             .or_else(|| str_at(&mr, &["merged_by", "username"]))
-            .ok_or_else(|| SourceError::Ambiguous(format!("merge request !{iid} has no merge user")))?;
+            .ok_or_else(|| {
+                SourceError::Ambiguous(format!("merge request !{iid} has no merge user"))
+            })?;
         let author = str_at(&mr, &["author", "username"])
             .ok_or_else(|| SourceError::Ambiguous(format!("merge request !{iid} has no author")))?;
         check_merger(FoundryProvider::GitLab, merger, pusher)?;
 
-        let approvals = self.json(&format!("/merge_requests/{iid}/approvals"), "approvals").await?;
-        let versions = self.paged(&format!("/merge_requests/{iid}/versions"), "versions").await?;
-        let notes = self.paged(&format!("/merge_requests/{iid}/notes?sort=asc&order_by=created_at"), "notes").await?;
+        let approvals = self
+            .json(&format!("/merge_requests/{iid}/approvals"), "approvals")
+            .await?;
+        let versions = self
+            .paged(&format!("/merge_requests/{iid}/versions"), "versions")
+            .await?;
+        let notes = self
+            .paged(
+                &format!("/merge_requests/{iid}/notes?sort=asc&order_by=created_at"),
+                "notes",
+            )
+            .await?;
         let approvers = gitlab_approvers(&approvals, &notes, &versions);
         Ok(ChangeContext {
             actor: identity(FoundryProvider::GitLab, merger),
             via_pull_request: true,
             author: Some(identity(FoundryProvider::GitLab, author)),
-            approvers: approvers.iter().map(|a| identity(FoundryProvider::GitLab, a)).collect(),
+            approvers: approvers
+                .iter()
+                .map(|a| identity(FoundryProvider::GitLab, a))
+                .collect(),
             today,
         })
     }
 
     async fn branch_head(&self, branch: &str) -> Result<String, SourceError> {
-        let v = self.json(&format!("/repository/branches/{}", encode_component(branch)), "branch").await?;
-        let sha = str_at(&v, &["commit", "id"]).ok_or_else(|| SourceError::Ambiguous("branch without a head commit".into()))?;
+        let v = self
+            .json(
+                &format!("/repository/branches/{}", encode_component(branch)),
+                "branch",
+            )
+            .await?;
+        let sha = str_at(&v, &["commit", "id"])
+            .ok_or_else(|| SourceError::Ambiguous("branch without a head commit".into()))?;
         normalize_sha(sha)
     }
 }

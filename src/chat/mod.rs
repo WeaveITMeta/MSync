@@ -131,11 +131,25 @@ pub struct ChatActor {
 
 impl ChatActor {
     pub fn discord(user_id: impl Into<String>, is_platform_admin: Option<bool>) -> Self {
-        ChatActor { platform: ChatPlatform::Discord, team_id: String::new(), user_id: user_id.into(), is_platform_admin }
+        ChatActor {
+            platform: ChatPlatform::Discord,
+            team_id: String::new(),
+            user_id: user_id.into(),
+            is_platform_admin,
+        }
     }
 
-    pub fn slack(team_id: impl Into<String>, user_id: impl Into<String>, is_platform_admin: Option<bool>) -> Self {
-        ChatActor { platform: ChatPlatform::Slack, team_id: team_id.into(), user_id: user_id.into(), is_platform_admin }
+    pub fn slack(
+        team_id: impl Into<String>,
+        user_id: impl Into<String>,
+        is_platform_admin: Option<bool>,
+    ) -> Self {
+        ChatActor {
+            platform: ChatPlatform::Slack,
+            team_id: team_id.into(),
+            user_id: user_id.into(),
+            is_platform_admin,
+        }
     }
 
     /// `chat_identities.team_or_guild` for this actor: the Slack team, or `''` on Discord.
@@ -156,10 +170,16 @@ pub struct ChatReply {
 
 impl ChatReply {
     pub fn public(text: impl Into<String>) -> Self {
-        ChatReply { text: text.into(), private: false }
+        ChatReply {
+            text: text.into(),
+            private: false,
+        }
     }
     pub fn private(text: impl Into<String>) -> Self {
-        ChatReply { text: text.into(), private: true }
+        ChatReply {
+            text: text.into(),
+            private: true,
+        }
     }
 }
 
@@ -177,7 +197,8 @@ pub struct ChatContext {
 
 impl ChatContext {
     pub fn today(&self) -> NaiveDate {
-        self.today.unwrap_or_else(|| chrono::Utc::now().date_naive())
+        self.today
+            .unwrap_or_else(|| chrono::Utc::now().date_naive())
     }
 }
 
@@ -195,17 +216,28 @@ pub struct ProjectionPlan {
 impl ProjectionPlan {
     /// The full member list of one managed role or group.
     pub fn members_of(&self, group: &str) -> Vec<String> {
-        self.assignments.iter().filter(|(_, g)| g == group).map(|(u, _)| u.clone()).collect()
+        self.assignments
+            .iter()
+            .filter(|(_, g)| g == group)
+            .map(|(u, _)| u.clone())
+            .collect()
     }
 
     /// The managed roles or groups one user should hold.
     pub fn desired_for(&self, user: &str) -> BTreeSet<String> {
-        self.assignments.iter().filter(|(u, _)| u == user).map(|(_, g)| g.clone()).collect()
+        self.assignments
+            .iter()
+            .filter(|(u, _)| u == user)
+            .map(|(_, g)| g.clone())
+            .collect()
     }
 
     /// `group -> members`, for every managed group.
     pub fn by_group(&self) -> BTreeMap<String, Vec<String>> {
-        self.managed.iter().map(|g| (g.clone(), self.members_of(g))).collect()
+        self.managed
+            .iter()
+            .map(|g| (g.clone(), self.members_of(g)))
+            .collect()
     }
 }
 

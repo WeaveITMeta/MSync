@@ -34,9 +34,8 @@ pub fn unauthorized() -> HttpResponse {
 
 pub fn auth_error(e: &AuthError) -> HttpResponse {
     match e {
-        AuthError::MissingScope(s) => {
-            HttpResponse::Forbidden().json(json!({"status": "error", "message": format!("missing scope {s}")}))
-        }
+        AuthError::MissingScope(s) => HttpResponse::Forbidden()
+            .json(json!({"status": "error", "message": format!("missing scope {s}")})),
         AuthError::Db(err) => {
             error!("auth db error: {}", err);
             unauthorized()
@@ -138,15 +137,28 @@ pub struct PutPolicyQuery {
 }
 
 #[put("/api/v1/payouts/policy")]
-pub async fn put_policy(req: HttpRequest, q: web::Query<PutPolicyQuery>, body: web::Bytes, ctx: web::Data<ApiContext>) -> HttpResponse {
+pub async fn put_policy(
+    req: HttpRequest,
+    q: web::Query<PutPolicyQuery>,
+    body: web::Bytes,
+    ctx: web::Data<ApiContext>,
+) -> HttpResponse {
     let p = auth_or_return!(req, ctx);
     let parsed: PayoutPolicy = match serde_json::from_slice(&body) {
         Ok(v) => v,
-        Err(e) => return err(actix_web::http::StatusCode::BAD_REQUEST, format!("invalid policy: {e}")),
+        Err(e) => {
+            return err(
+                actix_web::http::StatusCode::BAD_REQUEST,
+                format!("invalid policy: {e}"),
+            )
+        }
     };
-    let expected = q.expected_version.map(|v| if v <= 0 { None } else { Some(v) });
+    let expected = q
+        .expected_version
+        .map(|v| if v <= 0 { None } else { Some(v) });
     match policy::put_policy(&ctx.pool, &p, &parsed, expected).await {
-        Ok(version) => HttpResponse::Ok().json(json!({"status": "success", "version": version, "policy": parsed})),
+        Ok(version) => HttpResponse::Ok()
+            .json(json!({"status": "success", "version": version, "policy": parsed})),
         Err(e) => policy_error(e),
     }
 }
@@ -159,7 +171,11 @@ pub struct LedgerQuery {
 }
 
 #[get("/api/v1/payouts/ledger")]
-pub async fn list_ledger(req: HttpRequest, q: web::Query<LedgerQuery>, ctx: web::Data<ApiContext>) -> HttpResponse {
+pub async fn list_ledger(
+    req: HttpRequest,
+    q: web::Query<LedgerQuery>,
+    ctx: web::Data<ApiContext>,
+) -> HttpResponse {
     let p = auth_or_return!(req, ctx);
     match runs::list_ledger(&ctx.pool, &p, q.status.as_deref()).await {
         Ok(rows) => HttpResponse::Ok().json(json!({"status": "success", "entries": rows})),
@@ -169,10 +185,15 @@ pub async fn list_ledger(req: HttpRequest, q: web::Query<LedgerQuery>, ctx: web:
 
 /// Approve one ledger row as the token's member. Any request body is ignored.
 #[post("/api/v1/payouts/ledger/{id}/approve")]
-pub async fn approve_ledger_row(req: HttpRequest, path: web::Path<String>, ctx: web::Data<ApiContext>) -> HttpResponse {
+pub async fn approve_ledger_row(
+    req: HttpRequest,
+    path: web::Path<String>,
+    ctx: web::Data<ApiContext>,
+) -> HttpResponse {
     let p = auth_or_return!(req, ctx);
     match approvals::approve_row(&ctx.pool, ctx.directory.as_ref(), &p, &path).await {
-        Ok(r) => HttpResponse::Ok().json(json!({"status": "success", "result": r, "approver_member_id": p.member_id})),
+        Ok(r) => HttpResponse::Ok()
+            .json(json!({"status": "success", "result": r, "approver_member_id": p.member_id})),
         Err(e) => payout_error(e),
     }
 }
@@ -192,19 +213,37 @@ pub struct CreateRunBody {
 }
 
 #[post("/api/v1/payouts/runs")]
-pub async fn create_run(req: HttpRequest, body: web::Json<CreateRunBody>, ctx: web::Data<ApiContext>) -> HttpResponse {
+pub async fn create_run(
+    req: HttpRequest,
+    body: web::Json<CreateRunBody>,
+    ctx: web::Data<ApiContext>,
+) -> HttpResponse {
     let p = auth_or_return!(req, ctx);
-    match runs::create_run(&ctx.pool, &ctx.payments, ctx.directory.as_ref(), &p, body.dry_run, Utc::now()).await {
-        Ok(runs::CreateRunResult::DryRun(plan)) => HttpResponse::Ok().json(json!({"status": "success", "dry_run": true, "plan": plan})),
-        Ok(runs::CreateRunResult::Created { run, plan }) => {
-            HttpResponse::Created().json(json!({"status": "success", "dry_run": false, "run": run, "plan": plan}))
+    match runs::create_run(
+        &ctx.pool,
+        &ctx.payments,
+        ctx.directory.as_ref(),
+        &p,
+        body.dry_run,
+        Utc::now(),
+    )
+    .await
+    {
+        Ok(runs::CreateRunResult::DryRun(plan)) => {
+            HttpResponse::Ok().json(json!({"status": "success", "dry_run": true, "plan": plan}))
         }
+        Ok(runs::CreateRunResult::Created { run, plan }) => HttpResponse::Created()
+            .json(json!({"status": "success", "dry_run": false, "run": run, "plan": plan})),
         Err(e) => payout_error(e),
     }
 }
 
 #[get("/api/v1/payouts/runs/{id}")]
-pub async fn get_run(req: HttpRequest, path: web::Path<String>, ctx: web::Data<ApiContext>) -> HttpResponse {
+pub async fn get_run(
+    req: HttpRequest,
+    path: web::Path<String>,
+    ctx: web::Data<ApiContext>,
+) -> HttpResponse {
     let p = auth_or_return!(req, ctx);
     match runs::get_run(&ctx.pool, &p, &path).await {
         Ok(v) => HttpResponse::Ok().json(json!({"status": "success", "run": v})),
@@ -214,7 +253,11 @@ pub async fn get_run(req: HttpRequest, path: web::Path<String>, ctx: web::Data<A
 
 /// Approve every item of a run as the token's member. Any request body is ignored.
 #[post("/api/v1/payouts/runs/{id}/approve")]
-pub async fn approve_run(req: HttpRequest, path: web::Path<String>, ctx: web::Data<ApiContext>) -> HttpResponse {
+pub async fn approve_run(
+    req: HttpRequest,
+    path: web::Path<String>,
+    ctx: web::Data<ApiContext>,
+) -> HttpResponse {
     let p = auth_or_return!(req, ctx);
     match runs::approve_run(&ctx.pool, ctx.directory.as_ref(), &p, &path).await {
         Ok(r) => HttpResponse::Ok().json(json!({"status": "success", "report": r})),
@@ -223,16 +266,34 @@ pub async fn approve_run(req: HttpRequest, path: web::Path<String>, ctx: web::Da
 }
 
 #[post("/api/v1/payouts/runs/{id}/execute")]
-pub async fn execute_run(req: HttpRequest, path: web::Path<String>, ctx: web::Data<ApiContext>) -> HttpResponse {
+pub async fn execute_run(
+    req: HttpRequest,
+    path: web::Path<String>,
+    ctx: web::Data<ApiContext>,
+) -> HttpResponse {
     let p = auth_or_return!(req, ctx);
-    match runs::execute_run(&ctx.pool, ctx.stripe.as_ref(), &ctx.payments, ctx.directory.as_ref(), &p, &path, Utc::now()).await {
+    match runs::execute_run(
+        &ctx.pool,
+        ctx.stripe.as_ref(),
+        &ctx.payments,
+        ctx.directory.as_ref(),
+        &p,
+        &path,
+        Utc::now(),
+    )
+    .await
+    {
         Ok(r) => HttpResponse::Ok().json(json!({"status": "success", "report": r})),
         Err(e) => payout_error(e),
     }
 }
 
 #[post("/api/v1/payouts/runs/{id}/cancel")]
-pub async fn cancel_run(req: HttpRequest, path: web::Path<String>, ctx: web::Data<ApiContext>) -> HttpResponse {
+pub async fn cancel_run(
+    req: HttpRequest,
+    path: web::Path<String>,
+    ctx: web::Data<ApiContext>,
+) -> HttpResponse {
     let p = auth_or_return!(req, ctx);
     match runs::cancel_run(&ctx.pool, &p, &path, Utc::now()).await {
         Ok(v) => HttpResponse::Ok().json(json!({"status": "success", "run": v})),
@@ -250,7 +311,11 @@ pub struct BlockBody {
 }
 
 #[post("/api/v1/payouts/blocks")]
-pub async fn block_payee(req: HttpRequest, body: web::Json<BlockBody>, ctx: web::Data<ApiContext>) -> HttpResponse {
+pub async fn block_payee(
+    req: HttpRequest,
+    body: web::Json<BlockBody>,
+    ctx: web::Data<ApiContext>,
+) -> HttpResponse {
     let p = auth_or_return!(req, ctx);
     match approvals::block_payee(&ctx.pool, &p, &body.payee_key, &body.reason).await {
         Ok(()) => HttpResponse::Ok().json(json!({"status": "success"})),
@@ -259,7 +324,11 @@ pub async fn block_payee(req: HttpRequest, body: web::Json<BlockBody>, ctx: web:
 }
 
 #[delete("/api/v1/payouts/blocks/{payee_key}")]
-pub async fn unblock_payee(req: HttpRequest, path: web::Path<String>, ctx: web::Data<ApiContext>) -> HttpResponse {
+pub async fn unblock_payee(
+    req: HttpRequest,
+    path: web::Path<String>,
+    ctx: web::Data<ApiContext>,
+) -> HttpResponse {
     let p = auth_or_return!(req, ctx);
     match approvals::unblock_payee(&ctx.pool, &p, &path).await {
         Ok(existed) => HttpResponse::Ok().json(json!({"status": "success", "removed": existed})),

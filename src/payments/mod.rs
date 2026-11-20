@@ -35,11 +35,11 @@ pub mod timesheet;
 pub mod wages;
 
 #[cfg(test)]
-mod tests;
-#[cfg(test)]
 mod controls_tests;
 #[cfg(test)]
 mod payroll_tests;
+#[cfg(test)]
+mod tests;
 #[cfg(test)]
 mod time_tests;
 

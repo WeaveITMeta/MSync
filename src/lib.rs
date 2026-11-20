@@ -1,5 +1,5 @@
-pub mod audit;
 pub mod accounts;
+pub mod audit;
 pub mod auth;
 pub mod chat;
 pub mod cli;
@@ -23,8 +23,8 @@ pub mod slack;
 mod openapi_tests;
 
 use config::Config;
-use payments::{PaymentConfig, StripeApi};
 use merit::tracker::MeritTracker;
+use payments::{PaymentConfig, StripeApi};
 use sqlx::sqlite::SqlitePool;
 use std::sync::Arc;
 use tokio::sync::RwLock;
@@ -46,10 +46,10 @@ pub struct AppState {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::models::{Contributor, Contribution};
     use crate::merit::calculator::MeritCalculator;
     use crate::merit::rubric;
     use crate::merit::scoring::MeritRules;
+    use crate::models::{Contribution, Contributor};
     use uuid::Uuid;
 
     #[test]
@@ -71,7 +71,7 @@ mod tests {
             "Fix bug in authentication".to_string(),
             Some("Resolved issue #456".to_string()),
         );
-        
+
         assert_eq!(contribution.contributor_id, contributor_id);
         assert_eq!(contribution.github_pr_number, 123);
         assert_eq!(contribution.title, "Fix bug in authentication");
@@ -103,7 +103,6 @@ mod tests {
 
     #[test]
     fn test_streak_bonus_calculation() {
-        
         assert_eq!(MeritCalculator::calculate_streak_bonus(1), 0);
         assert_eq!(MeritCalculator::calculate_streak_bonus(3), 5);
         assert_eq!(MeritCalculator::calculate_streak_bonus(7), 10);
@@ -113,7 +112,6 @@ mod tests {
 
     #[test]
     fn test_complexity_bonus() {
-        
         // 50 lines * 0.1 + 2 files * 2.0 = 9
         assert_eq!(MeritCalculator::calculate_complexity_bonus(50, 2), 9);
         assert_eq!(MeritCalculator::calculate_complexity_bonus(100, 5), 20);
@@ -123,7 +121,7 @@ mod tests {
     #[test]
     fn test_config_validation() {
         use std::env;
-        
+
         // Test that config properly validates required fields
         env::set_var("DISCORD_TOKEN", "test_token");
         env::set_var("DISCORD_APPLICATION_ID", "123456");
@@ -132,12 +130,15 @@ mod tests {
         env::set_var("GITHUB_REPO_OWNER", "owner");
         env::set_var("GITHUB_REPO_NAME", "repo");
         env::set_var("CODERABBIT_API_KEY", "cr_test");
-        
+
         let config = config::Config::from_env();
         assert!(config.is_ok());
-        
+
         let config = config.unwrap();
-        assert_eq!(config.discord.as_ref().map(|d| d.token.as_str()), Some("test_token"));
+        assert_eq!(
+            config.discord.as_ref().map(|d| d.token.as_str()),
+            Some("test_token")
+        );
         assert_eq!(config.github.repo_owner, "owner");
     }
 }

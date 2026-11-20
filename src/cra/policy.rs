@@ -27,7 +27,12 @@ pub enum Mode {
 
 impl Mode {
     /// Every mode, in contract table order.
-    pub const ALL: [Mode; 4] = [Mode::Open, Mode::SourceAvailable, Mode::Hybrid, Mode::Closed];
+    pub const ALL: [Mode; 4] = [
+        Mode::Open,
+        Mode::SourceAvailable,
+        Mode::Hybrid,
+        Mode::Closed,
+    ];
 
     /// The value written in `org.toml`.
     pub fn as_str(self) -> &'static str {
@@ -319,10 +324,12 @@ pub fn resolve_org_policy(org: &OrgFile) -> (Mode, Result<Policy, Vec<String>>) 
 }
 
 fn want_str(v: &toml::Value) -> Result<&str, String> {
-    v.as_str().ok_or_else(|| format!("expected a string, found {}", v.type_str()))
+    v.as_str()
+        .ok_or_else(|| format!("expected a string, found {}", v.type_str()))
 }
 fn want_bool(v: &toml::Value) -> Result<bool, String> {
-    v.as_bool().ok_or_else(|| format!("expected true or false, found {}", v.type_str()))
+    v.as_bool()
+        .ok_or_else(|| format!("expected true or false, found {}", v.type_str()))
 }
 fn want_uint(v: &toml::Value, max: u64) -> Result<u64, String> {
     match v.as_integer() {
@@ -337,14 +344,26 @@ fn want_vis(v: &toml::Value, allowed: &[Visibility]) -> Result<Visibility, Strin
         Some(x) if allowed.contains(&x) => Ok(x),
         _ => Err(format!(
             "`{s}` is not one of {}",
-            allowed.iter().map(|a| a.as_str()).collect::<Vec<_>>().join(", ")
+            allowed
+                .iter()
+                .map(|a| a.as_str())
+                .collect::<Vec<_>>()
+                .join(", ")
         )),
     }
 }
 
-const ROSTER_VIS: &[Visibility] = &[Visibility::Public, Visibility::Members, Visibility::NeedToKnow];
+const ROSTER_VIS: &[Visibility] = &[
+    Visibility::Public,
+    Visibility::Members,
+    Visibility::NeedToKnow,
+];
 const LEADERBOARD_VIS: &[Visibility] = &[Visibility::Public, Visibility::Members, Visibility::Off];
-const PROFILE_VIS: &[Visibility] = &[Visibility::Public, Visibility::Members, Visibility::SelfAndChain];
+const PROFILE_VIS: &[Visibility] = &[
+    Visibility::Public,
+    Visibility::Members,
+    Visibility::SelfAndChain,
+];
 
 fn apply_override(p: &mut Policy, key: &str, v: &toml::Value) -> Result<(), String> {
     match key {
@@ -374,11 +393,19 @@ fn apply_override(p: &mut Policy, key: &str, v: &toml::Value) -> Result<(), Stri
                     }
                     out
                 }
-                other => return Err(format!("expected \"all\" or a list of strings, found {other}")),
+                other => {
+                    return Err(format!(
+                        "expected \"all\" or a list of strings, found {other}"
+                    ))
+                }
             }
         }
-        "promotion.merit_rank_ceiling" => p.promotion_merit_rank_ceiling = want_uint(v, 999)? as u32,
-        "promotion.merit_may_confer_authority" => p.promotion_merit_may_confer_authority = want_bool(v)?,
+        "promotion.merit_rank_ceiling" => {
+            p.promotion_merit_rank_ceiling = want_uint(v, 999)? as u32
+        }
+        "promotion.merit_may_confer_authority" => {
+            p.promotion_merit_may_confer_authority = want_bool(v)?
+        }
         "promotion.eligibility_nominations" => p.promotion_eligibility_nominations = want_bool(v)?,
         "compartments.enabled" => p.compartments_enabled = want_bool(v)?,
         "probation.days" => p.probation_days = want_uint(v, 3650)? as u32,
@@ -386,11 +413,17 @@ fn apply_override(p: &mut Policy, key: &str, v: &toml::Value) -> Result<(), Stri
             p.payouts_eligible = match want_str(v)? {
                 "verified_members" => PayoutEligible::VerifiedMembers,
                 "positions_only" => PayoutEligible::PositionsOnly,
-                s => return Err(format!("`{s}` is not one of verified_members, positions_only")),
+                s => {
+                    return Err(format!(
+                        "`{s}` is not one of verified_members, positions_only"
+                    ))
+                }
             }
         }
         "payouts.hold_days" => p.payouts_hold_days = want_uint(v, 3650)? as u32,
-        "payouts.two_person_min_cents" => p.payouts_two_person_min_cents = want_uint(v, u64::MAX >> 1)?,
+        "payouts.two_person_min_cents" => {
+            p.payouts_two_person_min_cents = want_uint(v, u64::MAX >> 1)?
+        }
         "grants.two_person_min_rank" => p.grants_two_person_min_rank = want_uint(v, 999)? as u32,
         "grants.max_term_days" => p.grants_max_term_days = want_uint(v, 3650)? as u32,
         "audit.visibility" => {
@@ -400,7 +433,9 @@ fn apply_override(p: &mut Policy, key: &str, v: &toml::Value) -> Result<(), Stri
                 s => return Err(format!("`{s}` is not one of members_summary, officers")),
             }
         }
-        "anomaly.profile_reads_per_hour" => p.anomaly_profile_reads_per_hour = want_uint(v, 1_000_000)? as u32,
+        "anomaly.profile_reads_per_hour" => {
+            p.anomaly_profile_reads_per_hour = want_uint(v, 1_000_000)? as u32
+        }
         "anomaly.action_on_trip" => {
             p.anomaly_action_on_trip = match want_str(v)? {
                 "alert" => AnomalyAction::Alert,

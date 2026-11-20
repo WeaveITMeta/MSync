@@ -1,5 +1,5 @@
 use msync::config::Config;
-use msync::models::{Contributor, ContributionStatus};
+use msync::models::{ContributionStatus, Contributor};
 use sqlx::sqlite::SqlitePool;
 use std::env;
 
@@ -13,7 +13,7 @@ async fn test_database_operations(pool: SqlitePool) {
 
     // Create a contributor
     let contributor = Contributor::new("test_user".to_string());
-    
+
     let result = sqlx::query(
         "INSERT INTO contributors (id, github_username, total_merit_points, current_role, 
          contributions_count, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
@@ -27,17 +27,16 @@ async fn test_database_operations(pool: SqlitePool) {
     .bind(contributor.updated_at)
     .execute(&pool)
     .await;
-    
+
     assert!(result.is_ok());
-    
+
     // Fetch the contributor
-    let fetched = sqlx::query_as::<_, Contributor>(
-        "SELECT * FROM contributors WHERE github_username = ?"
-    )
-    .bind("test_user")
-    .fetch_one(&pool)
-    .await;
-    
+    let fetched =
+        sqlx::query_as::<_, Contributor>("SELECT * FROM contributors WHERE github_username = ?")
+            .bind("test_user")
+            .fetch_one(&pool)
+            .await;
+
     assert!(fetched.is_ok());
     let fetched = fetched.unwrap();
     assert_eq!(fetched.github_username, "test_user");

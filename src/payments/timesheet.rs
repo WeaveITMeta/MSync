@@ -45,7 +45,11 @@ pub const LOOKBACK_DAYS: i64 = 366;
 
 fn calendar_month(t: DateTime<Utc>) -> PeriodSlot {
     let first = NaiveDate::from_ymd_opt(t.year(), t.month(), 1).expect("valid date");
-    let (ny, nm) = if t.month() == 12 { (t.year() + 1, 1) } else { (t.year(), t.month() + 1) };
+    let (ny, nm) = if t.month() == 12 {
+        (t.year() + 1, 1)
+    } else {
+        (t.year(), t.month() + 1)
+    };
     let next = NaiveDate::from_ymd_opt(ny, nm, 1).expect("valid date");
     PeriodSlot {
         key: format!("calendar-{:04}-{:02}", t.year(), t.month()),
@@ -57,11 +61,17 @@ fn calendar_month(t: DateTime<Utc>) -> PeriodSlot {
 /// Pure: the pay period containing `t`: the payout schedule's slot (weekly, biweekly or
 /// monthly), or the calendar month (UTC) for a manual schedule.
 pub fn pay_period(schedule: &Schedule, t: DateTime<Utc>) -> PeriodSlot {
-    current_slot(schedule, t).filter(|s| s.start <= t && t < s.end).unwrap_or_else(|| calendar_month(t))
+    current_slot(schedule, t)
+        .filter(|s| s.start <= t && t < s.end)
+        .unwrap_or_else(|| calendar_month(t))
 }
 
 /// Pure: every pay period overlapping [start, end), in order.
-pub fn periods_overlapping(schedule: &Schedule, start: DateTime<Utc>, end: DateTime<Utc>) -> Vec<PeriodSlot> {
+pub fn periods_overlapping(
+    schedule: &Schedule,
+    start: DateTime<Utc>,
+    end: DateTime<Utc>,
+) -> Vec<PeriodSlot> {
     let mut out = Vec::new();
     let mut p = pay_period(schedule, start);
     let mut guard = 0;
@@ -78,9 +88,13 @@ pub fn periods_overlapping(schedule: &Schedule, start: DateTime<Utc>, end: DateT
 /// `monthly-2026-11` or `calendar-2026-11`), or the period containing noon UTC of a date.
 pub fn period_for(schedule: &Schedule, period: &str) -> Result<PeriodSlot, String> {
     let p = period.trim();
-    let bad = || format!("period '{p}' is neither a period key (from a timesheet) nor a date YYYY-MM-DD");
+    let bad =
+        || format!("period '{p}' is neither a period key (from a timesheet) nor a date YYYY-MM-DD");
     if let Ok(d) = NaiveDate::parse_from_str(p, "%Y-%m-%d") {
-        return Ok(pay_period(schedule, Utc.from_utc_datetime(&d.and_hms_opt(12, 0, 0).expect("valid"))));
+        return Ok(pay_period(
+            schedule,
+            Utc.from_utc_datetime(&d.and_hms_opt(12, 0, 0).expect("valid")),
+        ));
     }
     let (_, rest) = p.split_once('-').ok_or_else(bad)?;
     let probe = if let Ok(d) = NaiveDate::parse_from_str(rest, "%Y-%m-%d") {
@@ -93,7 +107,10 @@ pub fn period_for(schedule: &Schedule, period: &str) -> Result<PeriodSlot, Strin
     };
     let slot = pay_period(schedule, probe);
     if slot.key != p {
-        return Err(format!("period '{p}' is not a period of the current pay schedule (the period there is '{}')", slot.key));
+        return Err(format!(
+            "period '{p}' is not a period of the current pay schedule (the period there is '{}')",
+            slot.key
+        ));
     }
     Ok(slot)
 }
@@ -111,10 +128,21 @@ pub struct WorkSegment {
 }
 
 /// Pure: split an entry into per-day segments in its time zone.
-pub fn entry_segments(entry_id: &str, start: DateTime<Utc>, end: DateTime<Utc>, tz: &chrono_tz::Tz) -> Vec<WorkSegment> {
+pub fn entry_segments(
+    entry_id: &str,
+    start: DateTime<Utc>,
+    end: DateTime<Utc>,
+    tz: &chrono_tz::Tz,
+) -> Vec<WorkSegment> {
     day_segments(start, end, tz)
         .into_iter()
-        .map(|d| WorkSegment { entry_id: entry_id.to_string(), date: d.date, start: d.start, end: d.end, minutes: d.minutes })
+        .map(|d| WorkSegment {
+            entry_id: entry_id.to_string(),
+            date: d.date,
+            start: d.start,
+            end: d.end,
+            minutes: d.minutes,
+        })
         .collect()
 }
 
@@ -160,7 +188,12 @@ fn exact(units: i128) -> String {
 /// [period_start, period_end) are paid. Minutes beyond the threshold of the rate in force
 /// that day, counted in order through each week (Monday to Sunday by local date), are paid at
 /// the overtime multiplier. The sum is exact and floored to the cent once.
-pub fn period_pay(segments: &[WorkSegment], period_start: DateTime<Utc>, period_end: DateTime<Utc>, rates: &[WageRate]) -> PeriodPay {
+pub fn period_pay(
+    segments: &[WorkSegment],
+    period_start: DateTime<Utc>,
+    period_end: DateTime<Utc>,
+    rates: &[WageRate],
+) -> PeriodPay {
     // Cut at the period boundaries.
     let mut pieces: Vec<WorkSegment> = Vec::new();
     for s in segments {
@@ -174,14 +207,23 @@ pub fn period_pay(segments: &[WorkSegment], period_start: DateTime<Utc>, period_
         cuts.sort();
         for w in cuts.windows(2) {
             if w[1] > w[0] {
-                pieces.push(WorkSegment { entry_id: s.entry_id.clone(), date: s.date, start: w[0], end: w[1], minutes: (w[1] - w[0]).num_seconds() / 60 });
+                pieces.push(WorkSegment {
+                    entry_id: s.entry_id.clone(),
+                    date: s.date,
+                    start: w[0],
+                    end: w[1],
+                    minutes: (w[1] - w[0]).num_seconds() / 60,
+                });
             }
         }
     }
     pieces.sort_by(|a, b| (a.start, &a.entry_id).cmp(&(b.start, &b.entry_id)));
     let mut week_minutes: HashMap<(i32, u32), i64> = HashMap::new();
     let mut days: BTreeMap<NaiveDate, (DayLine, i128)> = BTreeMap::new();
-    let mut pay = PeriodPay { units_per_cent: UNITS_PER_CENT as i64, ..Default::default() };
+    let mut pay = PeriodPay {
+        units_per_cent: UNITS_PER_CENT as i64,
+        ..Default::default()
+    };
     let mut total: i128 = 0;
     let first_date = pieces.iter().find(|p| p.end > period_start).map(|p| p.date);
     for p in pieces {
@@ -194,16 +236,29 @@ pub fn period_pay(segments: &[WorkSegment], period_start: DateTime<Utc>, period_
         if p.end <= period_start && !super::mutant::on("no_period_cut") {
             continue; // earlier in the week, before this period: counted for overtime only
         }
-        let rate_day = if super::mutant::on("one_rate_per_period") { first_date.unwrap_or(p.date) } else { p.date };
-        let rate = rate_on(rates, rate_day);
-        let (regular, overtime) = match rate.and_then(|r| r.overtime_after_minutes.zip(r.overtime_bps)) {
-            Some((after, _)) if !super::mutant::on("no_overtime") => {
-                let regular = (after - before).clamp(0, p.minutes);
-                (regular, p.minutes - regular)
-            }
-            _ => (p.minutes, 0),
+        let rate_day = if super::mutant::on("one_rate_per_period") {
+            first_date.unwrap_or(p.date)
+        } else {
+            p.date
         };
-        let line = days.entry(p.date).or_insert_with(|| (DayLine { date: p.date.format("%Y-%m-%d").to_string(), ..Default::default() }, 0));
+        let rate = rate_on(rates, rate_day);
+        let (regular, overtime) =
+            match rate.and_then(|r| r.overtime_after_minutes.zip(r.overtime_bps)) {
+                Some((after, _)) if !super::mutant::on("no_overtime") => {
+                    let regular = (after - before).clamp(0, p.minutes);
+                    (regular, p.minutes - regular)
+                }
+                _ => (p.minutes, 0),
+            };
+        let line = days.entry(p.date).or_insert_with(|| {
+            (
+                DayLine {
+                    date: p.date.format("%Y-%m-%d").to_string(),
+                    ..Default::default()
+                },
+                0,
+            )
+        });
         line.0.minutes += p.minutes;
         pay.minutes += p.minutes;
         match rate {
@@ -238,7 +293,10 @@ pub fn period_pay(segments: &[WorkSegment], period_start: DateTime<Utc>, period_
     }
     pay.leftover_units = (total % UNITS_PER_CENT) as i64;
     if pay.unpaid_minutes > 0 {
-        pay.notes.push(format!("{} minutes fell on days with no approved rate and are not paid", pay.unpaid_minutes));
+        pay.notes.push(format!(
+            "{} minutes fell on days with no approved rate and are not paid",
+            pay.unpaid_minutes
+        ));
     }
     pay
 }
@@ -246,8 +304,17 @@ pub fn period_pay(segments: &[WorkSegment], period_start: DateTime<Utc>, period_
 // ================================================================== loading
 
 /// Approved work of one payee that ends after `from`, split per local day.
-async fn approved_segments(pool: &SqlitePool, payee_id: &str, from: DateTime<Utc>, to: DateTime<Utc>) -> Result<Vec<WorkSegment>, sqlx::Error> {
-    let status = if super::mutant::on("void_pays") { "void" } else { timeclock::APPROVED };
+async fn approved_segments(
+    pool: &SqlitePool,
+    payee_id: &str,
+    from: DateTime<Utc>,
+    to: DateTime<Utc>,
+) -> Result<Vec<WorkSegment>, sqlx::Error> {
+    let status = if super::mutant::on("void_pays") {
+        "void"
+    } else {
+        timeclock::APPROVED
+    };
     let rows = sqlx::query_as::<_, EntryRow>(
         "SELECT * FROM time_entries WHERE payee_id = ? AND (status = ? OR status = 'approved') AND end_at > ? AND start_at < ? ORDER BY start_at, id",
     )
@@ -259,13 +326,21 @@ async fn approved_segments(pool: &SqlitePool, payee_id: &str, from: DateTime<Utc
     .await?;
     let mut out = Vec::new();
     for r in rows {
-        let (Some(s), Some(e)) = (r.start(), r.end()) else { continue };
+        let (Some(s), Some(e)) = (r.start(), r.end()) else {
+            continue;
+        };
         let Ok(tz) = shifts::parse_tz(&r.time_zone) else {
             warn!("time entry {} has an unreadable time zone; not paid", r.id);
             continue;
         };
         let segs = if super::mutant::on("no_midnight_split") {
-            vec![WorkSegment { entry_id: r.id.clone(), date: shifts::local_date(&tz, s), start: s, end: e, minutes: (e - s).num_seconds() / 60 }]
+            vec![WorkSegment {
+                entry_id: r.id.clone(),
+                date: shifts::local_date(&tz, s),
+                start: s,
+                end: e,
+                minutes: (e - s).num_seconds() / 60,
+            }]
         } else {
             entry_segments(&r.id, s, e, &tz)
         };
@@ -283,7 +358,8 @@ pub async fn compute(
     period: &PeriodSlot,
 ) -> Result<PeriodPay, sqlx::Error> {
     let rates = wages::approved_rates(pool, directory, policy, payee_id).await?;
-    let segments = approved_segments(pool, payee_id, period.start - Duration::days(8), period.end).await?;
+    let segments =
+        approved_segments(pool, payee_id, period.start - Duration::days(8), period.end).await?;
     Ok(period_pay(&segments, period.start, period.end, &rates))
 }
 
@@ -349,14 +425,20 @@ async fn write_period(
     .await?;
     if let Some(k) = clash {
         tx.rollback().await?;
-        return Ok(Err(format!("overlaps the already written period {k} (the pay schedule changed); settle it by hand")));
+        return Ok(Err(format!(
+            "overlaps the already written period {k} (the pay schedule changed); settle it by hand"
+        )));
     }
     let rows: Vec<(i64, i64)> = sqlx::query_as("SELECT seq, amount_cents FROM timesheet_rows WHERE payee_id = ? AND period_key = ? ORDER BY seq")
         .bind(&payee.row.id)
         .bind(&period.key)
         .fetch_all(&mut *tx)
         .await?;
-    let rows = if super::mutant::on("timesheet_twice") { Vec::new() } else { rows };
+    let rows = if super::mutant::on("timesheet_twice") {
+        Vec::new()
+    } else {
+        rows
+    };
     let carried: i64 = rows.iter().map(|r| r.1).sum();
     let (seq, amount) = if rows.is_empty() {
         if pay.minutes == 0 && pay.cents == 0 {
@@ -426,7 +508,11 @@ async fn write_period(
         .bind(&payee.row.id)
         .fetch_optional(&mut *tx)
         .await?;
-        let sref = if super::mutant::on("timesheet_twice") { format!("{}#{}", source_ref(&payee.row.id, &period.key, seq), id) } else { source_ref(&payee.row.id, &period.key, seq) };
+        let sref = if super::mutant::on("timesheet_twice") {
+            format!("{}#{}", source_ref(&payee.row.id, &period.key, seq), id)
+        } else {
+            source_ref(&payee.row.id, &period.key, seq)
+        };
         let src = SourceRow {
             source_kind: SOURCE_TIMESHEET,
             source_ref: sref,
@@ -436,7 +522,10 @@ async fn write_period(
             title: if seq == 0 {
                 format!("Timesheet {} ({})", period.key, payee.row.display_name)
             } else {
-                format!("Timesheet {} correction {} ({})", period.key, seq, payee.row.display_name)
+                format!(
+                    "Timesheet {} correction {} ({})",
+                    period.key, seq, payee.row.display_name
+                )
             },
             amount_cents: amount,
             currency: currency.to_string(),
@@ -447,7 +536,11 @@ async fn write_period(
             tx.rollback().await?;
             return Ok(Ok(None));
         };
-        sqlx::query("UPDATE timesheet_rows SET ledger_id = ? WHERE id = ?").bind(&lid).bind(&id).execute(&mut *tx).await?;
+        sqlx::query("UPDATE timesheet_rows SET ledger_id = ? WHERE id = ?")
+            .bind(&lid)
+            .bind(&id)
+            .execute(&mut *tx)
+            .await?;
         ledger_id = Some(lid);
     }
     crate::audit::append_in(
@@ -455,7 +548,11 @@ async fn write_period(
         &crate::audit::AuditEntry::new(
             crate::audit::ActorKind::System,
             "system:scheduler",
-            if seq == 0 { "timesheet.materialized" } else { "timesheet.correction" },
+            if seq == 0 {
+                "timesheet.materialized"
+            } else {
+                "timesheet.correction"
+            },
             format!("payee:{}", payee.row.id),
             json!({
                 "payee_id": payee.row.id,
@@ -480,7 +577,10 @@ async fn write_period(
 /// Called from the scheduler tick. Auto-approves closed entries when the policy says so, then
 /// writes what every ended period owes each payee with approved time. Creates ledger rows
 /// only; never transfers. Safe to call any number of times.
-pub async fn materialize_due(ctx: &ApiContext, now: DateTime<Utc>) -> Result<TimesheetReport, PayoutError> {
+pub async fn materialize_due(
+    ctx: &ApiContext,
+    now: DateTime<Utc>,
+) -> Result<TimesheetReport, PayoutError> {
     let pool = &ctx.pool;
     let mut report = TimesheetReport::default();
     let eff = policy::load_effective(pool, crate::auth::DEFAULT_ORG, &ctx.payments).await?;
@@ -493,7 +593,9 @@ pub async fn materialize_due(ctx: &ApiContext, now: DateTime<Utc>) -> Result<Tim
         .fetch_all(pool)
         .await?;
     for pid in payee_ids {
-        let Some(payee) = payees::load(pool, &pid).await? else { continue };
+        let Some(payee) = payees::load(pool, &pid).await? else {
+            continue;
+        };
         let entries: Vec<(String, String)> =
             sqlx::query_as("SELECT start_at, end_at FROM time_entries WHERE payee_id = ? AND status = 'approved' AND end_at > ? ORDER BY start_at")
                 .bind(&pid)
@@ -502,7 +604,9 @@ pub async fn materialize_due(ctx: &ApiContext, now: DateTime<Utc>) -> Result<Tim
                 .await?;
         let mut periods: BTreeMap<String, PeriodSlot> = BTreeMap::new();
         for (s, e) in entries {
-            let (Some(s), Some(e)) = (parse_db_time(&s), parse_db_time(&e)) else { continue };
+            let (Some(s), Some(e)) = (parse_db_time(&s), parse_db_time(&e)) else {
+                continue;
+            };
             for p in periods_overlapping(&eff.policy.schedule, s, e.max(s + Duration::seconds(1))) {
                 if p.end <= now && p.end > horizon {
                     periods.insert(p.key.clone(), p);
@@ -513,12 +617,18 @@ pub async fn materialize_due(ctx: &ApiContext, now: DateTime<Utc>) -> Result<Tim
             let pay = compute(pool, ctx.directory.as_ref(), &eff.policy, &pid, &period).await?;
             match write_period(pool, &payee, &eff.policy.currency, &period, &pay, now).await? {
                 Ok(Some((seq, lid))) => {
-                    info!("timesheet {} seq {} for payee {} written ({} cents)", period.key, seq, pid, pay.cents);
+                    info!(
+                        "timesheet {} seq {} for payee {} written ({} cents)",
+                        period.key, seq, pid, pay.cents
+                    );
                     if let (true, Some(l)) = (super::mutant::on("timesheet_pays_directly"), &lid) {
                         // The bug this guards: paying a timesheet row outside the payout path.
-                        let _ = ledger::approve(pool, ctx.stripe.as_ref(), l, "system:scheduler").await;
+                        let _ =
+                            ledger::approve(pool, ctx.stripe.as_ref(), l, "system:scheduler").await;
                     }
-                    report.written.push((pid.clone(), period.key.clone(), seq, lid));
+                    report
+                        .written
+                        .push((pid.clone(), period.key.clone(), seq, lid));
                 }
                 Ok(None) => {}
                 Err(why) => {
@@ -578,13 +688,17 @@ pub async fn timesheet(
         Some(p) => p,
         None => return Err(PayoutError::Invalid(vec!["payee is required".into()])),
     };
-    let p = payees::load(pool, &pid).await?.ok_or(PayoutError::NotFound("payee"))?;
+    let p = payees::load(pool, &pid)
+        .await?
+        .ok_or(PayoutError::NotFound("payee"))?;
     if p.row.org_id != principal.org_id {
         return Err(PayoutError::NotFound("payee"));
     }
     let eff = policy::load_effective(pool, &p.row.org_id, cfg).await?;
     let slot = match period.map(str::trim).filter(|s| !s.is_empty()) {
-        Some(k) => period_for(&eff.policy.schedule, k).map_err(|e| PayoutError::Invalid(vec![e]))?,
+        Some(k) => {
+            period_for(&eff.policy.schedule, k).map_err(|e| PayoutError::Invalid(vec![e]))?
+        }
         None => pay_period(&eff.policy.schedule, now),
     };
     let rows = sqlx::query_as::<_, EntryRow>(
@@ -597,14 +711,20 @@ pub async fn timesheet(
     .await?;
     let mut by_day: BTreeMap<NaiveDate, DayMinutes> = BTreeMap::new();
     for r in &rows {
-        let (Some(s), Some(e), Ok(tz)) = (r.start(), r.end(), shifts::parse_tz(&r.time_zone)) else { continue };
+        let (Some(s), Some(e), Ok(tz)) = (r.start(), r.end(), shifts::parse_tz(&r.time_zone))
+        else {
+            continue;
+        };
         let state = timeclock::entry_state(&r.status, e, now);
         if state == timeclock::VOID {
             continue;
         }
         let (s, e) = (s.max(slot.start), e.min(slot.end));
         for d in day_segments(s, e, &tz) {
-            let line = by_day.entry(d.date).or_insert_with(|| DayMinutes { date: d.date.format("%Y-%m-%d").to_string(), ..Default::default() });
+            let line = by_day.entry(d.date).or_insert_with(|| DayMinutes {
+                date: d.date.format("%Y-%m-%d").to_string(),
+                ..Default::default()
+            });
             match state {
                 timeclock::APPROVED => line.approved_minutes += d.minutes,
                 timeclock::CLOSED => line.closed_minutes += d.minutes,
@@ -622,8 +742,15 @@ pub async fn timesheet(
     .bind(&slot.key)
     .fetch_all(pool)
     .await?;
-    let tz_first = rows.first().and_then(|r| shifts::parse_tz(&r.time_zone).ok());
-    let local = |t: DateTime<Utc>| tz_first.as_ref().map(|tz| shifts::local_date(tz, t)).unwrap_or_else(|| t.date_naive());
+    let tz_first = rows
+        .first()
+        .and_then(|r| shifts::parse_tz(&r.time_zone).ok());
+    let local = |t: DateTime<Utc>| {
+        tz_first
+            .as_ref()
+            .map(|tz| shifts::local_date(tz, t))
+            .unwrap_or_else(|| t.date_naive())
+    };
     Ok(Timesheet {
         payee_id: pid,
         display_name: p.row.display_name.clone(),
@@ -633,8 +760,10 @@ pub async fn timesheet(
         currency: eff.policy.currency.clone(),
         entries: rows.into_iter().map(|r| timeclock::view(r, now)).collect(),
         minutes_by_day: by_day.into_values().collect(),
-        rate_cents_per_hour_at_start: rate_on(&rates, local(slot.start)).map(|r| r.rate_cents_per_hour),
-        rate_cents_per_hour_at_end: rate_on(&rates, local(slot.end - Duration::seconds(1))).map(|r| r.rate_cents_per_hour),
+        rate_cents_per_hour_at_start: rate_on(&rates, local(slot.start))
+            .map(|r| r.rate_cents_per_hour),
+        rate_cents_per_hour_at_end: rate_on(&rates, local(slot.end - Duration::seconds(1)))
+            .map(|r| r.rate_cents_per_hour),
         written_cents: written.iter().map(|r| r.amount_cents).sum(),
         rows: written,
         pay,

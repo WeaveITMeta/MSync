@@ -12,7 +12,9 @@ use tracing::{error, info, warn};
 /// Require `Authorization: Bearer <MSYNC_ADMIN_TOKEN>`. Disabled (503) if the token is unset.
 fn require_admin(req: &HttpRequest, state: &AppState) -> Result<(), HttpResponse> {
     let Some(expected) = state.payments.admin_token.as_deref() else {
-        return Err(HttpResponse::ServiceUnavailable().json(json!({"status": "error", "message": "admin API disabled (MSYNC_ADMIN_TOKEN not set)"})));
+        return Err(HttpResponse::ServiceUnavailable().json(
+            json!({"status": "error", "message": "admin API disabled (MSYNC_ADMIN_TOKEN not set)"}),
+        ));
     };
     let provided = req
         .headers()
@@ -23,22 +25,30 @@ fn require_admin(req: &HttpRequest, state: &AppState) -> Result<(), HttpResponse
     if token_matches(expected, provided.trim()) {
         Ok(())
     } else {
-        Err(HttpResponse::Unauthorized().json(json!({"status": "error", "message": "unauthorized"})))
+        Err(HttpResponse::Unauthorized()
+            .json(json!({"status": "error", "message": "unauthorized"})))
     }
 }
 
 fn ledger_error(e: LedgerError) -> HttpResponse {
     match e {
-        LedgerError::NotFound => HttpResponse::NotFound().json(json!({"status": "error", "message": e.to_string()})),
-        LedgerError::InvalidState(..) => HttpResponse::Conflict().json(json!({"status": "error", "message": e.to_string()})),
-        LedgerError::NotPayable(_) => HttpResponse::UnprocessableEntity().json(json!({"status": "error", "message": e.to_string()})),
+        LedgerError::NotFound => {
+            HttpResponse::NotFound().json(json!({"status": "error", "message": e.to_string()}))
+        }
+        LedgerError::InvalidState(..) => {
+            HttpResponse::Conflict().json(json!({"status": "error", "message": e.to_string()}))
+        }
+        LedgerError::NotPayable(_) => HttpResponse::UnprocessableEntity()
+            .json(json!({"status": "error", "message": e.to_string()})),
         LedgerError::Policy(_) => {
             error!("{}", e);
-            HttpResponse::ServiceUnavailable().json(json!({"status": "error", "message": "payout policy unavailable"}))
+            HttpResponse::ServiceUnavailable()
+                .json(json!({"status": "error", "message": "payout policy unavailable"}))
         }
         LedgerError::Db(err) => {
             error!("ledger db error: {}", err);
-            HttpResponse::InternalServerError().json(json!({"status": "error", "message": "database error"}))
+            HttpResponse::InternalServerError()
+                .json(json!({"status": "error", "message": "database error"}))
         }
     }
 }
@@ -50,8 +60,11 @@ pub struct OnboardRequest {
 
 fn onboard_error(e: OnboardError) -> HttpResponse {
     match e {
-        OnboardError::UnknownContributor => HttpResponse::NotFound().json(json!({"status": "error", "message": e.to_string()})),
-        OnboardError::NotLinked => HttpResponse::UnprocessableEntity().json(json!({"status": "error", "message": e.to_string()})),
+        OnboardError::UnknownContributor => {
+            HttpResponse::NotFound().json(json!({"status": "error", "message": e.to_string()}))
+        }
+        OnboardError::NotLinked => HttpResponse::UnprocessableEntity()
+            .json(json!({"status": "error", "message": e.to_string()})),
         OnboardError::Stripe(_) => {
             error!("{}", e);
             HttpResponse::BadGateway().json(json!({"status": "error", "message": e.to_string()}))
@@ -63,12 +76,25 @@ fn onboard_error(e: OnboardError) -> HttpResponse {
 /// Create (or reuse) a Stripe Express account for a linked contributor and return an onboarding link.
 /// Admin-token protected (server-to-server). Contributors use the /payout-setup Discord command.
 #[post("/api/payouts/onboard")]
-pub async fn onboard(req: HttpRequest, body: web::Json<OnboardRequest>, state: web::Data<AppState>) -> HttpResponse {
+pub async fn onboard(
+    req: HttpRequest,
+    body: web::Json<OnboardRequest>,
+    state: web::Data<AppState>,
+) -> HttpResponse {
     if let Err(r) = require_admin(&req, &state) {
         return r;
     }
-    match onboarding::onboarding_link_for_github(&state.db_pool, state.stripe.as_ref(), &state.payments, &body.github_username).await {
-        Ok(link) => HttpResponse::Ok().json(json!({"status": "success", "account_id": link.account_id, "onboarding_url": link.url})),
+    match onboarding::onboarding_link_for_github(
+        &state.db_pool,
+        state.stripe.as_ref(),
+        &state.payments,
+        &body.github_username,
+    )
+    .await
+    {
+        Ok(link) => HttpResponse::Ok().json(
+            json!({"status": "success", "account_id": link.account_id, "onboarding_url": link.url}),
+        ),
         Err(e) => onboard_error(e),
     }
 }
@@ -100,8 +126,16 @@ pub struct RefreshQuery {
 
 /// Stripe sends the contributor here when an onboarding link expired. Regenerates a link and redirects.
 #[get("/payouts/refresh")]
-pub async fn payouts_refresh(q: web::Query<RefreshQuery>, state: web::Data<AppState>) -> HttpResponse {
-    let expired = || html_page("Link expired", "This setup link is no longer valid. Run /payout-setup in Discord to get a new one.");
+pub async fn payouts_refresh(
+    q: web::Query<RefreshQuery>,
+    state: web::Data<AppState>,
+) -> HttpResponse {
+    let expired = || {
+        html_page(
+            "Link expired",
+            "This setup link is no longer valid. Run /payout-setup in Discord to get a new one.",
+        )
+    };
     let (Some(account), Some(sig)) = (q.account.as_deref(), q.sig.as_deref()) else {
         return expired();
     };
@@ -109,20 +143,26 @@ pub async fn payouts_refresh(q: web::Query<RefreshQuery>, state: web::Data<AppSt
         warn!("Rejected payout refresh with bad signature");
         return expired();
     }
-    let known: Option<i64> = sqlx::query_scalar("SELECT 1 FROM contributors WHERE stripe_account_id = ?")
-        .bind(account)
-        .fetch_optional(&state.db_pool)
-        .await
-        .ok()
-        .flatten();
+    let known: Option<i64> =
+        sqlx::query_scalar("SELECT 1 FROM contributors WHERE stripe_account_id = ?")
+            .bind(account)
+            .fetch_optional(&state.db_pool)
+            .await
+            .ok()
+            .flatten();
     if known.is_none() {
         return expired();
     }
     match onboarding::link_for_account(state.stripe.as_ref(), &state.payments, account).await {
-        Ok(url) => HttpResponse::Found().append_header(("Location", url)).finish(),
+        Ok(url) => HttpResponse::Found()
+            .append_header(("Location", url))
+            .finish(),
         Err(e) => {
             error!("refresh link failed: {}", e);
-            html_page("Something went wrong", "Could not create a new setup link. Please try /payout-setup in Discord.")
+            html_page(
+                "Something went wrong",
+                "Could not create a new setup link. Please try /payout-setup in Discord.",
+            )
         }
     }
 }
@@ -130,27 +170,52 @@ pub async fn payouts_refresh(q: web::Query<RefreshQuery>, state: web::Data<AppSt
 /// Stripe webhook receiver. Verifies Stripe-Signature with STRIPE_WEBHOOK_SECRET.
 /// Handles account.updated to record whether a connected account can receive transfers.
 #[post("/stripe/webhook")]
-pub async fn stripe_webhook(req: HttpRequest, body: web::Bytes, state: web::Data<AppState>) -> HttpResponse {
-    let secret = state.payments.stripe_webhook_secret.as_deref().unwrap_or("");
-    let header = req.headers().get("Stripe-Signature").and_then(|h| h.to_str().ok());
-    if !verify_stripe_signature(secret, &body, header, chrono::Utc::now().timestamp(), STRIPE_TOLERANCE_SECS) {
+pub async fn stripe_webhook(
+    req: HttpRequest,
+    body: web::Bytes,
+    state: web::Data<AppState>,
+) -> HttpResponse {
+    let secret = state
+        .payments
+        .stripe_webhook_secret
+        .as_deref()
+        .unwrap_or("");
+    let header = req
+        .headers()
+        .get("Stripe-Signature")
+        .and_then(|h| h.to_str().ok());
+    if !verify_stripe_signature(
+        secret,
+        &body,
+        header,
+        chrono::Utc::now().timestamp(),
+        STRIPE_TOLERANCE_SECS,
+    ) {
         warn!("Rejected Stripe webhook: invalid signature");
-        return HttpResponse::Unauthorized().json(json!({"status": "error", "message": "invalid signature"}));
+        return HttpResponse::Unauthorized()
+            .json(json!({"status": "error", "message": "invalid signature"}));
     }
     let event: serde_json::Value = match serde_json::from_slice(&body) {
         Ok(v) => v,
-        Err(_) => return HttpResponse::BadRequest().json(json!({"status": "error", "message": "invalid payload"})),
+        Err(_) => {
+            return HttpResponse::BadRequest()
+                .json(json!({"status": "error", "message": "invalid payload"}))
+        }
     };
 
     if event["type"] == "account.updated" {
         let obj = &event["data"]["object"];
         let Some(account_id) = obj["id"].as_str() else {
-            return HttpResponse::BadRequest().json(json!({"status": "error", "message": "missing account id"}));
+            return HttpResponse::BadRequest()
+                .json(json!({"status": "error", "message": "missing account id"}));
         };
         let enabled = account_transfers_enabled(obj);
         match ledger::update_account_status(&state.db_pool, account_id, enabled).await {
             Ok(n) => {
-                info!("account.updated {} transfers_enabled={} ({} contributor rows)", account_id, enabled, n);
+                info!(
+                    "account.updated {} transfers_enabled={} ({} contributor rows)",
+                    account_id, enabled, n
+                );
                 // Contract 13.1: a payout account's state change is audited. Stripe redelivers
                 // on failure, so a missed entry is logged, not answered with an error.
                 let e = crate::audit::AuditEntry::new(
@@ -185,7 +250,11 @@ pub struct LedgerQuery {
 }
 
 #[get("/api/admin/ledger")]
-pub async fn list_ledger(req: HttpRequest, q: web::Query<LedgerQuery>, state: web::Data<AppState>) -> HttpResponse {
+pub async fn list_ledger(
+    req: HttpRequest,
+    q: web::Query<LedgerQuery>,
+    state: web::Data<AppState>,
+) -> HttpResponse {
     if let Err(r) = require_admin(&req, &state) {
         return r;
     }
@@ -205,7 +274,12 @@ pub struct DecisionRequest {
 /// from the body). With a stored policy: counts as one approval by `admin-token` and pays only when
 /// the policy allows a single approver and every other payable check passes (contract section 8).
 #[post("/api/admin/ledger/{id}/approve")]
-pub async fn approve_entry(req: HttpRequest, path: web::Path<String>, body: web::Json<DecisionRequest>, state: web::Data<AppState>) -> HttpResponse {
+pub async fn approve_entry(
+    req: HttpRequest,
+    path: web::Path<String>,
+    body: web::Json<DecisionRequest>,
+    state: web::Data<AppState>,
+) -> HttpResponse {
     if let Err(r) = require_admin(&req, &state) {
         return r;
     }
@@ -220,20 +294,28 @@ pub async fn approve_entry(req: HttpRequest, path: web::Path<String>, body: web:
     )
     .await
     {
-        Ok(LegacyApproveOutcome::Transferred { entry }) => HttpResponse::Ok().json(json!({"status": "success", "entry": entry})),
-        Ok(LegacyApproveOutcome::ApprovalRecorded { entry, blockers }) => HttpResponse::Accepted().json(json!({
-            "status": "approval_recorded",
-            "approver": crate::auth::LEGACY_ADMIN_MEMBER,
-            "entry": entry,
-            "blockers": blockers,
-        })),
+        Ok(LegacyApproveOutcome::Transferred { entry }) => {
+            HttpResponse::Ok().json(json!({"status": "success", "entry": entry}))
+        }
+        Ok(LegacyApproveOutcome::ApprovalRecorded { entry, blockers }) => HttpResponse::Accepted()
+            .json(json!({
+                "status": "approval_recorded",
+                "approver": crate::auth::LEGACY_ADMIN_MEMBER,
+                "entry": entry,
+                "blockers": blockers,
+            })),
         Err(PayoutError::Ledger(e)) => ledger_error(e),
         Err(e) => super::api::payout_error(e),
     }
 }
 
 #[post("/api/admin/ledger/{id}/reject")]
-pub async fn reject_entry(req: HttpRequest, path: web::Path<String>, body: web::Json<DecisionRequest>, state: web::Data<AppState>) -> HttpResponse {
+pub async fn reject_entry(
+    req: HttpRequest,
+    path: web::Path<String>,
+    body: web::Json<DecisionRequest>,
+    state: web::Data<AppState>,
+) -> HttpResponse {
     if let Err(r) = require_admin(&req, &state) {
         return r;
     }

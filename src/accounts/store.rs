@@ -37,12 +37,27 @@ pub struct SignInResult {
 fn label_for(p: &ProviderProfile) -> String {
     match p.provider {
         Provider::Email => rules::mask_email(&p.subject),
-        Provider::Google => p.email.as_deref().map(rules::mask_email).unwrap_or_else(|| "Google account".into()),
-        _ => p.handle.clone().map(|h| format!("@{h}")).unwrap_or_else(|| p.subject.clone()),
+        Provider::Google => p
+            .email
+            .as_deref()
+            .map(rules::mask_email)
+            .unwrap_or_else(|| "Google account".into()),
+        _ => p
+            .handle
+            .clone()
+            .map(|h| format!("@{h}"))
+            .unwrap_or_else(|| p.subject.clone()),
     }
 }
 
-async fn event(conn: &mut SqliteConnection, account: &str, kind: &str, provider: Provider, label: &str, now: i64) -> Result<(), sqlx::Error> {
+async fn event(
+    conn: &mut SqliteConnection,
+    account: &str,
+    kind: &str,
+    provider: Provider,
+    label: &str,
+    now: i64,
+) -> Result<(), sqlx::Error> {
     sqlx::query("INSERT INTO identity_events (account_id, kind, provider, label, created_at) VALUES (?, ?, ?, ?, ?)")
         .bind(account)
         .bind(kind)
@@ -66,27 +81,33 @@ pub async fn complete_sign_in(
     now: i64,
 ) -> Result<SignInResult, AccountsError> {
     let mut tx = pool.begin().await?;
-    let owner: Option<(String, String)> = sqlx::query_as("SELECT id, account_id FROM identities WHERE provider = ? AND subject = ?")
-        .bind(profile.provider.as_str())
-        .bind(&profile.subject)
-        .fetch_optional(&mut *tx)
-        .await?;
+    let owner: Option<(String, String)> =
+        sqlx::query_as("SELECT id, account_id FROM identities WHERE provider = ? AND subject = ?")
+            .bind(profile.provider.as_str())
+            .bind(&profile.subject)
+            .fetch_optional(&mut *tx)
+            .await?;
     let email = profile.email.as_deref().and_then(rules::normalize_email);
     let email_verified = profile.email_verified && email.is_some();
-    let email_owners: Vec<String> = match (&email, email_verified) {
-        (Some(e), true) => sqlx::query_scalar("SELECT DISTINCT account_id FROM identities WHERE email = ? ORDER BY account_id")
+    let email_owners: Vec<String> =
+        match (&email, email_verified) {
+            (Some(e), true) => sqlx::query_scalar(
+                "SELECT DISTINCT account_id FROM identities WHERE email = ? ORDER BY account_id",
+            )
             .bind(e)
             .fetch_all(&mut *tx)
             .await?,
-        _ => Vec::new(),
-    };
+            _ => Vec::new(),
+        };
     let link_to_has_provider = match link_to {
         Some(a) => {
-            sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM identities WHERE account_id = ? AND provider = ?")
-                .bind(a)
-                .bind(profile.provider.as_str())
-                .fetch_one(&mut *tx)
-                .await?
+            sqlx::query_scalar::<_, i64>(
+                "SELECT COUNT(*) FROM identities WHERE account_id = ? AND provider = ?",
+            )
+            .bind(a)
+            .bind(profile.provider.as_str())
+            .fetch_one(&mut *tx)
+            .await?
                 > 0
         }
         None => false,
@@ -107,7 +128,15 @@ pub async fn complete_sign_in(
     let (account_id, identity_id) = match &decision {
         Decision::Refuse(r) => {
             if let Some(a) = link_to {
-                event(&mut tx, a, "refused", profile.provider, &format!("{label} ({})", r.code()), now).await?;
+                event(
+                    &mut tx,
+                    a,
+                    "refused",
+                    profile.provider,
+                    &format!("{label} ({})", r.code()),
+                    now,
+                )
+                .await?;
             }
             tx.commit().await?;
             return Err(AccountsError::Refused(*r));
@@ -131,8 +160,17 @@ pub async fn complete_sign_in(
             (account.clone(), identity_id)
         }
         Decision::AttachTo { account, auto } => {
-            let id = insert_identity(&mut tx, account, profile, stored_email.as_deref(), now).await?;
-            event(&mut tx, account, if *auto { "auto_linked" } else { "linked" }, profile.provider, &label, now).await?;
+            let id =
+                insert_identity(&mut tx, account, profile, stored_email.as_deref(), now).await?;
+            event(
+                &mut tx,
+                account,
+                if *auto { "auto_linked" } else { "linked" },
+                profile.provider,
+                &label,
+                now,
+            )
+            .await?;
             (account.clone(), id)
         }
         Decision::CreateAccount => {
@@ -148,7 +186,8 @@ pub async fn complete_sign_in(
                 .bind(now)
                 .execute(&mut *tx)
                 .await?;
-            let id = insert_identity(&mut tx, &account, profile, stored_email.as_deref(), now).await?;
+            let id =
+                insert_identity(&mut tx, &account, profile, stored_email.as_deref(), now).await?;
             event(&mut tx, &account, "created", profile.provider, &label, now).await?;
             (account, id)
         }
@@ -186,7 +225,11 @@ pub async fn complete_sign_in(
         propagate_chat_verification(&mut tx, &account_id).await?;
     }
     tx.commit().await?;
-    Ok(SignInResult { account_id, identity_id, decision })
+    Ok(SignInResult {
+        account_id,
+        identity_id,
+        decision,
+    })
 }
 
 async fn insert_identity(
@@ -242,7 +285,10 @@ const PROVEN_CONTRIBUTORS: &str = "
 /// Mark every chat binding verified whose chat account AND whose contributor's GitHub or GitLab
 /// login this account has both proven by OAuth. Proving only the chat account does not prove the
 /// login it was bound to by typing, so one side alone verifies nothing.
-async fn propagate_chat_verification(conn: &mut SqliteConnection, account_id: &str) -> Result<u64, sqlx::Error> {
+async fn propagate_chat_verification(
+    conn: &mut SqliteConnection,
+    account_id: &str,
+) -> Result<u64, sqlx::Error> {
     let sql = format!(
         "UPDATE chat_identities SET verified = 1
          WHERE verified = 0
@@ -253,12 +299,20 @@ async fn propagate_chat_verification(conn: &mut SqliteConnection, account_id: &s
                     AND i.subject = chat_identities.team_or_guild || ':' || chat_identities.user_id)))
            AND contributor_id IN ({PROVEN_CONTRIBUTORS})"
     );
-    Ok(sqlx::query(&sql).bind(account_id).execute(conn).await?.rows_affected())
+    Ok(sqlx::query(&sql)
+        .bind(account_id)
+        .execute(conn)
+        .await?
+        .rows_affected())
 }
 
 /// Is this GitHub or GitLab login proven by OAuth for an active account? For the payout
 /// eligibility check. The identity that proved it must still be linked.
-pub async fn login_is_verified(pool: &SqlitePool, provider: crate::foundry::FoundryProvider, login: &str) -> Result<bool, sqlx::Error> {
+pub async fn login_is_verified(
+    pool: &SqlitePool,
+    provider: crate::foundry::FoundryProvider,
+    login: &str,
+) -> Result<bool, sqlx::Error> {
     let n: i64 = sqlx::query_scalar(
         "SELECT COUNT(*) FROM account_verified_logins v
          JOIN identities i ON i.id = v.identity_id
@@ -342,7 +396,11 @@ pub async fn create_session(
 
 /// The session a cookie token names, checked against the database on every request: unknown,
 /// revoked, expired, or an account that is no longer active all mean no session.
-pub async fn session_for_token(pool: &SqlitePool, token: &str, now: i64) -> Result<Option<SessionInfo>, sqlx::Error> {
+pub async fn session_for_token(
+    pool: &SqlitePool,
+    token: &str,
+    now: i64,
+) -> Result<Option<SessionInfo>, sqlx::Error> {
     if !rules::token_shape_ok(token) {
         return Ok(None);
     }
@@ -353,14 +411,31 @@ pub async fn session_for_token(pool: &SqlitePool, token: &str, now: i64) -> Resu
         "SELECT s.id, s.account_id, s.identity_id FROM account_sessions s JOIN accounts a ON a.id = s.account_id
          WHERE s.id = ? AND s.revoked_at IS NULL AND s.expires_at > ? AND a.status = 'active'"
     };
-    let row: Option<(String, String, Option<String>)> =
-        sqlx::query_as(sql).bind(rules::token_hash(token)).bind(now).fetch_optional(pool).await?;
-    let Some((id, account_id, identity_id)) = row else { return Ok(None) };
-    sqlx::query("UPDATE account_sessions SET last_used_at = ? WHERE id = ?").bind(now).bind(&id).execute(pool).await?;
-    Ok(Some(SessionInfo { id, account_id, identity_id }))
+    let row: Option<(String, String, Option<String>)> = sqlx::query_as(sql)
+        .bind(rules::token_hash(token))
+        .bind(now)
+        .fetch_optional(pool)
+        .await?;
+    let Some((id, account_id, identity_id)) = row else {
+        return Ok(None);
+    };
+    sqlx::query("UPDATE account_sessions SET last_used_at = ? WHERE id = ?")
+        .bind(now)
+        .bind(&id)
+        .execute(pool)
+        .await?;
+    Ok(Some(SessionInfo {
+        id,
+        account_id,
+        identity_id,
+    }))
 }
 
-pub async fn revoke_session(pool: &SqlitePool, session_id: &str, now: i64) -> Result<(), sqlx::Error> {
+pub async fn revoke_session(
+    pool: &SqlitePool,
+    session_id: &str,
+    now: i64,
+) -> Result<(), sqlx::Error> {
     sqlx::query("UPDATE account_sessions SET revoked_at = COALESCE(revoked_at, ?) WHERE id = ?")
         .bind(now)
         .bind(session_id)
@@ -369,17 +444,28 @@ pub async fn revoke_session(pool: &SqlitePool, session_id: &str, now: i64) -> Re
     Ok(())
 }
 
-pub async fn revoke_all_sessions(pool: &SqlitePool, account_id: &str, now: i64) -> Result<u64, sqlx::Error> {
-    Ok(sqlx::query("UPDATE account_sessions SET revoked_at = ? WHERE account_id = ? AND revoked_at IS NULL")
-        .bind(now)
-        .bind(account_id)
-        .execute(pool)
-        .await?
-        .rows_affected())
+pub async fn revoke_all_sessions(
+    pool: &SqlitePool,
+    account_id: &str,
+    now: i64,
+) -> Result<u64, sqlx::Error> {
+    Ok(sqlx::query(
+        "UPDATE account_sessions SET revoked_at = ? WHERE account_id = ? AND revoked_at IS NULL",
+    )
+    .bind(now)
+    .bind(account_id)
+    .execute(pool)
+    .await?
+    .rows_affected())
 }
 
 /// Suspend an account: every session ends on the next request.
-pub async fn suspend_account(pool: &SqlitePool, account_id: &str, reason: &str, now: i64) -> Result<(), sqlx::Error> {
+pub async fn suspend_account(
+    pool: &SqlitePool,
+    account_id: &str,
+    reason: &str,
+    now: i64,
+) -> Result<(), sqlx::Error> {
     sqlx::query("UPDATE accounts SET status = 'suspended', suspended_at = ?, suspended_reason = ? WHERE id = ?")
         .bind(now)
         .bind(reason)
@@ -402,7 +488,12 @@ pub enum UnlinkError {
 
 /// Unlink one of the account's identities. Refused for the last one. Sessions opened with it
 /// are revoked, and a GitHub or GitLab login it proved is no longer verified.
-pub async fn unlink_identity(pool: &SqlitePool, account_id: &str, identity_id: &str, now: i64) -> Result<(), UnlinkError> {
+pub async fn unlink_identity(
+    pool: &SqlitePool,
+    account_id: &str,
+    identity_id: &str,
+    now: i64,
+) -> Result<(), UnlinkError> {
     let mut tx = pool.begin().await?;
     let owned: Vec<(String, String, Option<String>, String)> =
         sqlx::query_as("SELECT id, provider, handle, subject FROM identities WHERE account_id = ? ORDER BY created_at, id")
@@ -411,16 +502,34 @@ pub async fn unlink_identity(pool: &SqlitePool, account_id: &str, identity_id: &
             .await?;
     let ids: Vec<String> = owned.iter().map(|o| o.0.clone()).collect();
     rules::can_unlink(&ids, identity_id).map_err(UnlinkError::Refused)?;
-    let (_, provider, handle, subject) = owned.into_iter().find(|o| o.0 == identity_id).expect("checked by can_unlink");
-    sqlx::query("DELETE FROM identities WHERE id = ? AND account_id = ?").bind(identity_id).bind(account_id).execute(&mut *tx).await?;
-    sqlx::query("DELETE FROM account_verified_logins WHERE identity_id = ?").bind(identity_id).execute(&mut *tx).await?;
-    sqlx::query("UPDATE account_sessions SET revoked_at = ? WHERE identity_id = ? AND revoked_at IS NULL")
-        .bind(now)
+    let (_, provider, handle, subject) = owned
+        .into_iter()
+        .find(|o| o.0 == identity_id)
+        .expect("checked by can_unlink");
+    sqlx::query("DELETE FROM identities WHERE id = ? AND account_id = ?")
+        .bind(identity_id)
+        .bind(account_id)
+        .execute(&mut *tx)
+        .await?;
+    sqlx::query("DELETE FROM account_verified_logins WHERE identity_id = ?")
         .bind(identity_id)
         .execute(&mut *tx)
         .await?;
+    sqlx::query(
+        "UPDATE account_sessions SET revoked_at = ? WHERE identity_id = ? AND revoked_at IS NULL",
+    )
+    .bind(now)
+    .bind(identity_id)
+    .execute(&mut *tx)
+    .await?;
     let p = Provider::parse(&provider).unwrap_or(Provider::Email);
-    let label = handle.map(|h| format!("@{h}")).unwrap_or_else(|| if p == Provider::Email { rules::mask_email(&subject) } else { subject });
+    let label = handle.map(|h| format!("@{h}")).unwrap_or_else(|| {
+        if p == Provider::Email {
+            rules::mask_email(&subject)
+        } else {
+            subject
+        }
+    });
     event(&mut tx, account_id, "unlinked", p, &label, now).await?;
     tx.commit().await?;
     Ok(())
@@ -460,11 +569,23 @@ pub struct EventView {
 
 pub async fn account(pool: &SqlitePool, id: &str) -> Result<Option<AccountRow>, sqlx::Error> {
     let r: Option<(String, String, String, i64)> =
-        sqlx::query_as("SELECT id, display_name, status, created_at FROM accounts WHERE id = ?").bind(id).fetch_optional(pool).await?;
-    Ok(r.map(|(id, display_name, status, created_at)| AccountRow { id, display_name, status, created_at }))
+        sqlx::query_as("SELECT id, display_name, status, created_at FROM accounts WHERE id = ?")
+            .bind(id)
+            .fetch_optional(pool)
+            .await?;
+    Ok(r.map(|(id, display_name, status, created_at)| AccountRow {
+        id,
+        display_name,
+        status,
+        created_at,
+    }))
 }
 
-pub async fn identities_of(pool: &SqlitePool, account_id: &str, current: Option<&str>) -> Result<Vec<IdentityView>, sqlx::Error> {
+pub async fn identities_of(
+    pool: &SqlitePool,
+    account_id: &str,
+    current: Option<&str>,
+) -> Result<Vec<IdentityView>, sqlx::Error> {
     #[allow(clippy::type_complexity)]
     let rows: Vec<(String, String, Option<String>, Option<String>, Option<i64>, i64)> = sqlx::query_as(
         "SELECT id, provider, handle, email, verified_at, last_login_at FROM identities WHERE account_id = ? ORDER BY created_at, id",
@@ -474,15 +595,17 @@ pub async fn identities_of(pool: &SqlitePool, account_id: &str, current: Option<
     .await?;
     Ok(rows
         .into_iter()
-        .map(|(id, provider, handle, email, verified_at, last_login_at)| IdentityView {
-            current: current == Some(id.as_str()),
-            id,
-            provider,
-            handle,
-            email: email.as_deref().map(rules::mask_email),
-            verified: verified_at.is_some(),
-            last_login_at,
-        })
+        .map(
+            |(id, provider, handle, email, verified_at, last_login_at)| IdentityView {
+                current: current == Some(id.as_str()),
+                id,
+                provider,
+                handle,
+                email: email.as_deref().map(rules::mask_email),
+                verified: verified_at.is_some(),
+                last_login_at,
+            },
+        )
         .collect())
 }
 
@@ -493,7 +616,15 @@ pub async fn events_of(pool: &SqlitePool, account_id: &str) -> Result<Vec<EventV
     .bind(account_id)
     .fetch_all(pool)
     .await?;
-    Ok(rows.into_iter().map(|(kind, provider, label, at)| EventView { kind, provider, label, at }).collect())
+    Ok(rows
+        .into_iter()
+        .map(|(kind, provider, label, at)| EventView {
+            kind,
+            provider,
+            label,
+            at,
+        })
+        .collect())
 }
 
 // ---------------------------------------------------------------- CRA member
@@ -503,7 +634,11 @@ pub async fn events_of(pool: &SqlitePool, account_id: &str) -> Result<Vec<EventV
 /// only in the organization's `[slack]` team). Two different members on the same level is
 /// ambiguous and resolves to nobody (fail closed). Rank and permissions then come from the
 /// snapshot; nothing is read from an identity row but who the person is.
-pub async fn member_for_account(pool: &SqlitePool, snap: &crate::cra::Snapshot, account_id: &str) -> Result<Option<String>, sqlx::Error> {
+pub async fn member_for_account(
+    pool: &SqlitePool,
+    snap: &crate::cra::Snapshot,
+    account_id: &str,
+) -> Result<Option<String>, sqlx::Error> {
     let logins: Vec<(String, String)> = sqlx::query_as(
         "SELECT v.provider, v.login FROM account_verified_logins v JOIN identities i ON i.id = v.identity_id WHERE v.account_id = ?",
     )
@@ -515,7 +650,13 @@ pub async fn member_for_account(pool: &SqlitePool, snap: &crate::cra::Snapshot, 
             .bind(account_id)
             .fetch_all(pool)
             .await?;
-    let one = |ids: std::collections::BTreeSet<String>| if ids.len() == 1 { ids.into_iter().next() } else { None };
+    let one = |ids: std::collections::BTreeSet<String>| {
+        if ids.len() == 1 {
+            ids.into_iter().next()
+        } else {
+            None
+        }
+    };
 
     let mut code_host = std::collections::BTreeSet::new();
     for m in &snap.members.members {
@@ -605,7 +746,11 @@ pub async fn take_login_state(
     if !rules::token_shape_ok(state) {
         return Ok(None);
     }
-    let browser = if mutant::on("state_ignore_browser") { "%".to_string() } else { rules::token_hash(browser_token) };
+    let browser = if mutant::on("state_ignore_browser") {
+        "%".to_string()
+    } else {
+        rules::token_hash(browser_token)
+    };
     let row: Option<(String, Option<String>, Option<String>)> = sqlx::query_as(
         "UPDATE oauth_login_states SET used_at = ?
          WHERE state_hash = ? AND used_at IS NULL AND expires_at > ? AND provider = ? AND browser_hash LIKE ?
@@ -618,13 +763,24 @@ pub async fn take_login_state(
     .bind(browser)
     .fetch_optional(pool)
     .await?;
-    Ok(row.map(|(pkce_verifier, link_account_id, next_path)| LoginState { pkce_verifier, link_account_id, next_path }))
+    Ok(
+        row.map(|(pkce_verifier, link_account_id, next_path)| LoginState {
+            pkce_verifier,
+            link_account_id,
+            next_path,
+        }),
+    )
 }
 
 // ---------------------------------------------------------------- email links
 
 /// Increment a fixed-window counter and return the count including this request.
-pub async fn bump_rate(pool: &SqlitePool, key: &str, window_secs: i64, now: i64) -> Result<u32, sqlx::Error> {
+pub async fn bump_rate(
+    pool: &SqlitePool,
+    key: &str,
+    window_secs: i64,
+    now: i64,
+) -> Result<u32, sqlx::Error> {
     let n: i64 = sqlx::query_scalar(
         "INSERT INTO auth_rate (key, count, reset_at) VALUES (?1, 1, ?2 + ?3)
          ON CONFLICT (key) DO UPDATE SET
@@ -643,7 +799,10 @@ pub async fn bump_rate(pool: &SqlitePool, key: &str, window_secs: i64, now: i64)
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum EmailRequest {
     /// A link was created (and handed to the mail sender).
-    Sent { token: String, email: String },
+    Sent {
+        token: String,
+        email: String,
+    },
     Invalid,
     Limited(rules::RateDecision),
 }
@@ -656,9 +815,17 @@ pub async fn create_email_token(
     link_to: Option<&str>,
     now: i64,
 ) -> Result<EmailRequest, AccountsError> {
-    let Some(email) = rules::normalize_email(raw_email) else { return Ok(EmailRequest::Invalid) };
+    let Some(email) = rules::normalize_email(raw_email) else {
+        return Ok(EmailRequest::Invalid);
+    };
     let ip_count = bump_rate(pool, &format!("ip:{ip}"), rules::PER_IP.window_secs, now).await?;
-    let email_count = bump_rate(pool, &rules::email_rate_key(&email), rules::PER_EMAIL.window_secs, now).await?;
+    let email_count = bump_rate(
+        pool,
+        &rules::email_rate_key(&email),
+        rules::PER_EMAIL.window_secs,
+        now,
+    )
+    .await?;
     match rules::rate_decision(ip_count, email_count) {
         rules::RateDecision::Allowed => {}
         d => return Ok(EmailRequest::Limited(d)),
@@ -679,20 +846,29 @@ pub async fn create_email_token(
 }
 
 /// Where an email token stands, without using it (mail scanners fetch links before people do).
-pub async fn email_token_state(pool: &SqlitePool, token: &str, now: i64) -> Result<Option<(rules::TokenState, String)>, sqlx::Error> {
+pub async fn email_token_state(
+    pool: &SqlitePool,
+    token: &str,
+    now: i64,
+) -> Result<Option<(rules::TokenState, String)>, sqlx::Error> {
     if !rules::token_shape_ok(token) {
         return Ok(None);
     }
-    let r: Option<(String, i64, Option<i64>)> = sqlx::query_as("SELECT email, expires_at, used_at FROM email_tokens WHERE token_hash = ?")
-        .bind(rules::token_hash(token))
-        .fetch_optional(pool)
-        .await?;
+    let r: Option<(String, i64, Option<i64>)> =
+        sqlx::query_as("SELECT email, expires_at, used_at FROM email_tokens WHERE token_hash = ?")
+            .bind(rules::token_hash(token))
+            .fetch_optional(pool)
+            .await?;
     Ok(r.map(|(e, exp, used)| (rules::token_state(exp, used, now), e)))
 }
 
 /// Use an email token: single use and unexpired, enforced in the same statement.
 /// Returns the address and the account it was requested to link to, if any.
-pub async fn consume_email_token(pool: &SqlitePool, token: &str, now: i64) -> Result<Option<(String, Option<String>)>, sqlx::Error> {
+pub async fn consume_email_token(
+    pool: &SqlitePool,
+    token: &str,
+    now: i64,
+) -> Result<Option<(String, Option<String>)>, sqlx::Error> {
     if !rules::token_shape_ok(token) {
         return Ok(None);
     }

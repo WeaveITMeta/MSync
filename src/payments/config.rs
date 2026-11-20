@@ -42,7 +42,9 @@ impl PaymentConfig {
     /// [`crate::config::env_var_with`]: the `MSYNC_` name wins, its old twin is the fallback.
     pub fn from_lookup<F: Fn(&str) -> Option<String>>(get: F) -> Self {
         let non_empty = |k: &str| {
-            crate::config::env_var_with(k, &get).map(|v| v.trim().to_string()).filter(|v| !v.is_empty())
+            crate::config::env_var_with(k, &get)
+                .map(|v| v.trim().to_string())
+                .filter(|v| !v.is_empty())
         };
 
         let branches: Vec<String> = non_empty("MSYNC_PAY_BRANCHES")
@@ -75,7 +77,9 @@ impl PaymentConfig {
             max_cents: non_empty("MSYNC_PAY_MAX_CENTS")
                 .and_then(|v| v.parse().ok())
                 .unwrap_or(10_000),
-            currency: non_empty("MSYNC_PAY_CURRENCY").unwrap_or_else(|| "usd".to_string()).to_lowercase(),
+            currency: non_empty("MSYNC_PAY_CURRENCY")
+                .unwrap_or_else(|| "usd".to_string())
+                .to_lowercase(),
             stripe_secret_key: non_empty("STRIPE_SECRET_KEY"),
             stripe_webhook_secret: non_empty("STRIPE_WEBHOOK_SECRET"),
             admin_token: non_empty("MSYNC_ADMIN_TOKEN"),

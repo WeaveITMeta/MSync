@@ -19,11 +19,23 @@ pub enum Provider {
 }
 
 impl Provider {
-    pub const ALL: [Provider; 6] =
-        [Provider::Github, Provider::Gitlab, Provider::Discord, Provider::Slack, Provider::Google, Provider::Email];
+    pub const ALL: [Provider; 6] = [
+        Provider::Github,
+        Provider::Gitlab,
+        Provider::Discord,
+        Provider::Slack,
+        Provider::Google,
+        Provider::Email,
+    ];
 
     /// The OAuth providers (everything but email links).
-    pub const OAUTH: [Provider; 5] = [Provider::Github, Provider::Gitlab, Provider::Discord, Provider::Slack, Provider::Google];
+    pub const OAUTH: [Provider; 5] = [
+        Provider::Github,
+        Provider::Gitlab,
+        Provider::Discord,
+        Provider::Slack,
+        Provider::Google,
+    ];
 
     pub fn as_str(self) -> &'static str {
         match self {
@@ -54,7 +66,10 @@ impl Provider {
     /// At most one identity of this provider per account (these carry merit, payout and
     /// chat attribution). Google and email may have several.
     pub fn one_per_account(self) -> bool {
-        matches!(self, Provider::Github | Provider::Gitlab | Provider::Discord | Provider::Slack)
+        matches!(
+            self,
+            Provider::Github | Provider::Gitlab | Provider::Discord | Provider::Slack
+        )
     }
 }
 
@@ -85,7 +100,10 @@ pub enum Decision {
     /// The identity is already this account's: sign in (on an explicit link, nothing to do).
     SignIn(String),
     /// Add the identity to this account. `auto` is a match on a verified email.
-    AttachTo { account: String, auto: bool },
+    AttachTo {
+        account: String,
+        auto: bool,
+    },
     /// A new account with this identity as its first.
     CreateAccount,
     Refuse(Refusal),
@@ -120,11 +138,19 @@ pub fn decide(f: &Facts<'_>) -> Decision {
     if let Some(me) = f.link_to {
         return match f.owner {
             Some(o) if o == me => Decision::SignIn(me.to_string()),
-            Some(_) if !mutant::on("decide_link_takes_owned") => Decision::Refuse(Refusal::OtherAccount),
-            _ if f.provider.one_per_account() && f.link_to_has_provider && !mutant::on("decide_second_provider") => {
+            Some(_) if !mutant::on("decide_link_takes_owned") => {
+                Decision::Refuse(Refusal::OtherAccount)
+            }
+            _ if f.provider.one_per_account()
+                && f.link_to_has_provider
+                && !mutant::on("decide_second_provider") =>
+            {
                 Decision::Refuse(Refusal::SecondOfProvider)
             }
-            _ => Decision::AttachTo { account: me.to_string(), auto: false },
+            _ => Decision::AttachTo {
+                account: me.to_string(),
+                auto: false,
+            },
         };
     }
     if let Some(o) = f.owner {
@@ -134,9 +160,15 @@ pub fn decide(f: &Facts<'_>) -> Decision {
     }
     let verified = f.email_verified || mutant::on("decide_ignore_verified");
     match (f.email, verified, f.email_owners) {
-        (Some(_), true, [only]) => Decision::AttachTo { account: only.clone(), auto: true },
+        (Some(_), true, [only]) => Decision::AttachTo {
+            account: only.clone(),
+            auto: true,
+        },
         (Some(_), true, [first, ..]) if mutant::on("decide_ambiguous_first") => {
-            Decision::AttachTo { account: first.clone(), auto: true }
+            Decision::AttachTo {
+                account: first.clone(),
+                auto: true,
+            }
         }
         _ => Decision::CreateAccount,
     }
@@ -257,7 +289,9 @@ pub fn token_state(expires_at: i64, used_at: Option<i64>, now: i64) -> TokenStat
 
 /// 43 base64url characters, or it never reaches the database.
 pub fn token_shape_ok(t: &str) -> bool {
-    t.len() == TOKEN_LEN && t.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_')
+    t.len() == TOKEN_LEN
+        && t.bytes()
+            .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_')
 }
 
 pub fn sha256_hex(s: &str) -> String {
@@ -309,8 +343,14 @@ pub struct RateLimit {
     pub window_secs: i64,
 }
 
-pub const PER_EMAIL: RateLimit = RateLimit { max: 3, window_secs: 15 * 60 };
-pub const PER_IP: RateLimit = RateLimit { max: 10, window_secs: 60 * 60 };
+pub const PER_EMAIL: RateLimit = RateLimit {
+    max: 3,
+    window_secs: 15 * 60,
+};
+pub const PER_IP: RateLimit = RateLimit {
+    max: 10,
+    window_secs: 60 * 60,
+};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum RateDecision {
@@ -321,7 +361,11 @@ pub enum RateDecision {
 
 /// The counts INCLUDE this request (the store increments first, then asks).
 pub fn rate_decision(ip_count: u32, email_count: u32) -> RateDecision {
-    let (ip_max, email_max) = if mutant::on("rate_unlimited") { (u32::MAX, u32::MAX) } else { (PER_IP.max, PER_EMAIL.max) };
+    let (ip_max, email_max) = if mutant::on("rate_unlimited") {
+        (u32::MAX, u32::MAX)
+    } else {
+        (PER_IP.max, PER_EMAIL.max)
+    };
     if ip_count > ip_max {
         RateDecision::TooManyFromIp
     } else if email_count > email_max {
@@ -366,7 +410,11 @@ mod tests {
     }
 
     fn verified<'a>(f: Facts<'a>, email: &'a str) -> Facts<'a> {
-        Facts { email: Some(email), email_verified: true, ..f }
+        Facts {
+            email: Some(email),
+            email_verified: true,
+            ..f
+        }
     }
 
     fn one(a: &str) -> Vec<String> {
@@ -376,11 +424,20 @@ mod tests {
     #[test]
     fn existing_identity_signs_in_to_its_account() {
         for p in Provider::ALL {
-            let f = Facts { owner: Some("acc_a"), ..facts(p, &[]) };
+            let f = Facts {
+                owner: Some("acc_a"),
+                ..facts(p, &[])
+            };
             assert_eq!(decide(&f), Decision::SignIn("acc_a".into()), "{p:?}");
             // Even when a verified email points elsewhere: the identity wins.
             let others = one("acc_b");
-            let f = verified(Facts { owner: Some("acc_a"), ..facts(p, &others) }, "a@x.io");
+            let f = verified(
+                Facts {
+                    owner: Some("acc_a"),
+                    ..facts(p, &others)
+                },
+                "a@x.io",
+            );
             assert_eq!(decide(&f), Decision::SignIn("acc_a".into()), "{p:?}");
         }
     }
@@ -390,7 +447,14 @@ mod tests {
         let owners = one("acc_a");
         for p in Provider::ALL {
             let f = verified(facts(p, &owners), "jo@x.io");
-            assert_eq!(decide(&f), Decision::AttachTo { account: "acc_a".into(), auto: true }, "{p:?}");
+            assert_eq!(
+                decide(&f),
+                Decision::AttachTo {
+                    account: "acc_a".into(),
+                    auto: true
+                },
+                "{p:?}"
+            );
         }
     }
 
@@ -399,7 +463,11 @@ mod tests {
         let owners = one("acc_a");
         for p in Provider::ALL {
             // The provider sent an address but did not call it verified.
-            let f = Facts { email: Some("jo@x.io"), email_verified: false, ..facts(p, &owners) };
+            let f = Facts {
+                email: Some("jo@x.io"),
+                email_verified: false,
+                ..facts(p, &owners)
+            };
             assert_eq!(decide(&f), Decision::CreateAccount, "{p:?}");
             // No address at all.
             assert_eq!(decide(&facts(p, &owners)), Decision::CreateAccount, "{p:?}");
@@ -410,10 +478,21 @@ mod tests {
     fn discord_and_slack_link_by_email_only_when_the_provider_marks_it_verified() {
         let owners = one("acc_a");
         for p in [Discord, Slack] {
-            let unverified = Facts { email: Some("jo@x.io"), email_verified: false, ..facts(p, &owners) };
+            let unverified = Facts {
+                email: Some("jo@x.io"),
+                email_verified: false,
+                ..facts(p, &owners)
+            };
             assert_eq!(decide(&unverified), Decision::CreateAccount, "{p:?}");
             let marked = verified(facts(p, &owners), "jo@x.io");
-            assert_eq!(decide(&marked), Decision::AttachTo { account: "acc_a".into(), auto: true }, "{p:?}");
+            assert_eq!(
+                decide(&marked),
+                Decision::AttachTo {
+                    account: "acc_a".into(),
+                    auto: true
+                },
+                "{p:?}"
+            );
         }
     }
 
@@ -421,47 +500,106 @@ mod tests {
     fn ambiguous_or_unknown_email_creates_an_account() {
         let two = vec!["acc_a".to_string(), "acc_b".to_string()];
         for p in Provider::ALL {
-            assert_eq!(decide(&verified(facts(p, &two), "jo@x.io")), Decision::CreateAccount, "{p:?}");
-            assert_eq!(decide(&verified(facts(p, &[]), "jo@x.io")), Decision::CreateAccount, "{p:?}");
+            assert_eq!(
+                decide(&verified(facts(p, &two), "jo@x.io")),
+                Decision::CreateAccount,
+                "{p:?}"
+            );
+            assert_eq!(
+                decide(&verified(facts(p, &[]), "jo@x.io")),
+                Decision::CreateAccount,
+                "{p:?}"
+            );
         }
     }
 
     #[test]
     fn explicit_link_attaches_to_the_signed_in_account() {
         for p in Provider::ALL {
-            let f = Facts { link_to: Some("acc_me"), ..facts(p, &[]) };
-            assert_eq!(decide(&f), Decision::AttachTo { account: "acc_me".into(), auto: false }, "{p:?}");
+            let f = Facts {
+                link_to: Some("acc_me"),
+                ..facts(p, &[])
+            };
+            assert_eq!(
+                decide(&f),
+                Decision::AttachTo {
+                    account: "acc_me".into(),
+                    auto: false
+                },
+                "{p:?}"
+            );
             // An explicit link ignores email matches elsewhere.
             let others = one("acc_other");
-            let f = verified(Facts { link_to: Some("acc_me"), ..facts(p, &others) }, "jo@x.io");
-            assert_eq!(decide(&f), Decision::AttachTo { account: "acc_me".into(), auto: false }, "{p:?}");
+            let f = verified(
+                Facts {
+                    link_to: Some("acc_me"),
+                    ..facts(p, &others)
+                },
+                "jo@x.io",
+            );
+            assert_eq!(
+                decide(&f),
+                Decision::AttachTo {
+                    account: "acc_me".into(),
+                    auto: false
+                },
+                "{p:?}"
+            );
         }
     }
 
     #[test]
     fn explicit_link_refuses_an_identity_of_another_account() {
         for p in Provider::ALL {
-            let f = Facts { link_to: Some("acc_me"), owner: Some("acc_other"), ..facts(p, &[]) };
+            let f = Facts {
+                link_to: Some("acc_me"),
+                owner: Some("acc_other"),
+                ..facts(p, &[])
+            };
             assert_eq!(decide(&f), Decision::Refuse(Refusal::OtherAccount), "{p:?}");
         }
     }
 
     #[test]
     fn explicit_link_of_an_own_identity_is_a_no_op() {
-        let f = Facts { link_to: Some("acc_me"), owner: Some("acc_me"), link_to_has_provider: true, ..facts(Github, &[]) };
+        let f = Facts {
+            link_to: Some("acc_me"),
+            owner: Some("acc_me"),
+            link_to_has_provider: true,
+            ..facts(Github, &[])
+        };
         assert_eq!(decide(&f), Decision::SignIn("acc_me".into()));
     }
 
     #[test]
     fn one_code_host_and_chat_identity_per_provider_per_account() {
         for p in [Github, Gitlab, Discord, Slack] {
-            let f = Facts { link_to: Some("acc_me"), link_to_has_provider: true, ..facts(p, &[]) };
-            assert_eq!(decide(&f), Decision::Refuse(Refusal::SecondOfProvider), "{p:?}");
+            let f = Facts {
+                link_to: Some("acc_me"),
+                link_to_has_provider: true,
+                ..facts(p, &[])
+            };
+            assert_eq!(
+                decide(&f),
+                Decision::Refuse(Refusal::SecondOfProvider),
+                "{p:?}"
+            );
         }
         // A second Google or email address is fine.
         for p in [Google, Email] {
-            let f = Facts { link_to: Some("acc_me"), link_to_has_provider: true, ..facts(p, &[]) };
-            assert_eq!(decide(&f), Decision::AttachTo { account: "acc_me".into(), auto: false }, "{p:?}");
+            let f = Facts {
+                link_to: Some("acc_me"),
+                link_to_has_provider: true,
+                ..facts(p, &[])
+            };
+            assert_eq!(
+                decide(&f),
+                Decision::AttachTo {
+                    account: "acc_me".into(),
+                    auto: false
+                },
+                "{p:?}"
+            );
         }
     }
 
@@ -477,8 +615,14 @@ mod tests {
 
     #[test]
     fn normalizes_addresses() {
-        assert_eq!(normalize_email("  Jo.Doe@Example.COM \n").as_deref(), Some("jo.doe@example.com"));
-        assert_eq!(normalize_email("a+tag@sub.example.io").as_deref(), Some("a+tag@sub.example.io"));
+        assert_eq!(
+            normalize_email("  Jo.Doe@Example.COM \n").as_deref(),
+            Some("jo.doe@example.com")
+        );
+        assert_eq!(
+            normalize_email("a+tag@sub.example.io").as_deref(),
+            Some("a+tag@sub.example.io")
+        );
         for bad in [
             "",
             "   ",
@@ -510,11 +654,18 @@ mod tests {
 
     #[test]
     fn tokens_hash_and_expire() {
-        assert_eq!(token_hash("abc"), "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad");
+        assert_eq!(
+            token_hash("abc"),
+            "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"
+        );
         assert_ne!(token_hash("abc"), token_hash("abd"));
         let now = 1_000_000;
         assert_eq!(token_state(now + 1, None, now), TokenState::Valid);
-        assert_eq!(token_state(now, None, now), TokenState::Expired, "expiry is exclusive");
+        assert_eq!(
+            token_state(now, None, now),
+            TokenState::Expired,
+            "expiry is exclusive"
+        );
         assert_eq!(token_state(now - 1, None, now), TokenState::Expired);
         assert_eq!(token_state(now + 1, Some(now - 5), now), TokenState::Used);
         assert_eq!(token_state(now - 1, Some(now - 5), now), TokenState::Used);
@@ -551,8 +702,18 @@ mod tests {
 
     #[test]
     fn next_paths_stay_on_this_site() {
-        assert_eq!(safe_next(Some("/oauth/authorize?client_id=x")), "/oauth/authorize?client_id=x");
-        for bad in ["https://evil.example", "//evil.example", "/\\evil", "evil", "/a\nb", ""] {
+        assert_eq!(
+            safe_next(Some("/oauth/authorize?client_id=x")),
+            "/oauth/authorize?client_id=x"
+        );
+        for bad in [
+            "https://evil.example",
+            "//evil.example",
+            "/\\evil",
+            "evil",
+            "/a\nb",
+            "",
+        ] {
             assert_eq!(safe_next(Some(bad)), "/account", "{bad:?}");
         }
         assert_eq!(safe_next(None), "/account");

@@ -113,7 +113,9 @@ pub fn hash_token(token: &str) -> String {
 }
 
 fn is_lower_hex(s: &str, len: usize) -> bool {
-    s.len() == len && s.bytes().all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+    s.len() == len
+        && s.bytes()
+            .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
 }
 
 /// Split `msync_<id>_<secret>` into (id, secret); None if the shape is wrong.
@@ -164,7 +166,11 @@ pub async fn authenticate(req: &HttpRequest, pool: &SqlitePool) -> Result<Princi
 }
 
 /// Authenticate a raw token string at time `now`.
-pub async fn authenticate_token(pool: &SqlitePool, token: &str, now: DateTime<Utc>) -> Result<Principal, AuthError> {
+pub async fn authenticate_token(
+    pool: &SqlitePool,
+    token: &str,
+    now: DateTime<Utc>,
+) -> Result<Principal, AuthError> {
     let Some((id, _secret)) = parse_token(token) else {
         return Err(AuthError::Malformed);
     };
@@ -178,7 +184,9 @@ pub async fn authenticate_token(pool: &SqlitePool, token: &str, now: DateTime<Ut
     let presented = hash_token(token);
     let Some(row) = row else {
         // Same work as a known id so timing does not reveal which ids exist.
-        let _ = presented.as_bytes().ct_eq(hash_token("msync_unknown").as_bytes());
+        let _ = presented
+            .as_bytes()
+            .ct_eq(hash_token("msync_unknown").as_bytes());
         return Err(AuthError::UnknownToken);
     };
     if !bool::from(presented.as_bytes().ct_eq(row.token_hash.as_bytes())) {
@@ -258,7 +266,8 @@ pub enum TokenError {
 fn valid_member_id(m: &str) -> bool {
     !m.is_empty()
         && m.len() <= 64
-        && m.bytes().all(|b| b.is_ascii_alphanumeric() || matches!(b, b'-' | b'_' | b'.' | b':'))
+        && m.bytes()
+            .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'-' | b'_' | b'.' | b':'))
 }
 
 /// May `creator` act on tokens of `target_member`? Self always; another member only with
@@ -284,14 +293,20 @@ pub async fn create_token(
 ) -> Result<CreatedToken, TokenError> {
     let label = req.label.trim().to_string();
     if label.is_empty() || label.len() > 100 {
-        return Err(TokenError::Invalid("label must be 1..=100 characters".into()));
+        return Err(TokenError::Invalid(
+            "label must be 1..=100 characters".into(),
+        ));
     }
     let member_id = req.member_id.trim().to_string();
     if !valid_member_id(&member_id) {
-        return Err(TokenError::Invalid("member_id must be 1..=64 of [A-Za-z0-9._:-]".into()));
+        return Err(TokenError::Invalid(
+            "member_id must be 1..=64 of [A-Za-z0-9._:-]".into(),
+        ));
     }
     if member_id == LEGACY_ADMIN_MEMBER || member_id.starts_with(SYSTEM_MEMBER_PREFIX) {
-        return Err(TokenError::Invalid(format!("member_id '{member_id}' is reserved")));
+        return Err(TokenError::Invalid(format!(
+            "member_id '{member_id}' is reserved"
+        )));
     }
     let mut token_scopes: Vec<String> = Vec::new();
     for s in &req.scopes {
@@ -309,7 +324,9 @@ pub async fn create_token(
     for k in &req.payee_keys {
         let k = k.trim().to_lowercase();
         if k.is_empty() || k.len() > 100 || k.chars().any(char::is_whitespace) {
-            return Err(TokenError::Invalid("payee_keys must be non-empty, <=100 chars, no whitespace".into()));
+            return Err(TokenError::Invalid(
+                "payee_keys must be non-empty, <=100 chars, no whitespace".into(),
+            ));
         }
         if !payee_keys.contains(&k) {
             payee_keys.push(k);
@@ -317,7 +334,9 @@ pub async fn create_token(
     }
     if let Some(exp) = req.expires_at {
         if exp <= now {
-            return Err(TokenError::Invalid("expires_at must be in the future".into()));
+            return Err(TokenError::Invalid(
+                "expires_at must be in the future".into(),
+            ));
         }
     }
 
@@ -326,10 +345,14 @@ pub async fn create_token(
         TokenCreator::Principal(p) => {
             p.require(scopes::TOKENS_MANAGE)?;
             if let Some(s) = token_scopes.iter().find(|s| !p.has(s)) {
-                return Err(TokenError::Forbidden(format!("cannot grant scope '{s}' you do not hold")));
+                return Err(TokenError::Forbidden(format!(
+                    "cannot grant scope '{s}' you do not hold"
+                )));
             }
             if !may_manage_member(p, &member_id, directory) {
-                return Err(TokenError::Forbidden("cannot create a token for a member you do not outrank".into()));
+                return Err(TokenError::Forbidden(
+                    "cannot create a token for a member you do not outrank".into(),
+                ));
             }
             p.member_id.clone()
         }
@@ -398,10 +421,11 @@ pub async fn revoke_token(
     token_id: &str,
     now: DateTime<Utc>,
 ) -> Result<(), TokenError> {
-    let member: Option<String> = sqlx::query_scalar("SELECT member_id FROM api_tokens WHERE id = ?")
-        .bind(token_id)
-        .fetch_optional(pool)
-        .await?;
+    let member: Option<String> =
+        sqlx::query_scalar("SELECT member_id FROM api_tokens WHERE id = ?")
+            .bind(token_id)
+            .fetch_optional(pool)
+            .await?;
     let Some(member) = member else {
         return Err(TokenError::NotFound);
     };
@@ -410,7 +434,9 @@ pub async fn revoke_token(
         TokenCreator::Principal(p) => {
             p.require(scopes::TOKENS_MANAGE)?;
             if !may_manage_member(p, &member, directory) {
-                return Err(TokenError::Forbidden("cannot revoke a token of a member you do not outrank".into()));
+                return Err(TokenError::Forbidden(
+                    "cannot revoke a token of a member you do not outrank".into(),
+                ));
             }
             p.member_id.clone()
         }
@@ -418,11 +444,12 @@ pub async fn revoke_token(
     // Idempotent: only the first revocation changes the row, and only it is audited, in the
     // same transaction.
     let mut tx = pool.begin().await?;
-    let res = sqlx::query("UPDATE api_tokens SET revoked_at = ? WHERE id = ? AND revoked_at IS NULL")
-        .bind(format_db_time(now))
-        .bind(token_id)
-        .execute(&mut *tx)
-        .await?;
+    let res =
+        sqlx::query("UPDATE api_tokens SET revoked_at = ? WHERE id = ? AND revoked_at IS NULL")
+            .bind(format_db_time(now))
+            .bind(token_id)
+            .execute(&mut *tx)
+            .await?;
     if res.rows_affected() > 0 {
         let (kind, actor) = audit_actor(&revoked_by);
         crate::audit::append_in(
@@ -452,11 +479,15 @@ fn audit_actor(member: &str) -> (crate::audit::ActorKind, String) {
 
 /// Every payee key ever declared for a member, across ALL of its tokens (revoked and expired
 /// included), lowercased. A second token without payee keys cannot hide that a member is a payee.
-pub async fn member_payee_keys(pool: &SqlitePool, member_id: &str) -> Result<Vec<String>, sqlx::Error> {
-    let rows: Vec<String> = sqlx::query_scalar("SELECT payee_keys FROM api_tokens WHERE member_id = ?")
-        .bind(member_id)
-        .fetch_all(pool)
-        .await?;
+pub async fn member_payee_keys(
+    pool: &SqlitePool,
+    member_id: &str,
+) -> Result<Vec<String>, sqlx::Error> {
+    let rows: Vec<String> =
+        sqlx::query_scalar("SELECT payee_keys FROM api_tokens WHERE member_id = ?")
+            .bind(member_id)
+            .fetch_all(pool)
+            .await?;
     let mut keys: Vec<String> = Vec::new();
     for r in rows {
         for k in parse_json_list(&r) {

@@ -3,7 +3,10 @@
 //! Plain async functions over a pool and a `Principal`, so the REST layer and a later MCP layer
 //! share them. Money only moves through `ledger::pay_guarded` (the atomic claim + idempotency key).
 
-use super::approvals::{self, claim_guard, evaluate, load_facts, member_period_usage, payee_key, principal_is_payee, Blocker, RowApproval, Usage};
+use super::approvals::{
+    self, claim_guard, evaluate, load_facts, member_period_usage, payee_key, principal_is_payee,
+    Blocker, RowApproval, Usage,
+};
 use super::config::PaymentConfig;
 use super::error::PayoutError;
 use super::ledger::{self, LedgerEntry, LedgerError, FAILED, PAID, PENDING};
@@ -131,7 +134,13 @@ pub async fn build_plan(
         let reason = if blockers.is_empty() {
             None
         } else {
-            Some(blockers.iter().map(Blocker::message).collect::<Vec<_>>().join("; "))
+            Some(
+                blockers
+                    .iter()
+                    .map(Blocker::message)
+                    .collect::<Vec<_>>()
+                    .join("; "),
+            )
         };
         items.push(PlanItem {
             ledger_id: e.id.clone(),
@@ -223,7 +232,9 @@ pub async fn create_run(
     let id = persist_run(pool, &plan, principal, None, now)
         .await?
         .ok_or_else(|| PayoutError::InvalidState("run id collision".into()))?;
-    let run = load_run(pool, &id).await?.ok_or(PayoutError::NotFound("run"))?;
+    let run = load_run(pool, &id)
+        .await?
+        .ok_or(PayoutError::NotFound("run"))?;
     Ok(CreateRunResult::Created { run, plan })
 }
 
@@ -269,9 +280,15 @@ async fn load_run(pool: &SqlitePool, id: &str) -> Result<Option<RunView>, sqlx::
 }
 
 /// GET /payouts/runs/{id} (`payouts.read`).
-pub async fn get_run(pool: &SqlitePool, principal: &Principal, id: &str) -> Result<RunView, PayoutError> {
+pub async fn get_run(
+    pool: &SqlitePool,
+    principal: &Principal,
+    id: &str,
+) -> Result<RunView, PayoutError> {
     principal.require(scopes::PAYOUTS_READ)?;
-    let view = load_run(pool, id).await?.ok_or(PayoutError::NotFound("run"))?;
+    let view = load_run(pool, id)
+        .await?
+        .ok_or(PayoutError::NotFound("run"))?;
     if view.run.org_id != principal.org_id {
         return Err(PayoutError::NotFound("run"));
     }
@@ -305,7 +322,10 @@ pub async fn approve_run(
     principal.require(scopes::PAYOUTS_APPROVE)?;
     let view = get_run_unscoped(pool, principal, run_id).await?;
     if view.run.status != RUN_PREPARED {
-        return Err(PayoutError::InvalidState(format!("run is '{}'", view.run.status)));
+        return Err(PayoutError::InvalidState(format!(
+            "run is '{}'",
+            view.run.status
+        )));
     }
     let mut report = ApproveRunReport {
         approver_member_id: principal.member_id.clone(),
@@ -313,7 +333,10 @@ pub async fn approve_run(
     };
     for item in &view.items {
         let Some(entry) = ledger::get(pool, &item.ledger_id).await? else {
-            report.skipped.push(ItemNote { ledger_id: item.ledger_id.clone(), reason: "ledger entry not found".into() });
+            report.skipped.push(ItemNote {
+                ledger_id: item.ledger_id.clone(),
+                reason: "ledger entry not found".into(),
+            });
             continue;
         };
         if principal_is_payee(pool, directory, principal, &entry).await? {
@@ -324,15 +347,24 @@ pub async fn approve_run(
             Ok(RowApproval::Recorded) => report.approved.push(entry.id.clone()),
             Ok(RowApproval::AlreadyApproved) => report.already_approved.push(entry.id.clone()),
             Err(PayoutError::PayeeCannotApprove) => report.skipped_payee.push(entry.id.clone()),
-            Err(PayoutError::InvalidState(reason)) => report.skipped.push(ItemNote { ledger_id: entry.id.clone(), reason }),
+            Err(PayoutError::InvalidState(reason)) => report.skipped.push(ItemNote {
+                ledger_id: entry.id.clone(),
+                reason,
+            }),
             Err(e) => return Err(e),
         }
     }
     Ok(report)
 }
 
-async fn get_run_unscoped(pool: &SqlitePool, principal: &Principal, run_id: &str) -> Result<RunView, PayoutError> {
-    let view = load_run(pool, run_id).await?.ok_or(PayoutError::NotFound("run"))?;
+async fn get_run_unscoped(
+    pool: &SqlitePool,
+    principal: &Principal,
+    run_id: &str,
+) -> Result<RunView, PayoutError> {
+    let view = load_run(pool, run_id)
+        .await?
+        .ok_or(PayoutError::NotFound("run"))?;
     if view.run.org_id != principal.org_id {
         return Err(PayoutError::NotFound("run"));
     }
@@ -357,7 +389,12 @@ pub struct ExecuteReport {
     pub run_status: String,
 }
 
-async fn record_outcome(pool: &SqlitePool, run_id: &str, item: &ExecuteItem, now: &str) -> Result<(), sqlx::Error> {
+async fn record_outcome(
+    pool: &SqlitePool,
+    run_id: &str,
+    item: &ExecuteItem,
+    now: &str,
+) -> Result<(), sqlx::Error> {
     sqlx::query("UPDATE payout_run_items SET outcome = ?, outcome_reason = ?, executed_at = ? WHERE run_id = ? AND ledger_id = ?")
         .bind(&item.outcome)
         .bind(&item.reason)
@@ -400,7 +437,10 @@ pub async fn execute_run(
     .bind(run_id)
     .fetch_one(pool)
     .await?;
-    let mut usage = Usage { run_total: run_used, ..Default::default() };
+    let mut usage = Usage {
+        run_total: run_used,
+        ..Default::default()
+    };
 
     let mut items = Vec::new();
     let mut paid_cents = 0;
@@ -430,7 +470,13 @@ pub async fn execute_run(
             ExecuteItem {
                 ledger_id: entry.id.clone(),
                 outcome: "not_payable".into(),
-                reason: Some(blockers.iter().map(Blocker::message).collect::<Vec<_>>().join("; ")),
+                reason: Some(
+                    blockers
+                        .iter()
+                        .map(Blocker::message)
+                        .collect::<Vec<_>>()
+                        .join("; "),
+                ),
                 stripe_transfer_id: None,
             }
         } else {
@@ -452,12 +498,14 @@ pub async fn execute_run(
                     reason: done.failure_reason.clone(),
                     stripe_transfer_id: None,
                 },
-                Err(e @ (LedgerError::NotPayable(_) | LedgerError::InvalidState(..))) => ExecuteItem {
-                    ledger_id: entry.id.clone(),
-                    outcome: "not_payable".into(),
-                    reason: Some(e.to_string()),
-                    stripe_transfer_id: None,
-                },
+                Err(e @ (LedgerError::NotPayable(_) | LedgerError::InvalidState(..))) => {
+                    ExecuteItem {
+                        ledger_id: entry.id.clone(),
+                        outcome: "not_payable".into(),
+                        reason: Some(e.to_string()),
+                        stripe_transfer_id: None,
+                    }
+                }
                 Err(e) => return Err(e.into()),
             }
         };
@@ -473,7 +521,11 @@ pub async fn execute_run(
     .bind(run_id)
     .fetch_one(pool)
     .await?;
-    let status = if open == 0 { RUN_COMPLETED } else { RUN_PREPARED };
+    let status = if open == 0 {
+        RUN_COMPLETED
+    } else {
+        RUN_PREPARED
+    };
     sqlx::query("UPDATE payout_runs SET status = ?, last_executed_by = ?, last_executed_at = ? WHERE id = ? AND status <> ?")
         .bind(status)
         .bind(&principal.member_id)
@@ -493,7 +545,12 @@ pub async fn execute_run(
 }
 
 /// POST /payouts/runs/{id}/cancel (`payouts.prepare`). Approvals already recorded stay on their rows.
-pub async fn cancel_run(pool: &SqlitePool, principal: &Principal, run_id: &str, now: DateTime<Utc>) -> Result<RunView, PayoutError> {
+pub async fn cancel_run(
+    pool: &SqlitePool,
+    principal: &Principal,
+    run_id: &str,
+    now: DateTime<Utc>,
+) -> Result<RunView, PayoutError> {
     principal.require(scopes::PAYOUTS_PREPARE)?;
     let view = get_run_unscoped(pool, principal, run_id).await?;
     let res = sqlx::query(
@@ -507,13 +564,22 @@ pub async fn cancel_run(pool: &SqlitePool, principal: &Principal, run_id: &str, 
     .execute(pool)
     .await?;
     if res.rows_affected() == 0 {
-        return Err(PayoutError::InvalidState(format!("run is '{}'", view.run.status)));
+        return Err(PayoutError::InvalidState(format!(
+            "run is '{}'",
+            view.run.status
+        )));
     }
-    load_run(pool, run_id).await?.ok_or(PayoutError::NotFound("run"))
+    load_run(pool, run_id)
+        .await?
+        .ok_or(PayoutError::NotFound("run"))
 }
 
 /// GET /payouts/ledger?status= (`payouts.read`).
-pub async fn list_ledger(pool: &SqlitePool, principal: &Principal, status: Option<&str>) -> Result<Vec<LedgerEntry>, PayoutError> {
+pub async fn list_ledger(
+    pool: &SqlitePool,
+    principal: &Principal,
+    status: Option<&str>,
+) -> Result<Vec<LedgerEntry>, PayoutError> {
     principal.require(scopes::PAYOUTS_READ)?;
     Ok(ledger::list(pool, status).await?)
 }

@@ -62,7 +62,9 @@ const APPEND_ATTEMPTS: u32 = 40;
 /// A deliberate defect for the mutation runs (`MSYNC_MUTANT=<name>`). Test builds only.
 #[cfg(test)]
 pub(crate) fn mutant(name: &str) -> bool {
-    std::env::var("MSYNC_MUTANT").map(|v| v == name).unwrap_or(false)
+    std::env::var("MSYNC_MUTANT")
+        .map(|v| v == name)
+        .unwrap_or(false)
 }
 #[cfg(not(test))]
 #[inline(always)]
@@ -126,7 +128,13 @@ pub struct AuditEntry {
 }
 
 impl AuditEntry {
-    pub fn new(actor_kind: ActorKind, actor: impl Into<String>, action: impl Into<String>, target: impl Into<String>, detail: Value) -> Self {
+    pub fn new(
+        actor_kind: ActorKind,
+        actor: impl Into<String>,
+        action: impl Into<String>,
+        target: impl Into<String>,
+        detail: Value,
+    ) -> Self {
         AuditEntry {
             org_id: DEFAULT_ORG.to_string(),
             actor_kind,
@@ -139,7 +147,12 @@ impl AuditEntry {
 
     /// An action taken with an API token. The actor is the token's member; the token id (never
     /// the token) is added to the detail.
-    pub fn by_principal(p: &Principal, action: impl Into<String>, target: impl Into<String>, detail: Value) -> Self {
+    pub fn by_principal(
+        p: &Principal,
+        action: impl Into<String>,
+        target: impl Into<String>,
+        detail: Value,
+    ) -> Self {
         let kind = kind_for_member(&p.member_id);
         let mut detail = detail;
         if let Value::Object(m) = &mut detail {
@@ -247,7 +260,14 @@ pub fn stripe_last4(account: &str) -> String {
     let a = account.trim();
     match a.strip_prefix("acct_") {
         Some(rest) if rest.chars().count() > 4 => {
-            let tail: String = rest.chars().rev().take(4).collect::<Vec<_>>().into_iter().rev().collect();
+            let tail: String = rest
+                .chars()
+                .rev()
+                .take(4)
+                .collect::<Vec<_>>()
+                .into_iter()
+                .rev()
+                .collect();
             format!("acct_...{tail}")
         }
         Some(_) => "acct_...".to_string(),
@@ -261,7 +281,9 @@ fn is_alnum(b: u8) -> bool {
 
 /// Prefixes whose whole token is a secret: Stripe secret and restricted keys, webhook signing
 /// secrets, Slack tokens.
-const SECRET_PREFIXES: &[&str] = &["sk_live_", "sk_test_", "rk_live_", "rk_test_", "whsec_", "xoxb-", "xoxp-", "xoxa-", "xapp-"];
+const SECRET_PREFIXES: &[&str] = &[
+    "sk_live_", "sk_test_", "rk_live_", "rk_test_", "whsec_", "xoxb-", "xoxp-", "xoxa-", "xapp-",
+];
 
 /// Detail keys whose value is never stored.
 const SECRET_KEYS: &[&str] = &[
@@ -302,7 +324,10 @@ pub fn redact_str(s: &str) -> String {
             }
             for p in SECRET_PREFIXES {
                 if let Some(after) = rest.strip_prefix(p) {
-                    let n = after.bytes().take_while(|c| is_alnum(*c) || *c == b'-' || *c == b'_').count();
+                    let n = after
+                        .bytes()
+                        .take_while(|c| is_alnum(*c) || *c == b'-' || *c == b'_')
+                        .count();
                     if n > 0 {
                         out.push_str("[redacted]");
                         i += p.len() + n;
@@ -314,7 +339,10 @@ pub fn redact_str(s: &str) -> String {
                 if let Some(after) = rest.strip_prefix(p) {
                     let id = after.bytes().take_while(|c| c.is_ascii_hexdigit()).count();
                     if id > 0 && after.as_bytes().get(id) == Some(&b'_') {
-                        let sec = after[id + 1..].bytes().take_while(|c| c.is_ascii_hexdigit()).count();
+                        let sec = after[id + 1..]
+                            .bytes()
+                            .take_while(|c| c.is_ascii_hexdigit())
+                            .count();
                         if sec >= 8 {
                             out.push_str(p);
                             out.push_str(&after[..id]);
@@ -325,8 +353,14 @@ pub fn redact_str(s: &str) -> String {
                     }
                 }
             }
-            if rest.get(..7).is_some_and(|p| p.eq_ignore_ascii_case("bearer ")) {
-                let n = rest[7..].bytes().take_while(|c| !c.is_ascii_whitespace() && *c != b'"').count();
+            if rest
+                .get(..7)
+                .is_some_and(|p| p.eq_ignore_ascii_case("bearer "))
+            {
+                let n = rest[7..]
+                    .bytes()
+                    .take_while(|c| !c.is_ascii_whitespace() && *c != b'"')
+                    .count();
                 if n > 0 && !rest[7..].starts_with("[redacted]") {
                     out.push_str(&rest[..7]);
                     out.push_str("[redacted]");
@@ -351,8 +385,16 @@ pub fn redact_value(v: &Value) -> Value {
         Value::Object(m) => {
             let mut out = Map::new();
             for (k, x) in m {
-                let secret = !mutant("audit_no_redaction") && SECRET_KEYS.contains(&k.to_ascii_lowercase().as_str());
-                out.insert(redact_str(k), if secret { Value::String("[redacted]".into()) } else { redact_value(x) });
+                let secret = !mutant("audit_no_redaction")
+                    && SECRET_KEYS.contains(&k.to_ascii_lowercase().as_str());
+                out.insert(
+                    redact_str(k),
+                    if secret {
+                        Value::String("[redacted]".into())
+                    } else {
+                        redact_value(x)
+                    },
+                );
             }
             Value::Object(out)
         }
@@ -366,7 +408,10 @@ fn is_retryable(e: &sqlx::Error) -> bool {
     match e {
         sqlx::Error::Database(d) => {
             let m = d.message().to_ascii_lowercase();
-            m.contains("locked") || m.contains("busy") || m.contains("unique") || m.contains("does not extend the chain head")
+            m.contains("locked")
+                || m.contains("busy")
+                || m.contains("unique")
+                || m.contains("does not extend the chain head")
         }
         sqlx::Error::PoolTimedOut => true,
         _ => false,
@@ -376,15 +421,21 @@ fn is_retryable(e: &sqlx::Error) -> bool {
 /// Append one entry inside the caller's transaction (`&mut *tx`). The entry commits or rolls
 /// back with the caller's change: no audit row, no change. Call it after the change's own
 /// writes, so the transaction already holds the write lock and the head it reads is current.
-pub async fn append_in(conn: &mut SqliteConnection, entry: &AuditEntry) -> Result<AuditRecord, sqlx::Error> {
+pub async fn append_in(
+    conn: &mut SqliteConnection,
+    entry: &AuditEntry,
+) -> Result<AuditRecord, sqlx::Error> {
     // Take the write lock before reading the head (a no-op UPDATE that touches no row and so
     // fires no trigger). Inside a transaction that already wrote, this changes nothing.
     if !mutant("audit_append_unlocked") {
-        sqlx::query("UPDATE audit_log SET seq = seq WHERE 0").execute(&mut *conn).await?;
+        sqlx::query("UPDATE audit_log SET seq = seq WHERE 0")
+            .execute(&mut *conn)
+            .await?;
     }
-    let head: Option<(i64, String)> = sqlx::query_as("SELECT seq, hash FROM audit_log ORDER BY seq DESC LIMIT 1")
-        .fetch_optional(&mut *conn)
-        .await?;
+    let head: Option<(i64, String)> =
+        sqlx::query_as("SELECT seq, hash FROM audit_log ORDER BY seq DESC LIMIT 1")
+            .fetch_optional(&mut *conn)
+            .await?;
     let (seq, prev) = match head {
         Some((s, h)) => (s + 1, h),
         None => (1, GENESIS_HASH.to_string()),
@@ -394,7 +445,17 @@ pub async fn append_in(conn: &mut SqliteConnection, entry: &AuditEntry) -> Resul
     let detail = redact_value(&entry.detail);
     let at = format_at(Utc::now());
     let kind = entry.actor_kind.as_str();
-    let hash = entry_hash(seq, &at, &entry.org_id, kind, &actor, &entry.action, &target, &detail, &prev);
+    let hash = entry_hash(
+        seq,
+        &at,
+        &entry.org_id,
+        kind,
+        &actor,
+        &entry.action,
+        &target,
+        &detail,
+        &prev,
+    );
     let inserted = sqlx::query(
         "INSERT INTO audit_log (seq, at, org_id, actor_kind, actor, action, target, detail, prev_hash, hash)
          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
@@ -462,7 +523,12 @@ pub async fn append(pool: &SqlitePool, entry: &AuditEntry) -> Result<AuditRecord
 /// audit write (a refused request, a transfer outcome). A failure is logged as an error.
 pub async fn append_best_effort(pool: &SqlitePool, entry: &AuditEntry) {
     if let Err(e) = append(pool, entry).await {
-        tracing::error!("AUDIT WRITE FAILED for {} on {}: {}", entry.action, redact_str(&entry.target), e);
+        tracing::error!(
+            "AUDIT WRITE FAILED for {} on {}: {}",
+            entry.action,
+            redact_str(&entry.target),
+            e
+        );
     }
 }
 
@@ -522,7 +588,10 @@ pub async fn list(pool: &SqlitePool, f: &AuditFilter) -> Result<AuditPage, sqlx:
     let limit = f.limit.unwrap_or(LIST_DEFAULT).clamp(1, LIST_MAX);
     let mut sql = String::from("SELECT * FROM audit_log WHERE seq > ?");
     let action = f.action.as_deref().map(str::trim).filter(|a| !a.is_empty());
-    let action_prefix = action.and_then(|a| a.strip_suffix('*').or_else(|| a.ends_with('.').then_some(a)));
+    let action_prefix = action.and_then(|a| {
+        a.strip_suffix('*')
+            .or_else(|| a.ends_with('.').then_some(a))
+    });
     if f.actor.is_some() {
         sql.push_str(" AND actor = ?");
     }
@@ -552,8 +621,15 @@ pub async fn list(pool: &SqlitePool, f: &AuditFilter) -> Result<AuditPage, sqlx:
     for r in rows.iter().take(limit as usize) {
         entries.push(record_from_row(r)?.0);
     }
-    let next_after = if rows.len() as i64 > limit { entries.last().map(|e| e.seq) } else { None };
-    Ok(AuditPage { entries, next_after })
+    let next_after = if rows.len() as i64 > limit {
+        entries.last().map(|e| e.seq)
+    } else {
+        None
+    };
+    Ok(AuditPage {
+        entries,
+        next_after,
+    })
 }
 
 // ------------------------------------------------------------------ verify
@@ -601,18 +677,36 @@ pub async fn verify(pool: &SqlitePool) -> Result<VerifyReport, sqlx::Error> {
                 checked,
                 head_seq: head.as_ref().map(|h| h.0),
                 head_hash: head.as_ref().map(|h| h.1.clone()),
-                first_broken: Some(BrokenEntry { seq: rec.seq, reason }),
+                first_broken: Some(BrokenEntry {
+                    seq: rec.seq,
+                    reason,
+                }),
             };
             if rec.seq != expected_seq && !mutant("audit_verify_skip_links") {
-                return Ok(broken(format!("expected entry {expected_seq} next, found {}: an entry was removed", rec.seq)));
+                return Ok(broken(format!(
+                    "expected entry {expected_seq} next, found {}: an entry was removed",
+                    rec.seq
+                )));
             }
             if rec.prev_hash != prev && !mutant("audit_verify_skip_links") {
                 return Ok(broken("prev_hash is not the previous entry's hash".into()));
             }
-            if serde_json::from_str::<Value>(&detail_text).is_err() || canonical_json(&rec.detail) != detail_text {
+            if serde_json::from_str::<Value>(&detail_text).is_err()
+                || canonical_json(&rec.detail) != detail_text
+            {
                 return Ok(broken("detail is not canonical JSON".into()));
             }
-            let h = entry_hash(rec.seq, &rec.at, &rec.org_id, &rec.actor_kind, &rec.actor, &rec.action, &rec.target, &rec.detail, &rec.prev_hash);
+            let h = entry_hash(
+                rec.seq,
+                &rec.at,
+                &rec.org_id,
+                &rec.actor_kind,
+                &rec.actor,
+                &rec.action,
+                &rec.target,
+                &rec.detail,
+                &rec.prev_hash,
+            );
             if h != rec.hash && !mutant("audit_verify_skip_hash") {
                 return Ok(broken("hash does not match the entry's contents".into()));
             }

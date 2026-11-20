@@ -21,7 +21,10 @@ pub struct Binding {
 }
 
 /// The contributor a chat account is bound to, if any.
-pub async fn binding_for(pool: &SqlitePool, actor: &ChatActor) -> Result<Option<Binding>, sqlx::Error> {
+pub async fn binding_for(
+    pool: &SqlitePool,
+    actor: &ChatActor,
+) -> Result<Option<Binding>, sqlx::Error> {
     let row: Option<(String, i64)> = sqlx::query_as(
         "SELECT c.github_username, ci.verified FROM chat_identities ci
          JOIN contributors c ON c.id = ci.contributor_id
@@ -32,11 +35,18 @@ pub async fn binding_for(pool: &SqlitePool, actor: &ChatActor) -> Result<Option<
     .bind(&actor.user_id)
     .fetch_optional(pool)
     .await?;
-    Ok(row.map(|(contributor, v)| Binding { contributor, verified: v != 0 }))
+    Ok(row.map(|(contributor, v)| Binding {
+        contributor,
+        verified: v != 0,
+    }))
 }
 
 /// Every `(team_or_guild, user_id)` on `platform` bound to the contributor `contributor_key`.
-pub async fn accounts_of(pool: &SqlitePool, platform: ChatPlatform, contributor_key: &str) -> Result<Vec<(String, String)>, sqlx::Error> {
+pub async fn accounts_of(
+    pool: &SqlitePool,
+    platform: ChatPlatform,
+    contributor_key: &str,
+) -> Result<Vec<(String, String)>, sqlx::Error> {
     sqlx::query_as(
         "SELECT ci.team_or_guild, ci.user_id FROM chat_identities ci
          JOIN contributors c ON c.id = ci.contributor_id

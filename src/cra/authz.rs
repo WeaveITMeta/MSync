@@ -31,7 +31,9 @@ use std::fmt;
 use chrono::NaiveDate;
 use serde::{Deserialize, Serialize};
 
-use super::catalog::{APPROVE_GRANT, APPROVE_POLICY, GRANT, INVITE, PROPOSE_POLICY, REVOKE, SUSPEND};
+use super::catalog::{
+    APPROVE_GRANT, APPROVE_POLICY, GRANT, INVITE, PROPOSE_POLICY, REVOKE, SUSPEND,
+};
 use super::model::MemberStatus;
 use super::plan::{ChangePlan, MemberTarget};
 use super::standing::active_positions;
@@ -150,9 +152,7 @@ pub fn requirements(plan: &ChangePlan) -> Vec<Requirement> {
     }
 
     let holders_of = |ids: &[String]| -> Vec<MemberTarget> {
-        ids.iter()
-            .map(|id| plan_target(plan, id))
-            .collect()
+        ids.iter().map(|id| plan_target(plan, id)).collect()
     };
     let role_req = |item: String, rank: u32, holders: &[String]| Requirement {
         item,
@@ -164,29 +164,55 @@ pub fn requirements(plan: &ChangePlan) -> Vec<Requirement> {
         affected: holders_of(holders),
     };
     for r in &plan.roles_added {
-        out.push(role_req(format!("add role `{}` (rank {})", r.key, r.rank), r.rank, &r.holders));
+        out.push(role_req(
+            format!("add role `{}` (rank {})", r.key, r.rank),
+            r.rank,
+            &r.holders,
+        ));
     }
     for r in &plan.roles_removed {
-        out.push(role_req(format!("remove role `{}` (rank {})", r.key, r.rank), r.rank, &r.holders));
+        out.push(role_req(
+            format!("remove role `{}` (rank {})", r.key, r.rank),
+            r.rank,
+            &r.holders,
+        ));
     }
     for r in &plan.roles_changed {
-        out.push(role_req(format!("change role `{}` (rank {} to {})", r.key, r.old_rank, r.new_rank), r.rank(), &r.holders));
+        out.push(role_req(
+            format!(
+                "change role `{}` (rank {} to {})",
+                r.key, r.old_rank, r.new_rank
+            ),
+            r.rank(),
+            &r.holders,
+        ));
     }
 
-    let member_req = |item: String, rank: u32, permission: &'static str, t: &MemberTarget| Requirement {
-        item,
-        rank,
-        permission,
-        two_person: rank >= tp,
-        approver_permission: APPROVE_GRANT,
-        target: Some(t.clone()),
-        affected: vec![t.clone()],
-    };
+    let member_req =
+        |item: String, rank: u32, permission: &'static str, t: &MemberTarget| Requirement {
+            item,
+            rank,
+            permission,
+            two_person: rank >= tp,
+            approver_permission: APPROVE_GRANT,
+            target: Some(t.clone()),
+            affected: vec![t.clone()],
+        };
     for g in &plan.grants_added {
-        out.push(member_req(format!("grant `{}` to `{}`", g.role, g.member.id), g.role_rank, GRANT, &g.member));
+        out.push(member_req(
+            format!("grant `{}` to `{}`", g.role, g.member.id),
+            g.role_rank,
+            GRANT,
+            &g.member,
+        ));
     }
     for g in &plan.grants_changed {
-        out.push(member_req(format!("change grant `{}` of `{}`", g.role, g.member.id), g.role_rank, GRANT, &g.member));
+        out.push(member_req(
+            format!("change grant `{}` of `{}`", g.role, g.member.id),
+            g.role_rank,
+            GRANT,
+            &g.member,
+        ));
     }
     for g in &plan.grants_removed {
         out.push(member_req(
@@ -198,20 +224,40 @@ pub fn requirements(plan: &ChangePlan) -> Vec<Requirement> {
     }
     for s in &plan.status_changes {
         out.push(member_req(
-            format!("status of `{}` {} to {}", s.member.id, s.old.as_str(), s.new.as_str()),
+            format!(
+                "status of `{}` {} to {}",
+                s.member.id,
+                s.old.as_str(),
+                s.new.as_str()
+            ),
             s.member.rank,
             SUSPEND,
             &s.member,
         ));
     }
     for m in &plan.members_added {
-        out.push(member_req(format!("add member `{}`", m.member.id), m.member.rank, INVITE, &m.member));
+        out.push(member_req(
+            format!("add member `{}`", m.member.id),
+            m.member.rank,
+            INVITE,
+            &m.member,
+        ));
     }
     for m in &plan.members_removed {
-        out.push(member_req(format!("remove member `{}`", m.member.id), m.member.rank, SUSPEND, &m.member));
+        out.push(member_req(
+            format!("remove member `{}`", m.member.id),
+            m.member.rank,
+            SUSPEND,
+            &m.member,
+        ));
     }
     for i in &plan.identity_changes {
-        out.push(member_req(format!("`{}` {} change", i.member.id, i.field), i.member.rank, GRANT, &i.member));
+        out.push(member_req(
+            format!("`{}` {} change", i.member.id, i.field),
+            i.member.rank,
+            GRANT,
+            &i.member,
+        ));
     }
     out
 }
@@ -228,7 +274,12 @@ fn plan_target(plan: &ChangePlan, id: &str) -> MemberTarget {
             ids.push(FoundryIdentity::gitlab(l));
         }
     }
-    MemberTarget { id: id.to_string(), name, rank: 0, foundry_identities: ids }
+    MemberTarget {
+        id: id.to_string(),
+        name,
+        rank: 0,
+        foundry_identities: ids,
+    }
 }
 
 /// An actor or approver after resolution through the active snapshot.
@@ -248,10 +299,13 @@ impl Principal {
     }
     fn is(&self, t: &MemberTarget) -> bool {
         self.member_id.as_deref() == Some(t.id.as_str())
-            || t.foundry_identities.iter().any(|f| self.identity.matches(f.provider, &f.login))
+            || t.foundry_identities
+                .iter()
+                .any(|f| self.identity.matches(f.provider, &f.login))
     }
     fn same_person(&self, other: &Principal) -> bool {
-        self.identity.matches(other.identity.provider, &other.identity.login)
+        self.identity
+            .matches(other.identity.provider, &other.identity.login)
             || (self.member_id.is_some() && self.member_id == other.member_id)
     }
 }
@@ -271,11 +325,17 @@ fn owner_foundry(entry: &str) -> Option<FoundryIdentity> {
         "gitlab" => FoundryProvider::Gitlab,
         _ => return None,
     };
-    Some(FoundryIdentity { provider, login: login.to_string() })
+    Some(FoundryIdentity {
+        provider,
+        login: login.to_string(),
+    })
 }
 
 fn is_owner_identity(who: &FoundryIdentity, owners: &[String]) -> bool {
-    owners.iter().filter_map(|o| owner_foundry(o)).any(|o| who.matches(o.provider, &o.login))
+    owners
+        .iter()
+        .filter_map(|o| owner_foundry(o))
+        .any(|o| who.matches(o.provider, &o.login))
 }
 
 fn is_owner_member(id: &str, owners: &[String]) -> bool {
@@ -283,13 +343,22 @@ fn is_owner_member(id: &str, owners: &[String]) -> bool {
 }
 
 fn target_is_owner(t: &MemberTarget, owners: &[String]) -> bool {
-    is_owner_member(&t.id, owners) || t.foundry_identities.iter().any(|f| is_owner_identity(f, owners))
+    is_owner_member(&t.id, owners)
+        || t.foundry_identities
+            .iter()
+            .any(|f| is_owner_identity(f, owners))
 }
 
 /// Resolves an identity through the ACTIVE snapshot (`roster`).
-fn resolve(roster: &Snapshot, who: &FoundryIdentity, owners: &[String], today: NaiveDate) -> Option<Principal> {
+fn resolve(
+    roster: &Snapshot,
+    who: &FoundryIdentity,
+    owners: &[String],
+    today: NaiveDate,
+) -> Option<Principal> {
     let member = roster.member_by_foundry(who);
-    let owner = is_owner_identity(who, owners) || member.is_some_and(|m| is_owner_member(&m.id, owners));
+    let owner =
+        is_owner_identity(who, owners) || member.is_some_and(|m| is_owner_member(&m.id, owners));
     if owner {
         return Some(Principal {
             identity: who.clone(),
@@ -303,13 +372,27 @@ fn resolve(roster: &Snapshot, who: &FoundryIdentity, owners: &[String], today: N
     let m = member?;
     let active = m.status == MemberStatus::Active;
     let positions = active_positions(roster, &m.id, today);
-    let rank = if active { positions.iter().map(|(r, _)| r.rank).max().unwrap_or(0) } else { 0 };
+    let rank = if active {
+        positions.iter().map(|(r, _)| r.rank).max().unwrap_or(0)
+    } else {
+        0
+    };
     let permissions = if active {
-        positions.iter().flat_map(|(r, _)| r.permissions.iter().cloned()).collect()
+        positions
+            .iter()
+            .flat_map(|(r, _)| r.permissions.iter().cloned())
+            .collect()
     } else {
         BTreeSet::new()
     };
-    Some(Principal { identity: who.clone(), member_id: Some(m.id.clone()), owner: false, active, rank, permissions })
+    Some(Principal {
+        identity: who.clone(),
+        member_id: Some(m.id.clone()),
+        owner: false,
+        active,
+        rank,
+        permissions,
+    })
 }
 
 /// Checks `plan` against the active snapshot `old`. Returns every violation.
@@ -324,7 +407,11 @@ pub fn authorize(
     owners: &[String],
 ) -> Result<(), Vec<Violation>> {
     let mut v = Vec::new();
-    let viol = |code, item: &str, message: String| Violation { code, item: item.to_string(), message };
+    let viol = |code, item: &str, message: String| Violation {
+        code,
+        item: item.to_string(),
+        message,
+    };
 
     // The plan must have been computed against this active snapshot.
     if old.map(|o| o.content_hash.clone()) != plan.old_hash {
@@ -344,7 +431,10 @@ pub fn authorize(
         return Err(vec![viol(
             ViolationCode::NotBootstrapOwner,
             "bootstrap",
-            format!("{} is not an owner; only an owner may load the first snapshot", ctx.actor),
+            format!(
+                "{} is not an owner; only an owner may load the first snapshot",
+                ctx.actor
+            ),
         )]);
     };
 
@@ -364,14 +454,16 @@ pub fn authorize(
         )]);
     }
 
-    let author = ctx.author.as_ref().map(|a| resolve(roster, a, owners, ctx.today).unwrap_or(Principal {
-        identity: a.clone(),
-        member_id: None,
-        owner: false,
-        active: false,
-        rank: 0,
-        permissions: BTreeSet::new(),
-    }));
+    let author = ctx.author.as_ref().map(|a| {
+        resolve(roster, a, owners, ctx.today).unwrap_or(Principal {
+            identity: a.clone(),
+            member_id: None,
+            owner: false,
+            active: false,
+            rank: 0,
+            permissions: BTreeSet::new(),
+        })
+    });
     let approvers: Vec<(FoundryIdentity, Option<Principal>)> = ctx
         .approvers
         .iter()
@@ -390,14 +482,21 @@ pub fn authorize(
         // Nobody changes their own grants, status, identities or entry.
         if let Some(t) = &req.target {
             if actor.is(t) {
-                v.push(viol(ViolationCode::SelfChange, item, format!("{} may not change their own record", ctx.actor)));
+                v.push(viol(
+                    ViolationCode::SelfChange,
+                    item,
+                    format!("{} may not change their own record", ctx.actor),
+                ));
             }
         }
         if !outranks(actor.rank, rank) {
             v.push(viol(
                 ViolationCode::InsufficientRank,
                 item,
-                format!("{} has rank {}; this change needs rank above {rank}", ctx.actor, actor.rank),
+                format!(
+                    "{} has rank {}; this change needs rank above {rank}",
+                    ctx.actor, actor.rank
+                ),
             ));
         }
         if !actor.has(req.permission) {
@@ -444,7 +543,9 @@ pub fn authorize(
                 continue;
             }
             if req.affected.iter().any(|t| p.is(t)) {
-                reasons.push(format!("{who}: is affected by or benefits from this change"));
+                reasons.push(format!(
+                    "{who}: is affected by or benefits from this change"
+                ));
                 continue;
             }
             if !p.active {
@@ -466,7 +567,11 @@ pub fn authorize(
             if reasons.is_empty() {
                 reasons.push("no approving review".into());
             }
-            v.push(viol(ViolationCode::NoQualifiedApprover, item, reasons.join("; ")));
+            v.push(viol(
+                ViolationCode::NoQualifiedApprover,
+                item,
+                reasons.join("; "),
+            ));
         }
     }
 

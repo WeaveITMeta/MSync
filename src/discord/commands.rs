@@ -8,14 +8,20 @@ use async_trait::async_trait;
 use serenity::all::*;
 
 use crate::chat::sync::{SyncRunner, Trigger};
-use crate::chat::{ChatActor, ChatCommand, ChatPlatform, ProjectionApplier, ProjectionPlan, SyncReport};
+use crate::chat::{
+    ChatActor, ChatCommand, ChatPlatform, ProjectionApplier, ProjectionPlan, SyncReport,
+};
 use crate::services::discord_sync::DiscordSyncService;
 
 /// The caller as the shared commands see it. The admin flag is Discord's resolved
 /// administrator permission for the interaction; when Discord sends none it is unknown,
 /// which fails closed.
 pub fn actor_for(command: &CommandInteraction) -> ChatActor {
-    let is_admin = command.member.as_ref().and_then(|m| m.permissions).map(|p| p.administrator());
+    let is_admin = command
+        .member
+        .as_ref()
+        .and_then(|m| m.permissions)
+        .map(|p| p.administrator());
     ChatActor::discord(command.user.id.get().to_string(), is_admin)
 }
 
@@ -50,9 +56,15 @@ impl ProjectionApplier for DiscordApplier {
     /// hold a managed role are drift and lose it.
     async fn apply(&self, plan: &ProjectionPlan) -> SyncReport {
         match &self.sync {
-            Some(runner) => runner.run_with_plan(Trigger::Command, plan).await.to_sync_report(ChatPlatform::Discord),
+            Some(runner) => runner
+                .run_with_plan(Trigger::Command, plan)
+                .await
+                .to_sync_report(ChatPlatform::Discord),
             None => SyncReport {
-                notes: vec!["Discord role sync is not running (no bot token or no guild configured).".into()],
+                notes: vec![
+                    "Discord role sync is not running (no bot token or no guild configured)."
+                        .into(),
+                ],
                 ..Default::default()
             },
         }
@@ -62,10 +74,15 @@ impl ProjectionApplier for DiscordApplier {
     async fn apply_legacy(&self) -> SyncReport {
         let mut report = SyncReport::default();
         let Some(guild_id) = self.guild_id else {
-            report.notes.push("Run this command inside the server.".into());
+            report
+                .notes
+                .push("Run this command inside the server.".into());
             return report;
         };
-        match DiscordSyncService::new(self.pool.clone(), self.http.clone()).sync_all_roles(guild_id).await {
+        match DiscordSyncService::new(self.pool.clone(), self.http.clone())
+            .sync_all_roles(guild_id)
+            .await
+        {
             Ok((synced, failed)) => {
                 report.synced = synced.max(0) as u32;
                 report.failed = failed.max(0) as u32;

@@ -32,7 +32,11 @@ fn today() -> NaiveDate {
 }
 
 async fn pool() -> SqlitePool {
-    let pool = SqlitePoolOptions::new().max_connections(1).connect("sqlite::memory:").await.unwrap();
+    let pool = SqlitePoolOptions::new()
+        .max_connections(1)
+        .connect("sqlite::memory:")
+        .await
+        .unwrap();
     sqlx::migrate!("./migrations").run(&pool).await.unwrap();
     pool
 }
@@ -58,7 +62,11 @@ fn activate(handle: &CraHandle, files: &CraFiles) {
         commit_sha: "c0ffee".into(),
         loaded_at: "2026-11-12T00:00:00Z".into(),
         actor: Some("github:example-founder".into()),
-        repo: CraRepo::new(crate::foundry::FoundryProvider::GitHub, "github.com", "example-voltec/cra"),
+        repo: CraRepo::new(
+            crate::foundry::FoundryProvider::GitHub,
+            "github.com",
+            "example-voltec/cra",
+        ),
         snapshot,
     })));
 }
@@ -85,14 +93,24 @@ async fn ctx_with(files: Option<CraFiles>) -> (Arc<PortalContext>, SqlitePool, C
     }
     handle.set_merit_for_test("mckale", 60);
     handle.set_merit_for_test("gus-example", 600);
-    let mut ctx = PortalContext::new(pool.clone(), handle.clone(), secrets(), Some(SUBJECT_KEY.into()));
+    let mut ctx = PortalContext::new(
+        pool.clone(),
+        handle.clone(),
+        secrets(),
+        Some(SUBJECT_KEY.into()),
+    );
     ctx.today = Some(today());
     (Arc::new(ctx), pool, handle)
 }
 
 macro_rules! app {
     ($ctx:expr) => {
-        atest::init_service(App::new().app_data(web::Data::from($ctx.clone())).configure(configure)).await
+        atest::init_service(
+            App::new()
+                .app_data(web::Data::from($ctx.clone()))
+                .configure(configure),
+        )
+        .await
     };
 }
 
@@ -111,13 +129,24 @@ struct Signed<'a> {
 
 impl<'a> Signed<'a> {
     fn new(consumer: &'a str, key_id: &'a str, secret: &'a str) -> Self {
-        Signed { consumer, key_id, secret, ts: Utc::now().timestamp(), nonce: nonce() }
+        Signed {
+            consumer,
+            key_id,
+            secret,
+            ts: Utc::now().timestamp(),
+            nonce: nonce(),
+        }
     }
 }
 
 fn request(path: &str, s: &Signed<'_>, signature: Option<String>) -> atest::TestRequest {
     let ts = s.ts.to_string();
-    let sig = signature.unwrap_or_else(|| sign(s.secret.as_bytes(), &string_to_sign("GET", path, &ts, &s.nonce, b"")));
+    let sig = signature.unwrap_or_else(|| {
+        sign(
+            s.secret.as_bytes(),
+            &string_to_sign("GET", path, &ts, &s.nonce, b""),
+        )
+    });
     atest::TestRequest::get()
         .uri(path)
         .insert_header((HEADER_CONSUMER, s.consumer))
@@ -155,30 +184,68 @@ async fn a_valid_signed_request_is_answered() {
     let (ctx, pool, _) = ctx_with(Some(voltec_files())).await;
     let app = app!(ctx);
     let path = discord_path(MCKALE_DISCORD, "community.*");
-    let (s, b) = call!(app, request(&path, &Signed::new("voltec-portal", "k1", SECRET_K1), None));
+    let (s, b) = call!(
+        app,
+        request(&path, &Signed::new("voltec-portal", "k1", SECRET_K1), None)
+    );
     assert_eq!(s, StatusCode::OK, "{}", String::from_utf8_lossy(&b));
     let v = body(&b);
     assert_eq!(v["status"], "active");
-    assert_eq!(v["subject"], json!(subject_for(SUBJECT_KEY.as_bytes(), "default", "voltec-portal", "mckale")));
-    assert_eq!(v["tier"], json!({"key": "contributor", "label": "Contributor", "rank": 10}));
+    assert_eq!(
+        v["subject"],
+        json!(subject_for(
+            SUBJECT_KEY.as_bytes(),
+            "default",
+            "voltec-portal",
+            "mckale"
+        ))
+    );
+    assert_eq!(
+        v["tier"],
+        json!({"key": "contributor", "label": "Contributor", "rank": 10})
+    );
     assert_eq!(v["positions"], json!([{"title": "Engineer"}]));
     assert_eq!(v["merit"], json!({"vested": 60}));
-    assert_eq!(v["permissions"], json!(["community.post", "community.read", "community.vote"]));
+    assert_eq!(
+        v["permissions"],
+        json!(["community.post", "community.read", "community.vote"])
+    );
     assert_eq!(v["scopes_granted"], json!(["community.*"]));
     assert_eq!(v["policy_version"], json!(7));
     assert_eq!(v["cache_ttl_seconds"], json!(60));
 
     // A rotated key works alongside the old one.
-    let (s, _) = call!(app, request(&path, &Signed::new("voltec-portal", "k2", SECRET_K2), None));
+    let (s, _) = call!(
+        app,
+        request(&path, &Signed::new("voltec-portal", "k2", SECRET_K2), None)
+    );
     assert_eq!(s, StatusCode::OK);
 
     // Recorded and audited.
-    assert_eq!(count(&pool, "SELECT COUNT(*) FROM consumer_lookups WHERE result = 'found'").await, 2);
-    let a = crate::audit::list(&pool, &crate::audit::AuditFilter { action: Some("portal.lookup".into()), ..Default::default() }).await.unwrap();
+    assert_eq!(
+        count(
+            &pool,
+            "SELECT COUNT(*) FROM consumer_lookups WHERE result = 'found'"
+        )
+        .await,
+        2
+    );
+    let a = crate::audit::list(
+        &pool,
+        &crate::audit::AuditFilter {
+            action: Some("portal.lookup".into()),
+            ..Default::default()
+        },
+    )
+    .await
+    .unwrap();
     assert_eq!(a.entries.len(), 2);
     assert_eq!(a.entries[0].actor, "consumer:voltec-portal");
     assert_eq!(a.entries[0].detail["member_id"], json!("mckale"));
-    assert_eq!(a.entries[0].detail["scopes_granted"], json!(["community.*"]));
+    assert_eq!(
+        a.entries[0].detail["scopes_granted"],
+        json!(["community.*"])
+    );
     assert!(crate::audit::verify(&pool).await.unwrap().ok);
 }
 
@@ -195,7 +262,10 @@ async fn every_authentication_failure_is_the_same_401() {
 
     let mut cases: Vec<(&str, atest::TestRequest)> = Vec::new();
     let wrong = Signed::new("voltec-portal", "k1", SECRET_K1);
-    let bad_sig = sign(b"not-the-secret-not-the-secret-00000000", &string_to_sign("GET", &path, &wrong.ts.to_string(), &wrong.nonce, b""));
+    let bad_sig = sign(
+        b"not-the-secret-not-the-secret-00000000",
+        &string_to_sign("GET", &path, &wrong.ts.to_string(), &wrong.nonce, b""),
+    );
     cases.push(("wrong signature", request(&path, &wrong, Some(bad_sig))));
     let mut stale = Signed::new("voltec-portal", "k1", SECRET_K1);
     stale.ts -= MAX_SKEW_SECS + 1;
@@ -204,26 +274,61 @@ async fn every_authentication_failure_is_the_same_401() {
     future.ts += MAX_SKEW_SECS + 1;
     cases.push(("future timestamp", request(&path, &future, None)));
     cases.push(("reused nonce", request(&path, &replayed, None)));
-    cases.push(("unknown consumer", request(&path, &Signed::new("acme-portal", "k1", SECRET_K1), None)));
-    cases.push(("unknown key id", request(&path, &Signed::new("voltec-portal", "k9", SECRET_K1), None)));
-    cases.push(("short secret", request(&path, &Signed::new("voltec-portal", "short", "short-secret"), None)));
+    cases.push((
+        "unknown consumer",
+        request(&path, &Signed::new("acme-portal", "k1", SECRET_K1), None),
+    ));
+    cases.push((
+        "unknown key id",
+        request(&path, &Signed::new("voltec-portal", "k9", SECRET_K1), None),
+    ));
+    cases.push((
+        "short secret",
+        request(
+            &path,
+            &Signed::new("voltec-portal", "short", "short-secret"),
+            None,
+        ),
+    ));
     // The path is part of the signature: a signature for mckale does not open gus.
     let other = Signed::new("voltec-portal", "k1", SECRET_K1);
-    let sig_for_mckale = sign(SECRET_K1.as_bytes(), &string_to_sign("GET", &path, &other.ts.to_string(), &other.nonce, b""));
-    cases.push(("signature for another path", request(&discord_path(GUS_DISCORD, "community.*"), &other, Some(sig_for_mckale))));
+    let sig_for_mckale = sign(
+        SECRET_K1.as_bytes(),
+        &string_to_sign("GET", &path, &other.ts.to_string(), &other.nonce, b""),
+    );
+    cases.push((
+        "signature for another path",
+        request(
+            &discord_path(GUS_DISCORD, "community.*"),
+            &other,
+            Some(sig_for_mckale),
+        ),
+    ));
     cases.push(("missing headers", atest::TestRequest::get().uri(&path)));
 
     let mut bodies = Vec::new();
     for (name, req) in cases {
         let (s, b) = call!(app, req);
-        assert_eq!(s, StatusCode::UNAUTHORIZED, "{name}: {}", String::from_utf8_lossy(&b));
+        assert_eq!(
+            s,
+            StatusCode::UNAUTHORIZED,
+            "{name}: {}",
+            String::from_utf8_lossy(&b)
+        );
         bodies.push((name, b));
     }
     for (name, b) in &bodies {
-        assert_eq!(b, &br#"{"error":"unauthorized"}"#.to_vec(), "{name}: body differs");
+        assert_eq!(
+            b,
+            &br#"{"error":"unauthorized"}"#.to_vec(),
+            "{name}: body differs"
+        );
     }
     // Refused requests answered nothing and recorded no lookup.
-    assert_eq!(count(&pool, "SELECT COUNT(*) FROM consumer_lookups").await, 1);
+    assert_eq!(
+        count(&pool, "SELECT COUNT(*) FROM consumer_lookups").await,
+        1
+    );
 }
 
 #[actix_web::test]
@@ -235,14 +340,23 @@ async fn the_rate_limit_trips_per_consumer() {
     let app = app!(ctx);
     let path = discord_path(MCKALE_DISCORD, "community.*");
     for i in 0..3 {
-        let (s, _) = call!(app, request(&path, &Signed::new("voltec-portal", "k1", SECRET_K1), None));
+        let (s, _) = call!(
+            app,
+            request(&path, &Signed::new("voltec-portal", "k1", SECRET_K1), None)
+        );
         assert_eq!(s, StatusCode::OK, "request {i}");
     }
-    let (s, b) = call!(app, request(&path, &Signed::new("voltec-portal", "k1", SECRET_K1), None));
+    let (s, b) = call!(
+        app,
+        request(&path, &Signed::new("voltec-portal", "k1", SECRET_K1), None)
+    );
     assert_eq!(s, StatusCode::UNAUTHORIZED);
     assert_eq!(b, br#"{"error":"unauthorized"}"#.to_vec());
     // Another consumer has its own budget.
-    let (s, _) = call!(app, request(&path, &Signed::new("voltec-site", "k1", SITE_SECRET), None));
+    let (s, _) = call!(
+        app,
+        request(&path, &Signed::new("voltec-site", "k1", SITE_SECRET), None)
+    );
     assert_eq!(s, StatusCode::OK);
 }
 
@@ -256,10 +370,27 @@ async fn expired_nonces_are_swept() {
         .execute(&pool)
         .await
         .unwrap();
-    let (s, _) = call!(app, request(&discord_path(MCKALE_DISCORD, "community.*"), &Signed::new("voltec-portal", "k1", SECRET_K1), None));
+    let (s, _) = call!(
+        app,
+        request(
+            &discord_path(MCKALE_DISCORD, "community.*"),
+            &Signed::new("voltec-portal", "k1", SECRET_K1),
+            None
+        )
+    );
     assert_eq!(s, StatusCode::OK);
-    assert_eq!(count(&pool, "SELECT COUNT(*) FROM consumer_nonces WHERE nonce LIKE 'old-nonce%'").await, 0);
-    assert_eq!(count(&pool, "SELECT COUNT(*) FROM consumer_nonces").await, 1);
+    assert_eq!(
+        count(
+            &pool,
+            "SELECT COUNT(*) FROM consumer_nonces WHERE nonce LIKE 'old-nonce%'"
+        )
+        .await,
+        0
+    );
+    assert_eq!(
+        count(&pool, "SELECT COUNT(*) FROM consumer_nonces").await,
+        1
+    );
 }
 
 // ------------------------------------------------------------------ what a consumer sees
@@ -271,15 +402,28 @@ async fn a_scope_outside_the_allowlist_returns_nothing_more() {
     let signed = |p: &str| request(p, &Signed::new("voltec-portal", "k1", SECRET_K1), None);
 
     let (_, base) = call!(app, signed(&discord_path(MCKALE_DISCORD, "community.*")));
-    let (_, wider) = call!(app, signed(&discord_path(MCKALE_DISCORD, "community.*,roster.*,payouts.*,members.grant")));
+    let (_, wider) = call!(
+        app,
+        signed(&discord_path(
+            MCKALE_DISCORD,
+            "community.*,roster.*,payouts.*,members.grant"
+        ))
+    );
     let (base, wider) = (body(&base), body(&wider));
     assert_eq!(wider["permissions"], base["permissions"]);
     assert_eq!(wider["scopes_granted"], json!(["community.*"]));
 
-    let (s, outside) = call!(app, signed(&discord_path(MCKALE_DISCORD, "roster.*,payouts.read_own")));
+    let (s, outside) = call!(
+        app,
+        signed(&discord_path(MCKALE_DISCORD, "roster.*,payouts.read_own"))
+    );
     assert_eq!(s, StatusCode::OK);
     let outside = body(&outside);
-    assert_eq!(outside["permissions"], json!([]), "mckale holds roster.read_members and payouts.read_own; none may leave");
+    assert_eq!(
+        outside["permissions"],
+        json!([]),
+        "mckale holds roster.read_members and payouts.read_own; none may leave"
+    );
     assert_eq!(outside["scopes_granted"], json!([]));
 
     // A narrower request gets the narrower set.
@@ -287,8 +431,19 @@ async fn a_scope_outside_the_allowlist_returns_nothing_more() {
     assert_eq!(body(&narrow)["permissions"], json!(["community.post"]));
 
     // The refused scopes are on the audit record.
-    let a = crate::audit::list(&pool, &crate::audit::AuditFilter { action: Some("portal.lookup".into()), ..Default::default() }).await.unwrap();
-    assert_eq!(a.entries[1].detail["scopes_refused"], json!(["roster.*", "payouts.*", "members.grant"]));
+    let a = crate::audit::list(
+        &pool,
+        &crate::audit::AuditFilter {
+            action: Some("portal.lookup".into()),
+            ..Default::default()
+        },
+    )
+    .await
+    .unwrap();
+    assert_eq!(
+        a.entries[1].detail["scopes_refused"],
+        json!(["roster.*", "payouts.*", "members.grant"])
+    );
 }
 
 #[actix_web::test]
@@ -302,8 +457,19 @@ async fn voltec_never_receives_a_permission_outside_community() {
     assert!(st.permissions.contains("community.events"));
 
     let app = app!(ctx);
-    for scopes in ["community.*", "community.*,payouts.*,members.*,audit.*,roster.*,policy.*,consumers.*", "payouts.approve"] {
-        let (s, b) = call!(app, request(&discord_path(GUS_DISCORD, scopes), &Signed::new("voltec-portal", "k1", SECRET_K1), None));
+    for scopes in [
+        "community.*",
+        "community.*,payouts.*,members.*,audit.*,roster.*,policy.*,consumers.*",
+        "payouts.approve",
+    ] {
+        let (s, b) = call!(
+            app,
+            request(
+                &discord_path(GUS_DISCORD, scopes),
+                &Signed::new("voltec-portal", "k1", SECRET_K1),
+                None
+            )
+        );
         assert_eq!(s, StatusCode::OK);
         let v = body(&b);
         let perms: Vec<String> = serde_json::from_value(v["permissions"].clone()).unwrap();
@@ -322,19 +488,38 @@ async fn subjects_are_pairwise_and_stable() {
     let (ctx, _, _) = ctx_with(Some(voltec_files())).await;
     let app = app!(ctx);
     let path = discord_path(MCKALE_DISCORD, "community.*");
-    let (_, a1) = call!(app, request(&path, &Signed::new("voltec-portal", "k1", SECRET_K1), None));
-    let (_, a2) = call!(app, request(&path, &Signed::new("voltec-portal", "k2", SECRET_K2), None));
-    let (_, b1) = call!(app, request(&path, &Signed::new("voltec-site", "k1", SITE_SECRET), None));
-    let (a1, a2, b1) = (body(&a1)["subject"].clone(), body(&a2)["subject"].clone(), body(&b1)["subject"].clone());
+    let (_, a1) = call!(
+        app,
+        request(&path, &Signed::new("voltec-portal", "k1", SECRET_K1), None)
+    );
+    let (_, a2) = call!(
+        app,
+        request(&path, &Signed::new("voltec-portal", "k2", SECRET_K2), None)
+    );
+    let (_, b1) = call!(
+        app,
+        request(&path, &Signed::new("voltec-site", "k1", SITE_SECRET), None)
+    );
+    let (a1, a2, b1) = (
+        body(&a1)["subject"].clone(),
+        body(&a2)["subject"].clone(),
+        body(&b1)["subject"].clone(),
+    );
     assert_eq!(a1, a2, "the same consumer always gets the same subject");
-    assert_ne!(a1, b1, "two consumers get different subjects for the same member");
+    assert_ne!(
+        a1, b1,
+        "two consumers get different subjects for the same member"
+    );
     let a1 = a1.as_str().unwrap().to_string();
     assert!(a1.starts_with("sub_") && a1.len() == 36, "{a1}");
     assert!(!a1.contains("mckale"));
 
     // The subject endpoint answers its own consumer with the same member.
     let p = format!("/api/v1/members/{a1}?scopes=community.*");
-    let (s, b) = call!(app, request(&p, &Signed::new("voltec-portal", "k1", SECRET_K1), None));
+    let (s, b) = call!(
+        app,
+        request(&p, &Signed::new("voltec-portal", "k1", SECRET_K1), None)
+    );
     assert_eq!(s, StatusCode::OK);
     assert_eq!(body(&b)["subject"], json!(a1));
 }
@@ -345,14 +530,32 @@ async fn unknown_and_invisible_members_get_the_identical_404() {
     let app = app!(ctx);
     let site_subject = subject_for(SUBJECT_KEY.as_bytes(), "default", "voltec-site", "mckale");
     let paths = [
-        ("unknown discord id", discord_path("399999999999999999", "community.*")),
-        ("slack id in an org without [slack]", "/api/v1/members/by-slack/T1000000000/U1000000102?scopes=community.*".to_string()),
-        ("another consumer's subject", format!("/api/v1/members/{site_subject}?scopes=community.*")),
-        ("unknown subject", format!("/api/v1/members/sub_{}?scopes=community.*", "0".repeat(32))),
-        ("not a subject", "/api/v1/members/mckale?scopes=community.*".to_string()),
+        (
+            "unknown discord id",
+            discord_path("399999999999999999", "community.*"),
+        ),
+        (
+            "slack id in an org without [slack]",
+            "/api/v1/members/by-slack/T1000000000/U1000000102?scopes=community.*".to_string(),
+        ),
+        (
+            "another consumer's subject",
+            format!("/api/v1/members/{site_subject}?scopes=community.*"),
+        ),
+        (
+            "unknown subject",
+            format!("/api/v1/members/sub_{}?scopes=community.*", "0".repeat(32)),
+        ),
+        (
+            "not a subject",
+            "/api/v1/members/mckale?scopes=community.*".to_string(),
+        ),
     ];
     for (name, p) in paths {
-        let (s, b) = call!(app, request(&p, &Signed::new("voltec-portal", "k1", SECRET_K1), None));
+        let (s, b) = call!(
+            app,
+            request(&p, &Signed::new("voltec-portal", "k1", SECRET_K1), None)
+        );
         assert_eq!(s, StatusCode::NOT_FOUND, "{name}");
         assert_eq!(b, br#"{"error":"not_found"}"#.to_vec(), "{name}");
     }
@@ -360,7 +563,14 @@ async fn unknown_and_invisible_members_get_the_identical_404() {
     // With no CRA snapshot active, every lookup is the same 404.
     let (none, _, _) = ctx_with(None).await;
     let app = app!(none);
-    let (s, b) = call!(app, request(&discord_path(MCKALE_DISCORD, "community.*"), &Signed::new("voltec-portal", "k1", SECRET_K1), None));
+    let (s, b) = call!(
+        app,
+        request(
+            &discord_path(MCKALE_DISCORD, "community.*"),
+            &Signed::new("voltec-portal", "k1", SECRET_K1),
+            None
+        )
+    );
     assert_eq!(s, StatusCode::NOT_FOUND);
     assert_eq!(b, br#"{"error":"not_found"}"#.to_vec());
 }
@@ -378,15 +588,31 @@ async fn a_slack_member_is_found_only_in_the_cra_team() {
         payouts: include_str!("../../examples/cra/eustress-engine/.msync/payouts.toml").into(),
     };
     activate(&handle, &files);
-    let secrets: SecretLookup = Arc::new(|n: &str| (n == "MSYNC_CONSUMER_SECRET_EUSTRESS_SITE_K1").then(|| SECRET_K1.to_string()));
+    let secrets: SecretLookup = Arc::new(|n: &str| {
+        (n == "MSYNC_CONSUMER_SECRET_EUSTRESS_SITE_K1").then(|| SECRET_K1.to_string())
+    });
     let mut c = PortalContext::new(pool, handle, secrets, Some(SUBJECT_KEY.into()));
     c.today = Some(today());
     let ctx = Arc::new(c);
     let app = app!(ctx);
-    let (s, b) = call!(app, request("/api/v1/members/by-slack/T1000000000/U1000000102?scopes=community.*", &Signed::new("eustress-site", "k1", SECRET_K1), None));
+    let (s, b) = call!(
+        app,
+        request(
+            "/api/v1/members/by-slack/T1000000000/U1000000102?scopes=community.*",
+            &Signed::new("eustress-site", "k1", SECRET_K1),
+            None
+        )
+    );
     assert_eq!(s, StatusCode::OK, "{}", String::from_utf8_lossy(&b));
     assert_eq!(body(&b)["positions"], json!([{"title": "Lead Maintainer"}]));
-    let (s, b) = call!(app, request("/api/v1/members/by-slack/T9999999999/U1000000102?scopes=community.*", &Signed::new("eustress-site", "k1", SECRET_K1), None));
+    let (s, b) = call!(
+        app,
+        request(
+            "/api/v1/members/by-slack/T9999999999/U1000000102?scopes=community.*",
+            &Signed::new("eustress-site", "k1", SECRET_K1),
+            None
+        )
+    );
     assert_eq!(s, StatusCode::NOT_FOUND);
     assert_eq!(b, br#"{"error":"not_found"}"#.to_vec());
 }
@@ -399,15 +625,32 @@ async fn a_suspended_member_gets_status_and_an_empty_permission_list() {
     files.members = format!("{}{}", &files.members[..at], tail);
     let (ctx, _, _) = ctx_with(Some(files)).await;
     let app = app!(ctx);
-    let (s, b) = call!(app, request(&discord_path("300000000000000105", "community.*"), &Signed::new("voltec-portal", "k1", SECRET_K1), None));
+    let (s, b) = call!(
+        app,
+        request(
+            &discord_path("300000000000000105", "community.*"),
+            &Signed::new("voltec-portal", "k1", SECRET_K1),
+            None
+        )
+    );
     assert_eq!(s, StatusCode::OK);
     let v = body(&b);
     assert_eq!(v["status"], "suspended");
     assert_eq!(v["permissions"], json!([]));
-    assert!(v.get("tier").is_none() && v.get("positions").is_none() && v.get("merit").is_none(), "{v}");
+    assert!(
+        v.get("tier").is_none() && v.get("positions").is_none() && v.get("merit").is_none(),
+        "{v}"
+    );
     // Even the one permission a suspension leaves in MSync (profile.self) is not handed out:
     // voltec-site may read profile.*.
-    let (s, b) = call!(app, request(&discord_path("300000000000000105", "community.*,profile.*"), &Signed::new("voltec-site", "k1", SITE_SECRET), None));
+    let (s, b) = call!(
+        app,
+        request(
+            &discord_path("300000000000000105", "community.*,profile.*"),
+            &Signed::new("voltec-site", "k1", SITE_SECRET),
+            None
+        )
+    );
     assert_eq!(s, StatusCode::OK);
     let v = body(&b);
     assert_eq!(v["scopes_granted"], json!(["community.*", "profile.*"]));
@@ -420,17 +663,46 @@ async fn a_field_outside_the_allowlist_is_omitted_not_null() {
     let (ctx, _, _) = ctx_with(Some(voltec_files())).await;
     let app = app!(ctx);
     // voltec-portal: tier, positions.title, merit.vested, permissions.
-    let (_, b) = call!(app, request(&discord_path(GUS_DISCORD, "community.*"), &Signed::new("voltec-portal", "k1", SECRET_K1), None));
+    let (_, b) = call!(
+        app,
+        request(
+            &discord_path(GUS_DISCORD, "community.*"),
+            &Signed::new("voltec-portal", "k1", SECRET_K1),
+            None
+        )
+    );
     let v = body(&b);
     let pos = v["positions"].as_array().unwrap();
     assert_eq!(pos.len(), 1);
-    assert_eq!(pos[0].as_object().unwrap().keys().collect::<Vec<_>>(), vec!["title"], "rank and expires_at are not allowed");
+    assert_eq!(
+        pos[0].as_object().unwrap().keys().collect::<Vec<_>>(),
+        vec!["title"],
+        "rank and expires_at are not allowed"
+    );
     // voltec-site: permissions only.
-    let (_, b) = call!(app, request(&discord_path(GUS_DISCORD, "community.*"), &Signed::new("voltec-site", "k1", SITE_SECRET), None));
+    let (_, b) = call!(
+        app,
+        request(
+            &discord_path(GUS_DISCORD, "community.*"),
+            &Signed::new("voltec-site", "k1", SITE_SECRET),
+            None
+        )
+    );
     let v = body(&b);
     let mut keys: Vec<&String> = v.as_object().unwrap().keys().collect();
     keys.sort();
-    assert_eq!(keys, vec!["cache_ttl_seconds", "issued_at", "permissions", "policy_version", "scopes_granted", "status", "subject"]);
+    assert_eq!(
+        keys,
+        vec![
+            "cache_ttl_seconds",
+            "issued_at",
+            "permissions",
+            "policy_version",
+            "scopes_granted",
+            "status",
+            "subject"
+        ]
+    );
 }
 
 // ------------------------------------------------------------------ recording
@@ -443,10 +715,21 @@ async fn a_lookup_that_cannot_be_audited_is_not_answered() {
         .execute(&pool)
         .await
         .unwrap();
-    let (s, b) = call!(app, request(&discord_path(MCKALE_DISCORD, "community.*"), &Signed::new("voltec-portal", "k1", SECRET_K1), None));
+    let (s, b) = call!(
+        app,
+        request(
+            &discord_path(MCKALE_DISCORD, "community.*"),
+            &Signed::new("voltec-portal", "k1", SECRET_K1),
+            None
+        )
+    );
     assert_eq!(s, StatusCode::SERVICE_UNAVAILABLE);
     assert!(!String::from_utf8_lossy(&b).contains("community"));
-    assert_eq!(count(&pool, "SELECT COUNT(*) FROM consumer_lookups").await, 0, "recorded and audited together, or neither");
+    assert_eq!(
+        count(&pool, "SELECT COUNT(*) FROM consumer_lookups").await,
+        0,
+        "recorded and audited together, or neither"
+    );
 }
 
 #[actix_web::test]
@@ -456,13 +739,40 @@ async fn a_lookup_rate_above_the_threshold_raises_one_alert() {
     c.alert_lookups_per_hour = 2;
     let ctx = Arc::new(c);
     let app = app!(ctx);
-    for id in ["399999999999999991", "399999999999999992", "399999999999999993", "399999999999999994"] {
-        let _ = call!(app, request(&discord_path(id, "community.*"), &Signed::new("voltec-portal", "k1", SECRET_K1), None));
+    for id in [
+        "399999999999999991",
+        "399999999999999992",
+        "399999999999999993",
+        "399999999999999994",
+    ] {
+        let _ = call!(
+            app,
+            request(
+                &discord_path(id, "community.*"),
+                &Signed::new("voltec-portal", "k1", SECRET_K1),
+                None
+            )
+        );
     }
-    let a = crate::audit::list(&pool, &crate::audit::AuditFilter { action: Some("portal.lookup_alert".into()), ..Default::default() }).await.unwrap();
+    let a = crate::audit::list(
+        &pool,
+        &crate::audit::AuditFilter {
+            action: Some("portal.lookup_alert".into()),
+            ..Default::default()
+        },
+    )
+    .await
+    .unwrap();
     assert_eq!(a.entries.len(), 1, "once an hour, not once a request");
     assert_eq!(a.entries[0].detail["consumer"], json!("voltec-portal"));
-    assert_eq!(count(&pool, "SELECT COUNT(*) FROM consumer_lookups WHERE result = 'not_found'").await, 4);
+    assert_eq!(
+        count(
+            &pool,
+            "SELECT COUNT(*) FROM consumer_lookups WHERE result = 'not_found'"
+        )
+        .await,
+        4
+    );
 }
 
 #[actix_web::test]
@@ -470,10 +780,22 @@ async fn no_subject_key_means_no_answer() {
     let pool = pool().await;
     let handle = CraHandle::new();
     activate(&handle, &voltec_files());
-    let ctx = Arc::new(PortalContext::new(pool, handle, secrets(), Some("too-short".into())));
+    let ctx = Arc::new(PortalContext::new(
+        pool,
+        handle,
+        secrets(),
+        Some("too-short".into()),
+    ));
     assert!(!ctx.subject_key_configured());
     let app = app!(ctx);
-    let (s, _) = call!(app, request(&discord_path(MCKALE_DISCORD, "community.*"), &Signed::new("voltec-portal", "k1", SECRET_K1), None));
+    let (s, _) = call!(
+        app,
+        request(
+            &discord_path(MCKALE_DISCORD, "community.*"),
+            &Signed::new("voltec-portal", "k1", SECRET_K1),
+            None
+        )
+    );
     assert_eq!(s, StatusCode::SERVICE_UNAVAILABLE);
 }
 
@@ -496,13 +818,29 @@ fn the_worked_example_in_the_doc_matches() {
         "v1\nGET\n/api/v1/members/by-discord/300000000000000104?scopes=community.*\n1794470400\nAAECAwQFBgcICQoLDA0ODw\ne3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
     );
     assert_eq!(sign(SECRET_K1.as_bytes(), &sts), DOC_SIGNATURE);
-    assert!(DOC.contains(DOC_SIGNATURE), "docs/PORTAL_API.md must show the signature the code computes");
-    assert!(DOC.contains(SECRET_K1) && DOC.contains("AAECAwQFBgcICQoLDA0ODw") && DOC.contains("1794470400"));
-    assert_eq!(secret_env_name("voltec-portal", "k1"), "MSYNC_CONSUMER_SECRET_VOLTEC_PORTAL_K1");
+    assert!(
+        DOC.contains(DOC_SIGNATURE),
+        "docs/PORTAL_API.md must show the signature the code computes"
+    );
+    assert!(
+        DOC.contains(SECRET_K1)
+            && DOC.contains("AAECAwQFBgcICQoLDA0ODw")
+            && DOC.contains("1794470400")
+    );
+    assert_eq!(
+        secret_env_name("voltec-portal", "k1"),
+        "MSYNC_CONSUMER_SECRET_VOLTEC_PORTAL_K1"
+    );
     assert!(DOC.contains("MSYNC_CONSUMER_SECRET_VOLTEC_PORTAL_K1"));
     // The subjects the walkthrough shows.
-    for (consumer, expected) in [("voltec-portal", "sub_508b135828168375d957ebd223172547"), ("eustress-site", "sub_940b7c756e9c611a646c72f653dce73d")] {
-        assert_eq!(subject_for(SUBJECT_KEY.as_bytes(), "default", consumer, "mckale"), expected);
+    for (consumer, expected) in [
+        ("voltec-portal", "sub_508b135828168375d957ebd223172547"),
+        ("eustress-site", "sub_940b7c756e9c611a646c72f653dce73d"),
+    ] {
+        assert_eq!(
+            subject_for(SUBJECT_KEY.as_bytes(), "default", consumer, "mckale"),
+            expected
+        );
         assert!(DOC.contains(expected), "{expected} missing from the doc");
     }
 }
@@ -510,15 +848,25 @@ fn the_worked_example_in_the_doc_matches() {
 #[test]
 fn scope_intersection_rules() {
     let allow = vec!["community.*".to_string(), "profile.self".to_string()];
-    let eff = |r: &[&str]| effective_scopes(&r.iter().map(|s| s.to_string()).collect::<Vec<_>>(), &allow);
+    let eff =
+        |r: &[&str]| effective_scopes(&r.iter().map(|s| s.to_string()).collect::<Vec<_>>(), &allow);
     assert_eq!(eff(&["community.*"]), vec!["community.*"]);
     assert_eq!(eff(&["community.post"]), vec!["community.post"]);
     assert_eq!(eff(&["profile.*"]), vec!["profile.self"]);
     assert_eq!(eff(&["payouts.*", "*"]), Vec::<String>::new());
     assert_eq!(eff(&[]), Vec::<String>::new());
-    assert!(permission_in_scopes("community.post", &["community.*".into()]));
-    assert!(!permission_in_scopes("communityx.post", &["community.*".into()]));
-    assert!(!permission_in_scopes("payouts.approve", &["community.*".into()]));
+    assert!(permission_in_scopes(
+        "community.post",
+        &["community.*".into()]
+    ));
+    assert!(!permission_in_scopes(
+        "communityx.post",
+        &["community.*".into()]
+    ));
+    assert!(!permission_in_scopes(
+        "payouts.approve",
+        &["community.*".into()]
+    ));
 }
 
 fn eustress_files() -> CraFiles {
@@ -552,14 +900,37 @@ fn the_walkthrough_in_the_doc_matches() {
             commit_sha: "c0ffee".into(),
             loaded_at: issued.into(),
             actor: None,
-            repo: CraRepo::new(crate::foundry::FoundryProvider::GitHub, "github.com", "example/cra"),
+            repo: CraRepo::new(
+                crate::foundry::FoundryProvider::GitHub,
+                "github.com",
+                "example/cra",
+            ),
             snapshot,
         };
-        let c = active.snapshot.org.consumers.iter().find(|c| c.key == consumer).unwrap().clone();
+        let c = active
+            .snapshot
+            .org
+            .consumers
+            .iter()
+            .find(|c| c.key == consumer)
+            .unwrap()
+            .clone();
         let member = active.snapshot.member("mckale").unwrap().clone();
-        let granted = effective_scopes(&requested.iter().map(|s| s.to_string()).collect::<Vec<_>>(), &c.scopes);
+        let granted = effective_scopes(
+            &requested.iter().map(|s| s.to_string()).collect::<Vec<_>>(),
+            &c.scopes,
+        );
         let subject = subject_for(SUBJECT_KEY.as_bytes(), "default", consumer, "mckale");
-        member_view(&active, &c, &member, &subject, 0, &granted, NaiveDate::from_ymd_opt(2026, 11, 21).unwrap(), issued)
+        member_view(
+            &active,
+            &c,
+            &member,
+            &subject,
+            0,
+            &granted,
+            NaiveDate::from_ymd_opt(2026, 11, 21).unwrap(),
+            issued,
+        )
     };
     let voltec = view(&voltec_files(), "voltec-portal", &["community.*"]);
     assert_eq!(
@@ -577,7 +948,11 @@ fn the_walkthrough_in_the_doc_matches() {
             "cache_ttl_seconds": 60
         })
     );
-    let eustress = view(&eustress_files(), "eustress-site", &["community.*", "profile.*"]);
+    let eustress = view(
+        &eustress_files(),
+        "eustress-site",
+        &["community.*", "profile.*"],
+    );
     assert_eq!(
         eustress,
         json!({
@@ -613,7 +988,11 @@ async fn weave_answers_every_request_with_401() {
     let app = app!(ctx);
     let (s, b) = call!(
         app,
-        request("/api/v1/members/by-slack/T2000000000/U2000000102?scopes=community.*", &Signed::new("voltec-portal", "k1", SECRET_K1), None)
+        request(
+            "/api/v1/members/by-slack/T2000000000/U2000000102?scopes=community.*",
+            &Signed::new("voltec-portal", "k1", SECRET_K1),
+            None
+        )
     );
     assert_eq!(s, StatusCode::UNAUTHORIZED);
     assert_eq!(b, br#"{"error":"unauthorized"}"#.to_vec());
