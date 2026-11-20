@@ -509,7 +509,8 @@ pub fn unverified_payout_text(p: ChatPlatform) -> String {
 }
 
 /// `payout-setup`: the caller's private Stripe onboarding link. Only for a verified caller:
-/// a CRA-attested member (or, later, an OAuth-proven binding).
+/// a CRA-attested member, or a binding proven by OAuth sign-in (the chat account and the
+/// GitHub or GitLab login both proven for one MSync account).
 pub async fn payout_setup(ctx: &ChatContext, actor: &ChatActor) -> ChatReply {
     use crate::payments::onboarding;
     let p = actor.platform;
@@ -528,7 +529,15 @@ pub async fn payout_setup(ctx: &ChatContext, actor: &ChatActor) -> ChatReply {
                 p.command(ChatCommand::PayoutSetup)
             ))
         }
-        Ok(Caller::Bound(b)) if !b.verified => return ChatReply::private(unverified_payout_text(p)),
+        Ok(Caller::Bound(b))
+            if !b.verified
+                && (crate::accounts::mutant::on("payout_ignores_oauth")
+                    || !crate::accounts::chat_binding_is_verified(&ctx.pool, p, actor.storage_team(), &actor.user_id, &b.contributor)
+                        .await
+                        .unwrap_or(false)) =>
+        {
+            return ChatReply::private(unverified_payout_text(p))
+        }
         Ok(Caller::Bound(b)) => b.contributor,
         Ok(Caller::Member { status, .. }) if status != MemberStatus::Active => {
             return ChatReply::private(format!("Your CRA membership is {}, so payouts cannot be set up.", status.as_str()))

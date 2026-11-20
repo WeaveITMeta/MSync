@@ -421,11 +421,9 @@ fn payee_key_identity(key: &str) -> Option<(crate::foundry::FoundryProvider, Opt
     (!login.is_empty()).then(|| (p, host, login.to_string()))
 }
 
-/// Seam for the accounts worker: a completed OAuth sign-in marks a code-host identity verified
-/// (contract 13.4). Replace the body with
-/// `crate::accounts::login_is_verified(pool, provider, login).await` once `src/accounts` lands.
-async fn account_login_verified(_pool: &SqlitePool, _provider: &str, _login: &str) -> Result<bool, sqlx::Error> {
-    Ok(false)
+/// A completed OAuth sign-in marks a code-host identity verified (contract 13.4).
+async fn account_login_verified(pool: &SqlitePool, provider: crate::foundry::FoundryProvider, login: &str) -> Result<bool, sqlx::Error> {
+    crate::accounts::login_is_verified(pool, provider, login).await
 }
 
 /// Is the identity a ledger row pays (its payee key) verified? Yes when any of:
@@ -458,7 +456,7 @@ pub async fn payee_identity_verified(pool: &SqlitePool, key: &str) -> Result<boo
         return Ok(true);
     }
     let Some((provider, host, login)) = payee_key_identity(&key) else { return Ok(false) };
-    if account_login_verified(pool, provider.as_str(), &login).await? {
+    if account_login_verified(pool, provider, &login).await? {
         return Ok(true);
     }
     let Some(row) = crate::cra::store::active(pool, crate::cra::loader::ORG_ID).await? else { return Ok(false) };

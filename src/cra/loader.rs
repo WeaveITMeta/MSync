@@ -280,6 +280,12 @@ pub async fn load_commit(
         Activation::Activated(id) => {
             info!("CRA commit {} activated as snapshot {} by {}", sha, id, ctx.actor);
             let identity_links = link_member_identities(pool, &new).await;
+            // Contract 12.3: a member this snapshot suspends or removes loses their OAuth tokens.
+            match crate::oauth::revoke_inactive_member_grants(pool, &new).await {
+                Ok(0) => {}
+                Ok(n) => info!("CRA snapshot {}: revoked {} OAuth token families of members who are not active", id, n),
+                Err(e) => error!("CRA snapshot {}: revoking OAuth tokens of inactive members failed: {}", id, e),
+            }
             Ok(LoadOutcome::Activated {
                 snapshot_id: id,
                 commit_sha: sha,

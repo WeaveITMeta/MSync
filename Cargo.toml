@@ -64,6 +64,13 @@ toml = "0.8"
 # Async traits
 async-trait = "0.1"
 
+# MSync as an OAuth/OIDC provider: ES256 signing and AES-256-GCM sealing of the stored signing
+# key. ring 0.17 is already compiled into the tree (rustls, jsonwebtoken), so this adds no new
+# code; it is pure Rust plus audited assembly, no OpenSSL.
+ring = "0.17"
+# base64url for JWTs and PKCE; already in the tree through reqwest and octocrab.
+base64 = "0.22"
+
 [build-dependencies]
 chrono = "0.4"
 

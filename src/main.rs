@@ -58,6 +58,7 @@ async fn main() -> Result<()> {
     info!("Tracked payout branches: {:?}", payment_config.branches);
 
     let stripe_api: Arc<dyn payments::StripeApi> = Arc::new(stripe_client);
+    let payment_config_public_url = payment_config.public_url.clone();
 
     // Discord HTTP client for webhook use. Without Discord it is never called.
     let discord_http = Arc::new(serenity::http::Http::new(
@@ -223,6 +224,23 @@ async fn main() -> Result<()> {
     let mcp_data = web::Data::new(mcp::McpContext::new(mcp_api_ctx, merit_ctx.clone(), allow_mcp_execute));
     let merit_data = web::Data::new(merit_ctx);
 
+    // Accounts and sign-in (contract 13.4), and MSync as an OAuth/OIDC provider (12.3).
+    let accounts_ctx =
+        msync::accounts::AccountsContext::from_env(db_pool.clone(), &payment_config_public_url, cra_handle.clone());
+    let mut sign_in: Vec<msync::accounts::Provider> = accounts_ctx.providers.keys().copied().collect();
+    sign_in.sort_by_key(|p| p.as_str());
+    if sign_in.is_empty() {
+        info!("No sign-in provider enabled (set MSYNC_OAUTH_<PROVIDER>_CLIENT_ID and _CLIENT_SECRET; docs/SIGN_IN.md)");
+    } else {
+        info!("Sign-in providers: {:?}", sign_in.iter().map(|p| p.as_str()).collect::<Vec<_>>());
+    }
+    let oauth_ctx = msync::oauth::OAuthContext::from_env(db_pool.clone(), &payment_config_public_url, cra_handle.clone(), sign_in);
+    if oauth_ctx.kek.is_none() {
+        info!("MSync OAuth provider disabled (MSYNC_KEY_ENCRYPTION_KEY unset); /oauth/* answers 503");
+    }
+    let accounts_data = web::Data::new(accounts_ctx);
+    let oauth_data = web::Data::new(oauth_ctx);
+
     // Start Actix web server
     info!("Starting web server on {}:{}", config.server.host, config.server.port);
 
@@ -235,6 +253,8 @@ async fn main() -> Result<()> {
             .app_data(mcp_data.clone())
             .app_data(slack_data.clone())
             .app_data(portal_data.clone())
+            .app_data(accounts_data.clone())
+            .app_data(oauth_data.clone())
             .wrap(middleware::Logger::default())
             .wrap(middleware::NormalizePath::trim())
             .service(routes::health_check)
@@ -256,6 +276,8 @@ async fn main() -> Result<()> {
             .configure(mcp::configure)
             .configure(msync::audit::api::configure)
             .configure(msync::portal::configure)
+            .configure(msync::accounts::routes::configure)
+            .configure(msync::oauth::configure)
     })
     .bind((config.server.host.as_str(), config.server.port))?
     .run()
