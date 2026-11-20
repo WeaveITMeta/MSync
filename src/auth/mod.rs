@@ -33,6 +33,8 @@ pub mod scopes {
     pub const INVOICES_SUBMIT: &str = "invoices.submit";
     pub const INVOICES_READ: &str = "invoices.read";
     pub const INVOICES_APPROVE: &str = "invoices.approve";
+    // MSync as an OAuth provider (contract 12.3): register platforms, rotate the signing key.
+    pub const OAUTH_CLIENTS: &str = "oauth.clients";
 
     pub const ALL: &[&str] = &[
         HIERARCHY_READ,
@@ -52,6 +54,7 @@ pub mod scopes {
         INVOICES_SUBMIT,
         INVOICES_READ,
         INVOICES_APPROVE,
+        OAUTH_CLIENTS,
     ];
 }
 
