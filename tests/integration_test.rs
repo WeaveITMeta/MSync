@@ -14,17 +14,17 @@ async fn test_database_operations(pool: SqlitePool) {
     // Create a contributor
     let contributor = Contributor::new("test_user".to_string());
     
-    let result = sqlx::query!(
+    let result = sqlx::query(
         "INSERT INTO contributors (id, github_username, total_merit_points, current_role, 
          contributions_count, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
-        contributor.id,
-        contributor.github_username,
-        contributor.total_merit_points,
-        contributor.current_role,
-        contributor.contributions_count,
-        contributor.created_at,
-        contributor.updated_at
     )
+    .bind(contributor.id)
+    .bind(&contributor.github_username)
+    .bind(contributor.total_merit_points)
+    .bind(&contributor.current_role)
+    .bind(contributor.contributions_count)
+    .bind(contributor.created_at)
+    .bind(contributor.updated_at)
     .execute(&pool)
     .await;
     

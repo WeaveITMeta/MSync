@@ -112,14 +112,12 @@ impl DiscordSyncService {
     }
 
     pub async fn create_discord_roles(&self, guild_id: GuildId) -> Result<()> {
-        let merit_roles = sqlx::query!(
-            "SELECT role_name, permissions_level FROM merit_roles"
-        )
-        .fetch_all(&self.db_pool)
-        .await?;
+        let merit_roles: Vec<(String, i64)> = sqlx::query_as("SELECT role_name, permissions_level FROM merit_roles")
+            .fetch_all(&self.db_pool)
+            .await?;
 
-        for role in merit_roles {
-            let color = match role.permissions_level {
+        for (role_name, permissions_level) in merit_roles {
+            let color = match permissions_level {
                 5 => 0xFF0000, // Red for Maintainer
                 4 => 0xFF7F00, // Orange for Core Contributor
                 3 => 0xFFFF00, // Yellow for Active Contributor
@@ -131,7 +129,7 @@ impl DiscordSyncService {
                 .create_role(
                     &self.discord_http,
                     EditRole::new()
-                        .name(&role.role_name)
+                        .name(&role_name)
                         .colour(color)
                         .mentionable(false)
                         .hoist(true),
@@ -140,15 +138,13 @@ impl DiscordSyncService {
 
             // Update database with Discord role ID
             let new_role_id = new_role.id.get() as i64;
-            sqlx::query!(
-                "UPDATE merit_roles SET discord_role_id = ? WHERE role_name = ?",
-                new_role_id,
-                role.role_name
-            )
+            sqlx::query("UPDATE merit_roles SET discord_role_id = ? WHERE role_name = ?")
+                .bind(new_role_id)
+                .bind(&role_name)
             .execute(&self.db_pool)
             .await?;
 
-            info!("Created Discord role: {} (ID: {})", role.role_name, new_role.id);
+            info!("Created Discord role: {} (ID: {})", role_name, new_role.id);
         }
 
         Ok(())

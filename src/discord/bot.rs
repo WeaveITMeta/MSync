@@ -90,11 +90,9 @@ impl DiscordBot {
                     );
 
                     // Update contributor's current role in database
-                    sqlx::query!(
-                        "UPDATE contributors SET current_role = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
-                        role.role_name,
-                        contributor.id
-                    )
+                    sqlx::query("UPDATE contributors SET current_role = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?")
+                        .bind(&role.role_name)
+                        .bind(contributor.id)
                     .execute(&self.db_pool)
                     .await?;
                 }

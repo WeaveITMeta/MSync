@@ -59,27 +59,25 @@ impl MeritTracker {
                     0
                 }
             };
-            sqlx::query!(
+            sqlx::query(
                 "INSERT OR IGNORE INTO merit_roles (id, role_name, discord_role_id, 
                  required_merit_points, permissions_level, description, created_at) 
                  VALUES (?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)",
-                role_id,
-                role_name,
-                discord_role_id,
-                required_points,
-                permissions_level,
-                description
             )
+            .bind(role_id)
+            .bind(role_name)
+            .bind(discord_role_id)
+            .bind(required_points)
+            .bind(permissions_level)
+            .bind(description)
             .execute(&self.db_pool)
             .await?;
 
             // Keep existing rows in sync with configured Discord role IDs
             if discord_role_id != 0 {
-                sqlx::query!(
-                    "UPDATE merit_roles SET discord_role_id = ? WHERE role_name = ?",
-                    discord_role_id,
-                    role_name
-                )
+                sqlx::query("UPDATE merit_roles SET discord_role_id = ? WHERE role_name = ?")
+                    .bind(discord_role_id)
+                    .bind(role_name)
                 .execute(&self.db_pool)
                 .await?;
             }
@@ -126,11 +124,9 @@ impl MeritTracker {
             if let Some(role) = new_role {
                 if role.role_name != contributor.current_role {
                     // Update contributor's role
-                    sqlx::query!(
-                        "UPDATE contributors SET current_role = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
-                        role.role_name,
-                        contributor_id
-                    )
+                    sqlx::query("UPDATE contributors SET current_role = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?")
+                        .bind(&role.role_name)
+                        .bind(contributor_id)
                     .execute(&self.db_pool)
                     .await?;
 
@@ -148,15 +144,14 @@ impl MeritTracker {
     }
 
     pub async fn get_role_distribution(&self) -> Result<HashMap<String, i32>> {
-        let rows = sqlx::query!(
-            "SELECT current_role, COUNT(*) as count FROM contributors GROUP BY current_role"
-        )
-        .fetch_all(&self.db_pool)
-        .await?;
+        let rows: Vec<(String, i64)> =
+            sqlx::query_as("SELECT current_role, COUNT(*) as count FROM contributors GROUP BY current_role")
+                .fetch_all(&self.db_pool)
+                .await?;
 
         let mut distribution = HashMap::new();
-        for row in rows {
-            distribution.insert(row.current_role, row.count as i32);
+        for (role, count) in rows {
+            distribution.insert(role, count as i32);
         }
 
         Ok(distribution)
