@@ -8,6 +8,7 @@
 
 pub mod commands;
 pub mod identity;
+pub mod sync;
 
 #[cfg(test)]
 pub(crate) mod tests;

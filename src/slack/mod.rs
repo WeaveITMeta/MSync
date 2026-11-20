@@ -10,8 +10,14 @@
 //! Slack slash commands are workspace-global, so MSync's are prefixed: `/msync-link`,
 //! `/msync-stats`, `/msync-leaderboard`, `/msync-sync`, `/msync-payouts`,
 //! `/msync-payout-setup`. A private reply is `ephemeral`; any other is `in_channel`.
+//!
+//! Slack's three-second limit: a command that calls the Slack Web API or Stripe (`sync`,
+//! `payouts`, `payout-setup`) is answered at once with a short ephemeral "working" reply and
+//! finished in the background; the result is posted to the request's `response_url`. The
+//! signature, the body and the team are all checked before anything is acknowledged.
 
 pub mod api;
+pub mod sync;
 
 #[cfg(test)]
 mod tests;
@@ -25,7 +31,8 @@ use serde::Deserialize;
 use sha2::Sha256;
 use subtle::ConstantTimeEq;
 
-use crate::chat::{ChatActor, ChatCommand, ChatContext, ChatReply, ProjectionApplier, ProjectionPlan, SyncReport};
+use crate::chat::sync::{SyncRunner, Trigger};
+use crate::chat::{ChatActor, ChatCommand, ChatContext, ChatPlatform, ChatReply, ProjectionApplier, ProjectionPlan, SyncReport};
 
 pub use api::{SlackApi, SlackWebApi};
 
@@ -107,6 +114,17 @@ pub struct SlackState {
     /// `MSYNC_SLACK_TEAM_ID`, the team allowed besides the CRA's `[slack]` team.
     pub team_id: Option<String>,
     pub api: Arc<dyn SlackApi>,
+    /// Slack role sync (user groups); `sync` runs through it.
+    pub sync: Arc<SyncRunner>,
+}
+
+/// The acknowledgement for a deferred command.
+pub const WORKING_TEXT: &str = "⏳ Working on it. The result will appear here in a moment.";
+
+/// Commands that call the Slack Web API (the admin check, user groups) or Stripe, and so
+/// may take longer than Slack's three seconds.
+pub fn is_deferred(cmd: ChatCommand) -> bool {
+    !crate::chat::sync::mutant("slack_inline") && matches!(cmd, ChatCommand::Sync | ChatCommand::Payouts | ChatCommand::PayoutSetup)
 }
 
 impl SlackState {
@@ -135,12 +153,21 @@ impl SlackState {
 pub struct SlackOutcome {
     pub status: StatusCode,
     pub body: Option<serde_json::Value>,
+    /// The body is the "working" acknowledgement; the result goes to `response_url`.
+    pub deferred: bool,
 }
 
 impl SlackOutcome {
     fn reject(status: StatusCode) -> Self {
-        SlackOutcome { status, body: None }
+        SlackOutcome { status, body: None, deferred: false }
     }
+}
+
+async fn run_command(chat: &ChatContext, api: &Arc<dyn SlackApi>, sync: &Arc<SyncRunner>, form: &SlackCommandForm, cmd: ChatCommand) -> ChatReply {
+    let is_admin = if cmd.is_admin_only() { api.is_admin(&form.user_id).await } else { None };
+    let actor = ChatActor::slack(form.team_id.clone(), form.user_id.clone(), is_admin);
+    let applier = SlackApplier { api: api.clone(), sync: Some(sync.clone()) };
+    crate::chat::commands::run(chat, &actor, cmd, &form.text, &applier).await
 }
 
 /// Verify, parse, check the team, run the command. `now_unix` is passed in for tests.
@@ -153,7 +180,7 @@ pub async fn handle_command(
 ) -> SlackOutcome {
     // 1. Signature first; nothing in the body is looked at before it passes.
     let secret = state.signing_secret.as_deref().unwrap_or("");
-    if !verify_slack_signature(secret, timestamp, signature, body, now_unix) {
+    if !verify_slack_signature(secret, timestamp, signature, body, now_unix) && !crate::chat::sync::mutant("slack_skip_signature") {
         return SlackOutcome::reject(StatusCode::UNAUTHORIZED);
     }
     // 2. Parse.
@@ -167,17 +194,26 @@ pub async fn handle_command(
         tracing::warn!("Slack command from team {} refused: not the configured or CRA-listed team", form.team_id);
         return SlackOutcome::reject(StatusCode::FORBIDDEN);
     }
-    // 4. Run.
-    let reply = match command_for(&form.command) {
-        None => ChatReply::private("Unknown command"),
-        Some(cmd) => {
-            let is_admin = if cmd.is_admin_only() { state.api.is_admin(&form.user_id).await } else { None };
-            let actor = ChatActor::slack(form.team_id.clone(), form.user_id.clone(), is_admin);
-            let applier = SlackApplier { api: state.api.clone() };
-            crate::chat::commands::run(&state.chat, &actor, cmd, &form.text, &applier).await
-        }
+    // 4. Run: at once, or acknowledged now and finished through `response_url`.
+    let Some(cmd) = command_for(&form.command) else {
+        return SlackOutcome { status: StatusCode::OK, body: Some(reply_json(&ChatReply::private("Unknown command"))), deferred: false };
     };
-    SlackOutcome { status: StatusCode::OK, body: Some(reply_json(&reply)) }
+    match form.response_url.clone().filter(|u| !u.is_empty()) {
+        Some(url) if is_deferred(cmd) => {
+            let (chat, api, sync) = (state.chat.clone(), state.api.clone(), state.sync.clone());
+            tokio::spawn(async move {
+                let reply = run_command(&chat, &api, &sync, &form, cmd).await;
+                if let Err(e) = api.respond(&url, &reply_json(&reply)).await {
+                    tracing::warn!("Slack {} result not delivered to response_url: {}", form.command, e);
+                }
+            });
+            SlackOutcome { status: StatusCode::OK, body: Some(reply_json(&ChatReply::private(WORKING_TEXT))), deferred: true }
+        }
+        _ => {
+            let reply = run_command(&state.chat, &state.api, &state.sync, &form, cmd).await;
+            SlackOutcome { status: StatusCode::OK, body: Some(reply_json(&reply)), deferred: false }
+        }
+    }
 }
 
 #[post("/slack/commands")]
@@ -193,33 +229,23 @@ pub async fn slack_commands(req: HttpRequest, body: web::Bytes, state: web::Data
     }
 }
 
-/// Applies the CRA projection to Slack user groups.
+/// Applies the CRA projection to Slack user groups through the shared role sync
+/// (`crate::chat::sync`): the same reconcile, drift and hold rules as the timer.
 pub struct SlackApplier {
     pub api: Arc<dyn SlackApi>,
+    pub sync: Option<Arc<SyncRunner>>,
 }
 
 #[async_trait]
 impl ProjectionApplier for SlackApplier {
-    /// Set the full member list of every managed user group with `usergroups.users.update`.
-    /// Slack refuses an empty user group, so a group nobody should be in is left unchanged
-    /// and named in the reply.
+    /// An explicit `sync` by an authorized member: releases held drift pairs, then
+    /// reconciles every managed user group. Slack refuses an empty user group, so the last
+    /// member of a group is never removed; that is reported.
     async fn apply(&self, plan: &ProjectionPlan) -> SyncReport {
-        let mut report = SyncReport::default();
-        for (group, users) in plan.by_group() {
-            if users.is_empty() {
-                report.notes.push(format!("User group `{group}` left unchanged: Slack does not allow an empty user group."));
-                continue;
-            }
-            match self.api.set_usergroup_users(&group, &users).await {
-                Ok(()) => report.synced += 1,
-                Err(e) => {
-                    tracing::warn!("sync: Slack user group {} failed: {}", group, e);
-                    report.failed += 1;
-                    report.notes.push(format!("User group `{group}` failed: {e}"));
-                }
-            }
+        match &self.sync {
+            Some(runner) => runner.run_with_plan(Trigger::Command, plan).await.to_sync_report(ChatPlatform::Slack),
+            None => SyncReport { notes: vec!["Slack role sync is not running.".into()], ..Default::default() },
         }
-        report
     }
 
     /// No CRA: Slack user groups come from the CRA only, so there is nothing to apply.

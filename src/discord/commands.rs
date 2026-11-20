@@ -6,9 +6,9 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 use serenity::all::*;
-use tracing::warn;
 
-use crate::chat::{ChatActor, ChatCommand, ProjectionApplier, ProjectionPlan, SyncReport};
+use crate::chat::sync::{SyncRunner, Trigger};
+use crate::chat::{ChatActor, ChatCommand, ChatPlatform, ProjectionApplier, ProjectionPlan, SyncReport};
 use crate::services::discord_sync::DiscordSyncService;
 
 /// The caller as the shared commands see it. The admin flag is Discord's resolved
@@ -33,60 +33,29 @@ pub fn command_for(command: &CommandInteraction) -> Option<(ChatCommand, String)
     Some((cmd, arg))
 }
 
-/// Applies a projection to one Discord guild.
+/// Applies a projection to one Discord guild through the shared role sync
+/// (`crate::chat::sync`): the same reconcile, drift and hold rules as the timer.
 pub struct DiscordApplier {
     pub http: Arc<Http>,
     pub guild_id: Option<GuildId>,
     pub pool: sqlx::SqlitePool,
+    /// The Discord role sync runner; `None` when Discord role sync is not running.
+    pub sync: Option<Arc<SyncRunner>>,
 }
 
 #[async_trait]
 impl ProjectionApplier for DiscordApplier {
-    /// For every CRA member with a Discord id: add the managed roles they should hold and
-    /// remove the managed roles they should not. Members outside the CRA are left alone
-    /// (drift reconciliation is a later round).
+    /// An explicit `sync` by an authorized member (the command checked the rank): releases
+    /// held drift pairs, then reconciles every managed role. Members outside the CRA who
+    /// hold a managed role are drift and lose it.
     async fn apply(&self, plan: &ProjectionPlan) -> SyncReport {
-        let mut report = SyncReport::default();
-        let Some(guild_id) = self.guild_id else {
-            report.notes.push("Run this command inside the server.".into());
-            return report;
-        };
-        let managed: Vec<RoleId> = plan.managed.iter().filter_map(|r| r.parse::<u64>().ok()).map(RoleId::new).collect();
-        for user in &plan.users {
-            let Ok(uid) = user.parse::<u64>() else {
-                report.failed += 1;
-                continue;
-            };
-            let desired: Vec<RoleId> = plan.desired_for(user).iter().filter_map(|r| r.parse::<u64>().ok()).map(RoleId::new).collect();
-            let member = match guild_id.member(&self.http, UserId::new(uid)).await {
-                Ok(m) => m,
-                Err(e) => {
-                    warn!("sync: member {} not readable: {}", user, e);
-                    report.failed += 1;
-                    continue;
-                }
-            };
-            let mut ok = true;
-            for role in &managed {
-                let has = member.roles.contains(role);
-                let want = desired.contains(role);
-                let res = match (has, want) {
-                    (false, true) => member.add_role(&self.http, *role).await,
-                    (true, false) => member.remove_role(&self.http, *role).await,
-                    _ => Ok(()),
-                };
-                if let Err(e) = res {
-                    warn!("sync: role {} for {} failed: {}", role, user, e);
-                    ok = false;
-                }
-            }
-            if ok {
-                report.synced += 1;
-            } else {
-                report.failed += 1;
-            }
+        match &self.sync {
+            Some(runner) => runner.run_with_plan(Trigger::Command, plan).await.to_sync_report(ChatPlatform::Discord),
+            None => SyncReport {
+                notes: vec!["Discord role sync is not running (no bot token or no guild configured).".into()],
+                ..Default::default()
+            },
         }
-        report
     }
 
     /// No CRA: the pre-CRA merit roles from `merit_roles`.

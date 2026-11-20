@@ -7,7 +7,8 @@ MSync runs on Discord and on Slack with the same six commands. An organization c
 1. Go to https://discord.com/developers/applications and choose **New Application**.
 2. On **Bot**, create the bot, then turn on **Server Members Intent** and **Message Content Intent**.
 3. On **OAuth2**, **URL Generator**, pick the scopes `bot` and `applications.commands` and the bot permissions **Manage Roles**, **Send Messages** and **Read Message History**. Open the URL and add the bot to your server.
-4. In **Server Settings**, **Roles**, drag the MSync role above every role it should manage. Discord only lets a bot change roles below its own.
+4. In **Server Settings**, **Roles**, drag the MSync role above every role it should manage. Discord only lets a bot change roles below its own, and MSync refuses to manage a role at or above the bot's highest role (section 5).
+5. Give the bot **Send Messages** in the channel named by `[discord] alert_channel_id` in `org.toml`; drift and refusals are reported there.
 
 ## 2. Set the secrets
 
@@ -45,8 +46,36 @@ Treat the token like a password. Do not commit it. Restart MSync after setting t
 
 In `roles.toml`, give a role its Discord role id (`discord_role = "..."`; right-click the role, **Copy Role ID**). In `members.toml`, give each member their Discord user id.
 
-With a CRA, `/sync` gives every member in `members.toml` the roles their job titles carry and removes the managed roles they should not hold. Members who are not in `members.toml` are not changed. Without a CRA, `/sync` assigns the merit roles from the `DISCORD_ROLE_ID_*` settings, as before.
+With a CRA, MSync keeps every managed role equal to the CRA projection (section 5): members in `members.toml` get the roles their job titles carry, and anyone who holds a managed role without the CRA saying so loses it, including people who are not in `members.toml`. Without a CRA, `/sync` assigns the merit roles from the `DISCORD_ROLE_ID_*` settings, as before, and nothing runs on its own.
 
-## 5. Discord and Slack side by side
+## 5. Role sync and drift
 
-See `docs/SLACK.md`, section 6. In short: set `[discord]` and `[slack]` in `org.toml`, give roles both `discord_role` and `slack_usergroup`, and give members both `discord` and `slack` identities. One person is one contributor on both platforms.
+Discord roles are a projection of the CRA, never the truth. A role edited by hand never becomes truth: it is put back.
+
+**What is synced.** Only the managed roles: the `discord_role` ids in `roles.toml`. Every other role in the server is never read, compared or changed. For each managed role MSync computes who should hold it from the active snapshot (job titles, tiers from current merit, grants that have not expired, suspended members hold nothing) and applies the difference.
+
+**When.**
+
+| Trigger | What happens |
+|---|---|
+| A CRA snapshot is activated | A full reconcile, and every hold (below) is released. |
+| A member joins the server | A full reconcile, so the new member gets their roles at once. |
+| A member's roles change (`GUILD_MEMBER_UPDATE`) | A full reconcile, so a hand edit is reverted within seconds. MSync's own changes cause these events too; the run they cause finds nothing to do. |
+| Every `MSYNC_ROLE_SYNC_SECS` seconds (default 300; 0 turns the timer off) | A full reconcile. This also catches anything missed while MSync was down. |
+| `/sync` by an authorized member | A full reconcile, holds released, and the result in the reply. |
+
+Runs never overlap: one runner per platform, one lock, and triggers that arrive during a run are merged into one more run.
+
+**Drift.** A managed role that differs from the projection because someone changed it by hand is drift: a role granted by hand to someone the CRA does not give it to, a role removed by hand from someone the CRA gives it to, or a managed role held by anyone who is not a CRA member at all. MSync reverts it, records it in the `chat_drift_events` table (platform, role, member, direction, observed and reverted times), and posts it to the alert channel. A difference caused by the CRA itself (a new grant, an expired grant, a suspension, a merit change) is applied without an alert.
+
+**The hold (anti-flap).** MSync does not fight an edit war. After three reverts of the same role on the same member within an hour, it stops reverting that pair, posts one alert that the pair is held, and records the hold in `chat_drift_holds`. The pair stays held until the next CRA snapshot activation or an explicit `/sync` by an authorized member; after a release, the count starts over. The audit trail of who made the hand edit is in Discord's own audit log; MSync does not read it yet.
+
+**Refused roles.** A CRA role mapped to a Discord role that carries **Administrator**, **Manage Roles**, **Manage Server**, **Ban Members**, **Kick Members** or **Manage Webhooks** is not managed at all: MSync never reads, grants or removes it, posts the refusal to the alert channel once, and lists it in every `/sync` reply. Merit and job titles never confer authority over the server. Remove the permission from the role, or map a different role. The same refusal applies to a role at or above the bot's own highest role (Discord would reject the change anyway); move the MSync bot role above every managed role.
+
+**Failures.** A change counts as applied only after Discord accepts it. A failed change is retried on the next run, and repeating a run is always safe. A rate limit stops the run; it resumes on the next run after Discord's retry time. With no `DISCORD_TOKEN`, or no guild (`[discord] guild_id` in `org.toml`, else `DISCORD_GUILD_ID`), Discord role sync is skipped without error.
+
+**Stated limit.** A Discord member with Administrator can always change roles; MSync cannot prevent it. It guarantees the change is reverted, recorded and reported, and that it grants nothing in MSync.
+
+## 6. Discord and Slack side by side
+
+See `docs/SLACK.md`, section 7. In short: set `[discord]` and `[slack]` in `org.toml`, give roles both `discord_role` and `slack_usergroup`, and give members both `discord` and `slack` identities. One person is one contributor on both platforms.
