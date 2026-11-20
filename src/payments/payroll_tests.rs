@@ -151,7 +151,10 @@ async fn source_rows(pool: &SqlitePool) -> Vec<ledger::LedgerEntry> {
 }
 
 async fn count(pool: &SqlitePool, sql: &str) -> i64 {
-    sqlx::query_scalar(sql).fetch_one(pool).await.unwrap()
+    sqlx::query_scalar(sqlx::AssertSqlSafe(sql))
+        .fetch_one(pool)
+        .await
+        .unwrap()
 }
 
 /// Prepare and execute a run as the legacy admin at `now`. Returns the execute report.

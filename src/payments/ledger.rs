@@ -388,7 +388,7 @@ async fn claim_and_transfer(
             ));
         }
     }
-    let mut q = sqlx::query(&sql)
+    let mut q = sqlx::query(sqlx::AssertSqlSafe(sql))
         .bind(APPROVED)
         .bind(by)
         .bind(guard.and_then(|g| g.now.clone()))

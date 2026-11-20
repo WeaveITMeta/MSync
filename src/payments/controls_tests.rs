@@ -870,7 +870,7 @@ async fn a_dry_run_persists_nothing() {
     let count = |t: &'static str| {
         let pool = pool.clone();
         async move {
-            sqlx::query_scalar::<_, i64>(&format!("SELECT COUNT(*) FROM {t}"))
+            sqlx::query_scalar::<_, i64>(sqlx::AssertSqlSafe(format!("SELECT COUNT(*) FROM {t}")))
                 .fetch_one(&pool)
                 .await
                 .unwrap()

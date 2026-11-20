@@ -176,7 +176,10 @@ async fn bound(ctx: &ChatContext, actor: &ChatActor) -> Option<String> {
 }
 
 async fn count(pool: &SqlitePool, sql: &str) -> i64 {
-    sqlx::query_scalar(sql).fetch_one(pool).await.unwrap()
+    sqlx::query_scalar(sqlx::AssertSqlSafe(sql))
+        .fetch_one(pool)
+        .await
+        .unwrap()
 }
 
 // ------------------------------------------------------------------- link

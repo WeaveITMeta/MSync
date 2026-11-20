@@ -115,7 +115,7 @@ async fn load_people(pool: &SqlitePool, only: Option<&str>) -> Result<Vec<Person
         id = norm_id("id"),
         w = if only.is_some() { format!(" WHERE {} = ?", norm_id("id")) } else { String::new() }
     );
-    let mut q = sqlx::query(&sql);
+    let mut q = sqlx::query(sqlx::AssertSqlSafe(sql));
     if let Some(id) = only {
         q = q.bind(id.to_ascii_lowercase());
     }
@@ -141,7 +141,7 @@ async fn load_activity(pool: &SqlitePool, only: Option<&str>) -> Result<Vec<ActR
         id = norm_id("contributor_id"),
         w = if only.is_some() { format!(" WHERE {} = ?", norm_id("contributor_id")) } else { String::new() }
     );
-    let mut q = sqlx::query(&sql);
+    let mut q = sqlx::query(sqlx::AssertSqlSafe(sql));
     if let Some(id) = only {
         q = q.bind(id.to_ascii_lowercase());
     }

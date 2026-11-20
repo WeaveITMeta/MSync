@@ -249,7 +249,7 @@ fn score_args(levels: [u8; 6]) -> Value {
 }
 
 async fn count(pool: &SqlitePool, table: &str) -> i64 {
-    sqlx::query_scalar::<_, i64>(&format!("SELECT COUNT(*) FROM {table}"))
+    sqlx::query_scalar::<_, i64>(sqlx::AssertSqlSafe(format!("SELECT COUNT(*) FROM {table}")))
         .fetch_one(pool)
         .await
         .unwrap()
@@ -985,7 +985,7 @@ async fn tool_errors_never_contain_sql() {
         "payout_runs",
         "payout_ledger",
     ] {
-        sqlx::query(&format!("DROP TABLE {t}"))
+        sqlx::query(sqlx::AssertSqlSafe(format!("DROP TABLE {t}")))
             .execute(&pool)
             .await
             .unwrap();

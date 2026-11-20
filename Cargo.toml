@@ -15,14 +15,16 @@ actix-web = "4.5"
 actix-rt = "2.9"
 
 # Discord
-serenity = { version = "0.12", features = ["client", "gateway", "model", "framework", "standard_framework"] }
+serenity = { version = "0.12.5", features = ["client", "gateway", "model", "framework", "standard_framework"] }
 tokio = { version = "1.36", features = ["full"] }
 
 # Database
-sqlx = { version = "0.7", features = ["runtime-tokio-rustls", "sqlite", "migrate", "uuid", "chrono"] }
+# SQLite only: no TLS backend is needed (sqlx 0.9 split runtime and TLS features).
+sqlx = { version = "0.9", features = ["runtime-tokio", "sqlite", "migrate", "uuid", "chrono"] }
 
 # GitHub API
-octocrab = "0.34"
+# Defaults minus the JWT (GitHub App) auth, which is unused and would pull aws-lc-rs.
+octocrab = { version = "0.54", default-features = false, features = ["default-client", "follow-redirect", "retry", "rustls", "rustls-ring", "timeout", "tracing"] }
 
 # Serialization
 serde = { version = "1.0", features = ["derive"] }
@@ -30,7 +32,7 @@ serde_json = "1.0"
 
 # Configuration
 config = "0.14"
-dotenv = "0.15"
+dotenvy = "0.15"
 
 # Logging
 tracing = "0.1"
@@ -41,7 +43,7 @@ anyhow = "1.0"
 thiserror = "1.0"
 
 # HTTP client
-reqwest = { version = "0.11", features = ["json"] }
+reqwest = { version = "0.12", features = ["json"] }
 
 # Time handling
 chrono = { version = "0.4", features = ["serde"] }

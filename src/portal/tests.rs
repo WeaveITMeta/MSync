@@ -174,7 +174,10 @@ fn discord_path(id: &str, scopes: &str) -> String {
 }
 
 async fn count(pool: &SqlitePool, sql: &str) -> i64 {
-    sqlx::query_scalar(sql).fetch_one(pool).await.unwrap()
+    sqlx::query_scalar(sqlx::AssertSqlSafe(sql))
+        .fetch_one(pool)
+        .await
+        .unwrap()
 }
 
 // ------------------------------------------------------------------ authentication

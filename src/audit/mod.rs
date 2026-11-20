@@ -604,7 +604,7 @@ pub async fn list(pool: &SqlitePool, f: &AuditFilter) -> Result<AuditPage, sqlx:
         sql.push_str(" AND target = ?");
     }
     sql.push_str(" ORDER BY seq ASC LIMIT ?");
-    let mut q = sqlx::query(&sql).bind(f.after.unwrap_or(0));
+    let mut q = sqlx::query(sqlx::AssertSqlSafe(sql)).bind(f.after.unwrap_or(0));
     if let Some(a) = &f.actor {
         q = q.bind(a.clone());
     }

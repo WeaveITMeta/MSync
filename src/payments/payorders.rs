@@ -1468,7 +1468,7 @@ pub async fn xp_in_period(
         cid = norm_id("c.id"),
         aid = norm_id("a.contributor_id")
     );
-    let rows = sqlx::query(&sql)
+    let rows = sqlx::query(sqlx::AssertSqlSafe(sql))
         .bind(format_db_time(start))
         .bind(format_db_time(end))
         .fetch_all(pool)
@@ -1760,10 +1760,10 @@ async fn record_occurrence(
             let Some(p) = payees_found.get(pid) else {
                 continue;
             };
-            let contributor_id: Option<String> = sqlx::query_scalar(&format!(
+            let contributor_id: Option<String> = sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
                 "SELECT {} FROM contributors c JOIN payee_keys k ON k.payee_key = lower(c.github_username) WHERE k.payee_id = ? ORDER BY k.payee_key LIMIT 1",
                 norm_id("c.id")
-            ))
+            )))
             .bind(pid)
             .fetch_optional(&mut *tx)
             .await?;

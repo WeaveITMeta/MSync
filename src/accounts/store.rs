@@ -299,7 +299,7 @@ async fn propagate_chat_verification(
                     AND i.subject = chat_identities.team_or_guild || ':' || chat_identities.user_id)))
            AND contributor_id IN ({PROVEN_CONTRIBUTORS})"
     );
-    Ok(sqlx::query(&sql)
+    Ok(sqlx::query(sqlx::AssertSqlSafe(sql))
         .bind(account_id)
         .execute(conn)
         .await?
@@ -348,7 +348,7 @@ pub async fn chat_binding_is_verified(
                        AND c.id IN ({}))",
         PROVEN_CONTRIBUTORS.replace("?1", "i.account_id")
     );
-    let n: i64 = sqlx::query_scalar(&sql)
+    let n: i64 = sqlx::query_scalar(sqlx::AssertSqlSafe(sql))
         .bind("unused")
         .bind(provider)
         .bind(subject)

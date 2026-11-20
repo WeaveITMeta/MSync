@@ -244,7 +244,10 @@ fn ctx(pool: &SqlitePool, stripe: Arc<MockStripe>) -> ApiContext {
 }
 
 async fn count(pool: &SqlitePool, sql: &str) -> i64 {
-    sqlx::query_scalar(sql).fetch_one(pool).await.unwrap()
+    sqlx::query_scalar(sqlx::AssertSqlSafe(sql))
+        .fetch_one(pool)
+        .await
+        .unwrap()
 }
 
 async fn timesheet_rows(pool: &SqlitePool) -> Vec<ledger::LedgerEntry> {

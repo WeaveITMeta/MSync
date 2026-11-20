@@ -155,7 +155,10 @@ fn row_to_snapshot(r: &sqlx::sqlite::SqliteRow) -> Result<SnapshotRow, sqlx::Err
 /// The active snapshot row for an org.
 pub async fn active(pool: &SqlitePool, org_id: &str) -> Result<Option<SnapshotRow>, sqlx::Error> {
     let q = format!("SELECT {COLUMNS} FROM cra_snapshots WHERE org_id = ? AND status = 'active'");
-    let row = sqlx::query(&q).bind(org_id).fetch_optional(pool).await?;
+    let row = sqlx::query(sqlx::AssertSqlSafe(q))
+        .bind(org_id)
+        .fetch_optional(pool)
+        .await?;
     row.as_ref().map(row_to_snapshot).transpose()
 }
 
@@ -168,7 +171,7 @@ pub async fn final_for_commit(
     let q = format!(
         "SELECT {COLUMNS} FROM cra_snapshots WHERE org_id = ? AND commit_sha = ? AND retryable = 0"
     );
-    let row = sqlx::query(&q)
+    let row = sqlx::query(sqlx::AssertSqlSafe(q))
         .bind(org_id)
         .bind(sha)
         .fetch_optional(pool)
@@ -178,7 +181,10 @@ pub async fn final_for_commit(
 
 pub async fn get(pool: &SqlitePool, id: i64) -> Result<Option<SnapshotRow>, sqlx::Error> {
     let q = format!("SELECT {COLUMNS} FROM cra_snapshots WHERE id = ?");
-    let row = sqlx::query(&q).bind(id).fetch_optional(pool).await?;
+    let row = sqlx::query(sqlx::AssertSqlSafe(q))
+        .bind(id)
+        .fetch_optional(pool)
+        .await?;
     row.as_ref().map(row_to_snapshot).transpose()
 }
 
@@ -190,7 +196,7 @@ pub async fn recent(
 ) -> Result<Vec<SnapshotRow>, sqlx::Error> {
     let q =
         format!("SELECT {COLUMNS} FROM cra_snapshots WHERE org_id = ? ORDER BY id DESC LIMIT ?");
-    let rows = sqlx::query(&q)
+    let rows = sqlx::query(sqlx::AssertSqlSafe(q))
         .bind(org_id)
         .bind(limit.clamp(1, 200))
         .fetch_all(pool)
