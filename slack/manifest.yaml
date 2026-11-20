@@ -1,0 +1,50 @@
+# MSync (MeritSync) Slack app manifest. Create the app from this file at
+# https://api.slack.com/apps ("Create New App", "From an app manifest").
+# Replace https://msync.example.com with the public URL of your MSync service
+# in all six commands before you create the app. See docs/SLACK.md.
+display_information:
+  name: MSync
+  description: Merit, job titles and payouts from your organization's CRA.
+  background_color: "#1d2733"
+features:
+  bot_user:
+    display_name: MSync
+    always_online: false
+  slash_commands:
+    - command: /msync-link
+      url: https://msync.example.com/slack/commands
+      description: Link your GitHub or GitLab login, or see what the CRA lists for you
+      usage_hint: "<github-login> | gitlab:<login>"
+      should_escape: false
+    - command: /msync-stats
+      url: https://msync.example.com/slack/commands
+      description: Your contribution statistics
+      should_escape: false
+    - command: /msync-leaderboard
+      url: https://msync.example.com/slack/commands
+      description: The top contributors
+      should_escape: false
+    - command: /msync-sync
+      url: https://msync.example.com/slack/commands
+      description: Apply the CRA job titles to Slack user groups (admins only)
+      should_escape: false
+    - command: /msync-payouts
+      url: https://msync.example.com/slack/commands
+      description: Contribution payouts pending approval (admins only)
+      should_escape: false
+    - command: /msync-payout-setup
+      url: https://msync.example.com/slack/commands
+      description: Your private Stripe link to receive payouts
+      should_escape: false
+oauth_config:
+  scopes:
+    bot:
+      - commands
+      - users:read
+      - usergroups:read
+      - usergroups:write
+      - chat:write
+settings:
+  org_deploy_enabled: false
+  socket_mode_enabled: false
+  token_rotation_enabled: false

@@ -14,7 +14,7 @@ This document is the reference for the file formats, every validation rule, and 
 6. `payouts.toml`
 7. Policy fields and mode defaults
 8. Permission catalog
-9. Standing and the Discord projection
+9. Standing and the Discord and Slack projections
 10. The change plan
 11. Who may change what
 12. Walkthrough: Voltec Industries
@@ -25,8 +25,8 @@ This document is the reference for the file formats, every validation rule, and 
 
 | File | Holds |
 |---|---|
-| `org.toml` | Identity of the organization, mode, policy overrides, Discord guild, GitHub and GitLab repositories (`[[foundry]]`), portals (consumers), compartments, extra permissions |
-| `roles.toml` | Tiers (earned) and positions (appointed), with rank, title, permissions and Discord role |
+| `org.toml` | Identity of the organization, mode, policy overrides, Discord guild and Slack workspace, GitHub and GitLab repositories (`[[foundry]]`), portals (consumers), compartments, extra permissions |
+| `roles.toml` | Tiers (earned) and positions (appointed), with rank, title, permissions, Discord role and Slack user group |
 | `members.toml` | Members, their status, their identities, and the positions granted to them |
 | `merit.toml` | Rubric, scorers and merit events |
 | `payouts.toml` | Kill switch, schedule, limits, approvals, eligibility and rates |
@@ -36,6 +36,7 @@ This document is the reference for the file formats, every validation rule, and 
 - All errors are returned at once, across all five files.
 - Keys and ids (`org.slug`, role keys, member ids, consumer and compartment keys) use `[a-z0-9-]`, are not empty, and do not start or end with `-`.
 - Discord ids are snowflakes: 17 to 20 digits, written as strings.
+- Slack ids are uppercase letters and digits with a prefix for their kind: a team id starts with `T` (or `E` for an Enterprise Grid org), a user id with `U` or `W`, a user group id with `S`, a channel id with `C` or `G`. The prefix is followed by 8 to 20 more characters.
 - Dates are `YYYY-MM-DD`, either quoted (`"2027-11-01"`) or as a TOML date (`2027-11-01`).
 - The snapshot's content hash is SHA-256 over the five files in the order org, roles, members, merit, payouts. Each file is framed as its file name, a newline, its byte length, a newline, its bytes and a newline, so bytes cannot move from one file to the next without changing the hash.
 
@@ -59,9 +60,13 @@ template = "hybrid"            # optional, informational
 key = "community.mentor"       # surface.action
 class = "basic"                # basic | sensitive | authority
 
-[discord]                      # optional
+[discord]                      # optional; at least one of [discord] and [slack]
 guild_id = "300000000000000000"
 alert_channel_id = "300000000000000009"   # optional
+
+[slack]                        # optional; at least one of [discord] and [slack]
+team_id = "T3000000000"        # the workspace allowed to send commands
+alert_channel_id = "C3000000009"          # optional
 
 [[foundry]]                    # GitHub and GitLab repositories whose events count
 provider = "gitlab"            # github | gitlab
@@ -87,7 +92,9 @@ Validation rules:
 
 - `org.slug` is a valid key. `org.name` is not empty. `org.mode` is one of the four modes (section 7).
 - Every `[policy]` key is a known policy field (section 7), with the right type and a value from that field's allowed set. `consumers.subject_ids` accepts only `pairwise`.
+- At least one of `[discord]` and `[slack]` is present (`NoChatPlatform`). An organization runs Discord, Slack, or both; neither is the source of truth.
 - `discord.guild_id` and `discord.alert_channel_id` are snowflakes.
+- `slack.team_id` is a Slack team id and `slack.alert_channel_id` a Slack channel id (`InvalidSlackId`).
 - `permissions_extra`: each key has the shape `surface.action`, is not already in the catalog, and is declared once.
 - `foundry`: `repo` is `owner/name`; `host`, when set, is a bare host name; the same provider, host and repository is listed once (case-insensitive); `canonical` is required; a repository with `canonical = false` may not list `payout_branches`.
 - `consumer`: key valid and unique; each scope is either `surface.*` for a known surface or an exact known permission; each field is one of `status`, `tier`, `positions.title`, `positions.rank`, `positions.expires_at`, `merit.vested`, `permissions`.
@@ -105,6 +112,7 @@ kind = "tier"                  # tier (earned from merit) | position (appointed)
 rank = 10                      # 0..=999. 1000 is owners only.
 permissions = ["community.post", "community.vote"]
 discord_role = "300000000000000010"   # optional snowflake
+slack_usergroup = "S3000000010"       # optional Slack user group id
 min_merit = 50                 # tier only, required
 
 [[role]]
@@ -125,6 +133,7 @@ Validation rules:
 - Role keys are valid and unique. Titles are not empty.
 - `rank` is 0 to 999. Rank 1000 or above is refused: it is owners only and comes from engine configuration.
 - `discord_role` is a snowflake, unique across roles, and not the guild id (the `@everyone` role).
+- `slack_usergroup` is a Slack user group id and unique across roles (`DuplicateSlackUsergroup`). Slack has no roles, so a job title is projected as membership in that user group.
 - Every permission is in the catalog (section 8) or in `permissions_extra`, and is listed once per role.
 - A tier needs `min_merit`. A tier may not set `max_holders`, `term_days` or `merit_eligibility`. A position may not set `min_merit`.
 - A tier may not hold an authority-class permission unless the effective policy sets `promotion.merit_may_confer_authority = true`. This includes extra permissions declared with `class = "authority"`.
@@ -147,6 +156,7 @@ status = "active"              # active | suspended | removed
 github = "Simbuilder"
 gitlab = "simbuilder"
 discord = "300000000000000104"
+slack = "U3000000104"          # optional Slack user id
 
 [[member.grant]]               # appointed positions only; tiers are computed
 role = "engineer"
@@ -157,14 +167,14 @@ expires = "2027-04-30"         # see the expiry rules below
 Validation rules:
 
 - Member ids are valid and unique. Names are not empty.
-- An identity value belongs to at most one member. GitHub and GitLab logins compare case-insensitively; Discord ids compare exactly. Discord identities are snowflakes.
+- An identity value belongs to at most one member. GitHub and GitLab logins compare case-insensitively; Discord and Slack ids compare exactly. Discord identities are snowflakes; Slack identities are Slack user ids.
 - `grant.role` names an existing role, and that role is a position. A grant to a tier is refused: tiers are computed from merit, never granted.
 - `granted_by` names an existing member, and is not the grantee.
 - A member holds a given role at most once.
 - Expiry: a grant of a role at or above `grants.two_person_min_rank` needs `expires`, at most `grants.max_term_days` after the validation date. A grant of a role that sets `term_days` needs `expires`, at most `term_days` after the validation date. When both apply, the shorter limit wins. Because time only moves forward, a grant that was valid when loaded stays valid on every later load.
 - `max_holders`: live grants (member not removed, grant not expired on the validation date) may not exceed it.
 
-An identity listed here is proven by the administration. A contributor who is not in `members.toml` earns merit under their GitHub or GitLab login and links Discord by OAuth proof, never by typing a username.
+An identity listed here is proven by the administration. A contributor who is not in `members.toml` earns merit under their GitHub or GitLab login and links Discord or Slack by OAuth proof, never by typing a username. While a CRA is active, the chat `link` command binds nothing: it reports what `members.toml` says. A change to a member's `slack` identity is an identity change with exactly the authority and two-person rules of a `github` or `discord` change (section 11).
 
 ## 5. `merit.toml`
 
@@ -279,7 +289,7 @@ Every permission is `surface.action` with a class. Authority-class permissions c
 | sensitive | `roster.read_full`, `merit.read_all`, `payouts.read_all`, `audit.read_all`, `export.roster`, `export.audit` |
 | authority | `merit.award_manual`, `merit.clawback`, `members.invite`, `members.grant`, `members.approve_grant`, `members.revoke`, `members.suspend`, `members.ban`, `payouts.approve`, `policy.propose_change`, `policy.approve_change`, `compartment.manage`, `discord.reconcile`, `consumers.manage` |
 
-## 9. Standing and the Discord projection
+## 9. Standing and the Discord and Slack projections
 
 `standing(snapshot, member_id, vested_merit, today)` computes:
 
@@ -289,9 +299,12 @@ Every permission is `surface.action` with a class. Authority-class permissions c
 - **Permissions**: tier permissions (authority-class ones are dropped unless the policy allows them, even if a bad snapshot slipped through) plus the permissions of every active position.
 - **Titles**: position titles from highest rank down, then the tier title.
 - **Discord roles**: the `discord_role` of each active position and of the tier.
-- A suspended member keeps only `profile.self`, rank 0 and no Discord roles. A removed member keeps nothing.
+- **Slack user groups**: the `slack_usergroup` of each active position and of the tier.
+- A suspended member keeps only `profile.self`, rank 0, no Discord roles and no Slack user groups. A removed member keeps nothing.
 
 `discord_projection(snapshot, merits, today)` returns every `(discord_user_id, discord_role_id)` pair that should exist for members with a Discord identity, and the managed roles ordered from highest rank to lowest, so the job titles form the Discord role hierarchy.
+
+`slack_projection(snapshot, merits, today)` is its twin for Slack: every `(slack_user_id, usergroup_id)` pair that should exist for members with a Slack identity, and the managed user groups from highest rank to lowest. `/msync-sync` applies it by setting the full member list of each managed user group (`usergroups.users.update`). Slack refuses an empty user group, so a group nobody should be in is left unchanged and named in the reply.
 
 ## 10. The change plan
 
@@ -370,7 +383,7 @@ Where the contract left a point open, the code chose the following.
 - **Permissions as well as rank.** The contract's change rules are rank rules. The hierarchy document's grant rule (4.5), which the contract keeps, also requires the matching permission. The code requires both.
 - **Removing a grant** needs rank above both the role and the member (contract: the role; hierarchy doc: the member). The stricter of the two applies.
 - **Status changes and member entries** are two-person when the member's rank is at or above the threshold. The contract lists status changes as one-person; a suspension removes everything a revocation would, so it gets the same protection.
-- **Every other `org.toml` change** (`[[foundry]]` repositories, consumers, Discord, compartments, name) is two-person, like mode and policy. Repositories decide what pays and consumers decide what data leaves.
+- **Every other `org.toml` change** (`[[foundry]]` repositories, consumers, Discord, Slack, compartments, name) is two-person, like mode and policy. Repositories decide what pays and consumers decide what data leaves.
 - **Org-level changes** need rank above the higher of the old and new `grants.two_person_min_rank`.
 - **The approver may not be the actor** who merged, as well as not the author.
 - **Owners** may be listed as member ids or as `provider:login`. Only the second form can bootstrap.

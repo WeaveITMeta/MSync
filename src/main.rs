@@ -48,7 +48,6 @@ async fn main() -> Result<()> {
     // Initialize merit tracker
     let merit_tracker = Arc::new(RwLock::new(MeritTracker::new(db_pool.clone())));
 
-
     // Payment model (ledger + Stripe Connect). Transfers only happen on admin approve.
     let payment_config = Arc::new(PaymentConfig::from_env());
     let allow_live = msync::config::env_var("MSYNC_STRIPE_ALLOW_LIVE").map(|v| v == "true").unwrap_or(false);
