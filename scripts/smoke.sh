@@ -216,7 +216,7 @@ expect "each row drills down by repository (example-eustress/eustress-engine)" 2
   "any(r['github_username'] == 'ada-example' and any(b.get('repo') == 'example-eustress/eustress-engine' and b['points'] > 0 for b in r['by_repo']) for r in d['result']['leaderboard'])"
 expect "per-repository amounts add up to each total" 200 \
   "all(sum(b['points'] for b in r['by_repo']) == r['total_points'] for r in d['result']['leaderboard'])"
-req GET "/api/v1/leaderboard?repo=example-eustress/eustress-engine" -H "$(auth "$FOUNDER")"
+req GET "/api/v1/leaderboard?provider=github&repo=example-eustress/eustress-engine" -H "$(auth "$FOUNDER")"
 expect "the per-repository leaderboard ranks by that repository" 200 \
   "any(r['github_username'] == 'ada-example' for r in d['result']['leaderboard'])"
 
