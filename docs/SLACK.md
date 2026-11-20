@@ -23,7 +23,7 @@ MSync reads three settings. Set them where MSync runs, then restart it.
 | Variable | Where to find it | Required |
 |---|---|---|
 | `MSYNC_SLACK_SIGNING_SECRET` | App settings, **Basic Information**, **Signing Secret**. | Yes. Slack is on only when this is set. |
-| `MSYNC_SLACK_BOT_TOKEN` | **OAuth & Permissions**, **Bot User OAuth Token** (`xoxb-...`), after you install the app. | For admin checks and `/msync-sync`. |
+| `MSYNC_SLACK_BOT_TOKEN` | **OAuth & Permissions**, **Bot User OAuth Token** (`xoxb-...`), after you install the app. | For admin checks, role sync and alerts. Without it, Slack role sync is skipped. |
 | `MSYNC_SLACK_TEAM_ID` | Your workspace id (`T...`). It is in the workspace URL and in `team.info`. | Unless your CRA's `org.toml` has `[slack] team_id`. |
 
 Treat the signing secret and the bot token like passwords. Do not commit them.
@@ -73,11 +73,27 @@ slack_usergroup = "S0123456789"
 
 Create the user groups in Slack first (**People**, **User groups**), then copy each id into `roles.toml`. In `members.toml`, give each member their Slack user id (`slack = "U..."`; in Slack, open the profile, **More**, **Copy member ID**).
 
-`/msync-sync` sets the full member list of every user group a role names. Anyone in such a group who should not hold the title is removed from it. Slack does not allow an empty user group, so a group nobody should be in is left as it is and named in the reply.
+MSync keeps every managed user group equal to the CRA projection (section 6). Anyone in such a group who should not hold the title is removed from it. Slack does not allow an empty user group, so MSync never removes a group's last member; that change is reported as failed in the reply, and the group should be disabled in Slack or given a member in the CRA.
 
 User groups need a paid Slack plan (Pro or above). On a free plan, `/msync-sync` reports each group as failed (`paid_teams_only`), and every other command works. Some workspaces also limit who may change user groups; if so, allow the MSync app to manage them.
 
-## 6. Discord and Slack side by side
+## 6. Role sync and drift
+
+Slack user groups are a projection of the CRA, never the truth. The rules are the same as on Discord (`docs/DISCORD.md`, section 5), written once and run for both platforms.
+
+**What is synced.** Only the managed user groups: the `slack_usergroup` ids in `roles.toml`. Every other user group is never read or changed. A user group carries no permissions in Slack, so no user group is refused for its permissions.
+
+**When.** On CRA snapshot activation (holds released), every `MSYNC_ROLE_SYNC_SECS` seconds (default 300; 0 turns the timer off), and on `/msync-sync` by an authorized member (holds released). A member who joins the workspace is picked up by the next timer run; MSync does not subscribe to Slack's `team_join` event yet. Slack sends no event when a user group is edited by hand, so on Slack drift is caught by the timer, not at once.
+
+**Drift.** A managed user group changed by hand (someone added who should not be there, someone removed who should be, or anyone in it who is not a CRA member) is reverted, recorded in `chat_drift_events`, and posted to the channel named by `[slack] alert_channel_id` in `org.toml`. Invite the MSync app to that channel (`/invite @MSync`) so `chat:write` can post there.
+
+**The hold (anti-flap).** After three reverts of the same user group on the same member within an hour, MSync stops reverting that pair, posts one alert, and keeps it held until the next snapshot activation or an explicit `/msync-sync` by an authorized member.
+
+**Failures.** A change counts as applied only after Slack accepts it, and a failed change is retried on the next run. A rate limit (HTTP 429 or `ratelimited`) stops the run until Slack's `Retry-After` time has passed. Slack edits a user group by replacing its whole list, so MSync reads the list and writes it back for each change; a change made in Slack between the two can be overwritten, and is then caught as drift on a later run.
+
+**The three-second rule.** Slack waits three seconds for a slash command's answer. `/msync-sync`, `/msync-payouts` and `/msync-payout-setup` call the Slack Web API or Stripe, so they answer at once with a short private "working" reply and post the result to the request's `response_url` when it is ready. MSync posts only to `https://hooks.slack.com/` URLs. The signature, the body and the workspace are checked before anything is acknowledged; a request that fails the check gets no reply and starts no work.
+
+## 7. Discord and Slack side by side
 
 - Set both platforms in `org.toml`: `[discord]` with the guild id and `[slack]` with the team id. At least one is required.
 - A role can carry both `discord_role` and `slack_usergroup`. A member can carry both `discord` and `slack` identities. Changing a member's `slack` identity needs exactly the authority and the second approver that changing their `github` or `discord` identity needs.

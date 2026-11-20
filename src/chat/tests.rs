@@ -277,12 +277,12 @@ async fn payout_setup_refuses_every_unverified_binding_including_alices_own() {
 
 #[tokio::test]
 async fn bindings_from_before_this_change_are_unverified() {
-    // Run every migration except the chat one, write a binding the old way, then migrate.
+    // Run every migration before the chat one, write a binding the old way, then migrate.
     let pool = SqlitePoolOptions::new().max_connections(1).connect("sqlite::memory:").await.unwrap();
     let all = sqlx::migrate!("./migrations");
-    assert!(all.migrations.last().unwrap().description.contains("chat platforms"), "the chat migration must be last");
+    let chat = all.migrations.iter().position(|m| m.description.contains("chat platforms")).expect("the chat migration exists");
     let mut before = sqlx::migrate!("./migrations");
-    before.migrations = std::borrow::Cow::Owned(all.migrations[..all.migrations.len() - 1].to_vec());
+    before.migrations = std::borrow::Cow::Owned(all.migrations[..chat].to_vec());
     before.run(&pool).await.unwrap();
     sqlx::query("INSERT INTO contributors (id, github_username, discord_user_id, created_at, updated_at) VALUES (?, 'alice', 42, datetime('now'), datetime('now'))")
         .bind(uuid::Uuid::new_v4())

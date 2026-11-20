@@ -667,6 +667,7 @@ impl CraContext {
         let outcome = load_commit(&self.pool, source.as_ref(), &settings.repo, sha, pusher, &self.owners, today).await?;
         if matches!(outcome, LoadOutcome::Activated { .. }) {
             self.handle.reload_from_store(&self.pool, ORG_ID).await.map_err(CraRuntimeError::State)?;
+            crate::chat::sync::snapshot_activated(&self.handle);
         }
         Ok(outcome)
     }

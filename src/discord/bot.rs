@@ -14,6 +14,9 @@ pub struct DiscordBot {
     merit_tracker: Arc<RwLock<MeritTracker>>,
     /// The shared chat commands (`crate::chat`); this bot only translates.
     chat: Arc<crate::chat::ChatContext>,
+    /// Discord role sync (`crate::chat::sync`): member joins and member updates trigger a
+    /// reconcile so drift is caught at once, not only on the timer.
+    sync: Option<crate::chat::sync::SyncHandle>,
 }
 
 impl DiscordBot {
@@ -21,12 +24,27 @@ impl DiscordBot {
         db_pool: SqlitePool,
         merit_tracker: Arc<RwLock<MeritTracker>>,
         chat: Arc<crate::chat::ChatContext>,
+        sync: Option<crate::chat::sync::SyncHandle>,
     ) -> Self {
         Self {
             db_pool,
             merit_tracker,
             chat,
+            sync,
         }
+    }
+
+    /// Queue a role sync run when the event is for the managed guild.
+    fn trigger_sync(&self, guild_id: GuildId, t: crate::chat::sync::Trigger) -> bool {
+        let Some(h) = &self.sync else { return false };
+        if self.chat.cra.active().is_none() {
+            return false;
+        }
+        let managed = h.runner().cra().active().and_then(|a| a.snapshot.org.discord.as_ref().map(|d| d.guild_id.clone()));
+        if managed.as_deref().map_or(true, |g| g == guild_id.get().to_string()) {
+            h.trigger(t);
+        }
+        true
     }
 
     async fn sync_user_roles(
@@ -113,6 +131,7 @@ impl EventHandler for DiscordBot {
                             http: ctx.http.clone(),
                             guild_id: command.guild_id,
                             pool: self.db_pool.clone(),
+                            sync: self.sync.as_ref().map(|h| h.runner().clone()),
                         };
                         crate::chat::commands::run(&self.chat, &actor, cmd, &arg, &applier).await
                     }
@@ -135,6 +154,11 @@ impl EventHandler for DiscordBot {
     }
 
     async fn guild_member_addition(&self, ctx: Context, new_member: Member) {
+        // With a CRA active, the shared role sync gives the new member their projection.
+        if self.trigger_sync(new_member.guild_id, crate::chat::sync::Trigger::MemberJoin) {
+            return;
+        }
+        // No CRA: the pre-CRA merit roles.
         // Is this Discord user bound to a contributor (chat_identities)?
         let actor = crate::chat::ChatActor::discord(new_member.user.id.get().to_string(), None);
         let key = match crate::chat::identity::binding_for(&self.db_pool, &actor).await {
@@ -156,6 +180,19 @@ impl EventHandler for DiscordBot {
                 error!("Failed to sync roles for new member: {}", e);
             }
         }
+    }
+
+    /// A member's roles changed (by MSync or by hand): reconcile now, so a hand edit of a
+    /// managed role is reverted at once. MSync's own changes produce these events too; the
+    /// run they cause finds nothing to do.
+    async fn guild_member_update(
+        &self,
+        _ctx: Context,
+        _old_if_available: Option<Member>,
+        _new: Option<Member>,
+        event: GuildMemberUpdateEvent,
+    ) {
+        self.trigger_sync(event.guild_id, crate::chat::sync::Trigger::MemberUpdate);
     }
 
     async fn message(&self, ctx: Context, msg: Message) {

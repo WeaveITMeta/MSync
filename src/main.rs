@@ -104,10 +104,27 @@ async fn main() -> Result<()> {
         today: None,
     });
 
+    // Role sync (contract 13.3): Discord roles and Slack user groups are projections of the
+    // CRA. Each platform has one runner; triggers are snapshot activation, member join,
+    // member update (Discord), the `sync` command and a timer (MSYNC_ROLE_SYNC_SECS, default
+    // 300, 0 disables). A platform that is not configured is skipped.
+    let role_sync_every = msync::chat::sync::interval_from_env();
+    info!("Role sync timer: {:?}", role_sync_every);
+    let discord_sync = config.discord.as_ref().map(|_| {
+        let platform = msync::discord::sync::DiscordPlatform {
+            http: discord_http.clone(),
+            cra: cra_handle.clone(),
+            fallback_guild: std::env::var("DISCORD_GUILD_ID").ok().and_then(|v| v.trim().parse::<u64>().ok()),
+            token_set: true,
+        };
+        let runner = Arc::new(msync::chat::sync::SyncRunner::new(Arc::new(platform), db_pool.clone(), cra_handle.clone()));
+        msync::chat::sync::spawn(runner, role_sync_every)
+    });
+
     // Discord: started only when DISCORD_TOKEN is set.
     let discord_handle = match config.discord.clone() {
         Some(dc) => {
-            let bot = DiscordBot::new(db_pool.clone(), merit_tracker.clone(), chat_ctx.clone());
+            let bot = DiscordBot::new(db_pool.clone(), merit_tracker.clone(), chat_ctx.clone(), discord_sync.clone());
             Some(tokio::spawn(async move {
                 let intents = GatewayIntents::GUILDS
                     | GatewayIntents::GUILD_MEMBERS
@@ -138,11 +155,20 @@ async fn main() -> Result<()> {
         config.slack.api_base.clone(),
         config.slack.bot_token.clone(),
     ));
+    let slack_runner = Arc::new(msync::chat::sync::SyncRunner::new(
+        Arc::new(msync::slack::sync::SlackPlatform::new(slack_api.clone(), cra_handle.clone())),
+        db_pool.clone(),
+        cra_handle.clone(),
+    ));
+    if config.slack.bot_token.is_some() {
+        msync::chat::sync::spawn(slack_runner.clone(), role_sync_every);
+    }
     let slack_state = msync::slack::SlackState {
         chat: chat_ctx.clone(),
         signing_secret: config.slack.signing_secret.clone(),
         team_id: config.slack.team_id.clone(),
         api: slack_api,
+        sync: slack_runner,
     };
     if slack_state.enabled() {
         info!("Slack enabled: POST /slack/commands (team {:?} plus the CRA's [slack] team)", config.slack.team_id);
