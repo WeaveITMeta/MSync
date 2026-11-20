@@ -7,7 +7,13 @@ use crate::foundry::RepoRegistry;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Config {
-    pub discord: DiscordConfig,
+    /// The Discord bot (`DISCORD_TOKEN`, `DISCORD_APPLICATION_ID`). `None` runs without
+    /// Discord. At least one of Discord and Slack must be configured.
+    #[serde(default)]
+    pub discord: Option<DiscordConfig>,
+    /// The Slack app (`MSYNC_SLACK_*`). Enabled only when the signing secret is set.
+    #[serde(default)]
+    pub slack: SlackConfig,
     pub github: GitHubConfig,
     pub coderabbit: CodeRabbitConfig,
     #[serde(default)]
@@ -26,6 +32,61 @@ pub struct Config {
 pub struct DiscordConfig {
     pub token: String,
     pub application_id: u64,
+}
+
+/// The Slack app (contract 12.2). Every field is optional; Slack is enabled only when
+/// `signing_secret` is set, and with no secret every Slack request is rejected.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct SlackConfig {
+    /// `MSYNC_SLACK_SIGNING_SECRET`.
+    #[serde(skip_serializing, default)]
+    pub signing_secret: Option<String>,
+    /// `MSYNC_SLACK_BOT_TOKEN` (`xoxb-...`), for `users.info` and `usergroups.users.update`.
+    #[serde(skip_serializing, default)]
+    pub bot_token: Option<String>,
+    /// `MSYNC_SLACK_TEAM_ID`: the workspace allowed to send commands, besides the CRA's
+    /// `[slack]` team.
+    pub team_id: Option<String>,
+    /// `MSYNC_SLACK_API_BASE`, for tests. Default `https://slack.com/api`.
+    pub api_base: Option<String>,
+}
+
+impl SlackConfig {
+    pub fn enabled(&self) -> bool {
+        self.signing_secret.is_some()
+    }
+}
+
+/// Discord and Slack settings from a lookup (the environment, or a map in tests).
+///
+/// Discord is configured when `DISCORD_TOKEN` is set and not empty; it then needs
+/// `DISCORD_APPLICATION_ID`. Slack is configured when `MSYNC_SLACK_SIGNING_SECRET` is set
+/// and not empty. Neither configured is an error: the service would have no chat platform.
+pub fn chat_platforms_from<F: Fn(&str) -> Option<String>>(get: F) -> Result<(Option<DiscordConfig>, SlackConfig)> {
+    let non_empty = |k: &str| env_var_with(k, &get).map(|v| v.trim().to_string()).filter(|v| !v.is_empty());
+    let discord = match non_empty("DISCORD_TOKEN") {
+        Some(token) => Some(DiscordConfig {
+            token,
+            application_id: non_empty("DISCORD_APPLICATION_ID")
+                .context("DISCORD_APPLICATION_ID not found in environment (needed with DISCORD_TOKEN)")?
+                .parse()
+                .context("DISCORD_APPLICATION_ID must be a valid u64")?,
+        }),
+        None => None,
+    };
+    let slack = SlackConfig {
+        signing_secret: non_empty("MSYNC_SLACK_SIGNING_SECRET"),
+        bot_token: non_empty("MSYNC_SLACK_BOT_TOKEN"),
+        team_id: non_empty("MSYNC_SLACK_TEAM_ID"),
+        api_base: non_empty("MSYNC_SLACK_API_BASE"),
+    };
+    if discord.is_none() && !slack.enabled() {
+        anyhow::bail!(
+            "no chat platform configured: set DISCORD_TOKEN and DISCORD_APPLICATION_ID for Discord, \
+             MSYNC_SLACK_SIGNING_SECRET for Slack, or both"
+        );
+    }
+    Ok((discord, slack))
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -152,15 +213,10 @@ pub struct ServerConfig {
 
 impl Config {
     pub fn from_env() -> Result<Self> {
+        let (discord, slack) = chat_platforms_from(|k| env::var(k).ok())?;
         Ok(Config {
-            discord: DiscordConfig {
-                token: env::var("DISCORD_TOKEN")
-                    .context("DISCORD_TOKEN not found in environment")?,
-                application_id: env::var("DISCORD_APPLICATION_ID")
-                    .context("DISCORD_APPLICATION_ID not found in environment")?
-                    .parse()
-                    .context("DISCORD_APPLICATION_ID must be a valid u64")?,
-            },
+            discord,
+            slack,
             github: GitHubConfig {
                 token: env::var("GITHUB_TOKEN")
                     .context("GITHUB_TOKEN not found in environment")?,
@@ -243,6 +299,33 @@ mod tests {
         assert_eq!(env_var_with("STRIPE_SECRET_KEY", &get), None);
         assert_eq!(legacy_env_name("MSYNC_PAY_MAX_CENTS").as_deref(), Some("DSYNC_PAY_MAX_CENTS"));
         assert_eq!(legacy_env_name("DATABASE_URL"), None);
+    }
+
+    #[test]
+    fn discord_only_slack_only_and_both_configure() {
+        let (d, s) = chat_platforms_from(lookup(&[("DISCORD_TOKEN", "t"), ("DISCORD_APPLICATION_ID", "7")])).unwrap();
+        assert_eq!(d.map(|d| d.application_id), Some(7));
+        assert!(!s.enabled());
+        let (d, s) = chat_platforms_from(lookup(&[("MSYNC_SLACK_SIGNING_SECRET", "sec"), ("MSYNC_SLACK_TEAM_ID", "T1")])).unwrap();
+        assert!(d.is_none(), "Slack only: no Discord token is needed");
+        assert!(s.enabled());
+        assert_eq!(s.team_id.as_deref(), Some("T1"));
+        let (d, s) = chat_platforms_from(lookup(&[
+            ("DISCORD_TOKEN", "t"),
+            ("DISCORD_APPLICATION_ID", "7"),
+            ("MSYNC_SLACK_SIGNING_SECRET", "sec"),
+        ]))
+        .unwrap();
+        assert!(d.is_some() && s.enabled());
+    }
+
+    #[test]
+    fn no_chat_platform_fails_startup() {
+        assert!(chat_platforms_from(lookup(&[])).is_err());
+        // An empty secret or token does not count.
+        assert!(chat_platforms_from(lookup(&[("MSYNC_SLACK_SIGNING_SECRET", " "), ("DISCORD_TOKEN", "")])).is_err());
+        // A Discord token without its application id is an error, not "Discord off".
+        assert!(chat_platforms_from(lookup(&[("DISCORD_TOKEN", "t"), ("MSYNC_SLACK_SIGNING_SECRET", "s")])).is_err());
     }
 
     /// Pinned (contract 12.1): the default database keeps its pre-rename file name.

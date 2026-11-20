@@ -2,8 +2,9 @@ schema = 1
 
 # Example CRA for a source-available project: the code is public, the license
 # is not an open-source license. Every name except McKale Olson is a
-# placeholder, every Discord id is a fake snowflake, and the repository path
-# is a placeholder. Replace them before use.
+# placeholder, every Discord id is a fake snowflake, every Slack id is a fake
+# id, and the repository path is a placeholder. Replace them before use.
+# This organization runs Discord and Slack side by side.
 
 [org]
 slug = "eustress-engine"
@@ -18,6 +19,10 @@ template = "source-available"
 [discord]
 guild_id = "100000000000000000"
 alert_channel_id = "100000000000000009"
+
+[slack]
+team_id = "T1000000000"
+alert_channel_id = "C1000000009"
 
 [[foundry]]
 provider = "github"

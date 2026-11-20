@@ -1,4 +1,5 @@
-//! Standing and Discord projection (hierarchy doc 4.4 and 4.5).
+//! Standing and the Discord and Slack projections (hierarchy doc 4.4 and 4.5,
+//! contract 12.2).
 //!
 //! ```text
 //! rank(X)   = max(active position ranks of X, min(tier rank of X, merit_rank_ceiling))
@@ -49,6 +50,8 @@ pub struct Standing {
     pub permissions: BTreeSet<String>,
     /// Discord role ids the member should hold. Empty unless active.
     pub discord_roles: Vec<String>,
+    /// Slack user group ids the member should be in. Empty unless active.
+    pub slack_usergroups: Vec<String>,
 }
 
 /// A grant counts while `today <= expires`. A grant without `expires` does
@@ -123,19 +126,29 @@ pub fn standing(s: &Snapshot, member_id: &str, vested_merit: u64, today: NaiveDa
         discord_roles.push(d);
     }
 
+    let mut slack_usergroups = Vec::new();
+    for (r, _) in &positions {
+        if let Some(g) = &r.slack_usergroup {
+            slack_usergroups.push(g.clone());
+        }
+    }
+    if let Some(g) = tier.and_then(|t| t.slack_usergroup.clone()) {
+        slack_usergroups.push(g);
+    }
+
     let mut titles: Vec<String> = positions.iter().map(|(r, _)| r.title.clone()).collect();
     if let Some(t) = tier {
         titles.push(t.title.clone());
     }
 
-    let (rank, permissions, discord_roles) = match m.status {
-        MemberStatus::Active => (pos_rank.max(tier_rank), permissions, discord_roles),
+    let (rank, permissions, discord_roles, slack_usergroups) = match m.status {
+        MemberStatus::Active => (pos_rank.max(tier_rank), permissions, discord_roles, slack_usergroups),
         MemberStatus::Suspended => {
             let mut only_self = permissions;
             only_self.retain(|p| p == PROFILE_SELF);
-            (0, only_self, Vec::new())
+            (0, only_self, Vec::new(), Vec::new())
         }
-        MemberStatus::Removed => (0, BTreeSet::new(), Vec::new()),
+        MemberStatus::Removed => (0, BTreeSet::new(), Vec::new(), Vec::new()),
     };
 
     Some(Standing {
@@ -150,6 +163,7 @@ pub fn standing(s: &Snapshot, member_id: &str, vested_merit: u64, today: NaiveDa
         titles,
         permissions,
         discord_roles,
+        slack_usergroups,
     })
 }
 
@@ -200,4 +214,67 @@ pub fn discord_projection(s: &Snapshot, merits: &BTreeMap<String, u64>, today: N
         .collect();
     role_order.sort_by(|a, b| b.rank.cmp(&a.rank).then(a.role_key.cmp(&b.role_key)));
     DiscordProjection { assignments, role_order }
+}
+
+/// One managed Slack user group, in hierarchy order.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ProjectedUsergroup {
+    pub usergroup_id: String,
+    pub role_key: String,
+    pub title: String,
+    pub rank: u32,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SlackProjection {
+    /// Every `(slack_user_id, usergroup_id)` pair that should exist.
+    pub assignments: BTreeSet<(String, String)>,
+    /// Managed user groups from highest rank to lowest. Ties break on the
+    /// role key.
+    pub usergroup_order: Vec<ProjectedUsergroup>,
+}
+
+impl SlackProjection {
+    /// The full member list of every managed user group, sorted. A managed
+    /// group nobody should be in maps to an empty list.
+    pub fn users_by_usergroup(&self) -> BTreeMap<String, Vec<String>> {
+        let mut out: BTreeMap<String, Vec<String>> =
+            self.usergroup_order.iter().map(|g| (g.usergroup_id.clone(), Vec::new())).collect();
+        for (user, group) in &self.assignments {
+            out.entry(group.clone()).or_default().push(user.clone());
+        }
+        out
+    }
+}
+
+/// The full Slack state the CRA asks for on `today`: the twin of
+/// [`discord_projection`]. Slack has no roles, so a job title is membership
+/// in the role's `slack_usergroup`. Members without a Slack identity get
+/// nothing.
+pub fn slack_projection(s: &Snapshot, merits: &BTreeMap<String, u64>, today: NaiveDate) -> SlackProjection {
+    let mut assignments = BTreeSet::new();
+    for m in &s.members.members {
+        let Some(user) = &m.identities.slack else { continue };
+        let merit = merits.get(&m.id).copied().unwrap_or(0);
+        if let Some(st) = standing(s, &m.id, merit, today) {
+            for g in st.slack_usergroups {
+                assignments.insert((user.clone(), g));
+            }
+        }
+    }
+    let mut usergroup_order: Vec<ProjectedUsergroup> = s
+        .roles
+        .roles
+        .iter()
+        .filter_map(|r| {
+            r.slack_usergroup.as_ref().map(|g| ProjectedUsergroup {
+                usergroup_id: g.clone(),
+                role_key: r.key.clone(),
+                title: r.title.clone(),
+                rank: r.rank,
+            })
+        })
+        .collect();
+    usergroup_order.sort_by(|a, b| b.rank.cmp(&a.rank).then(a.role_key.cmp(&b.role_key)));
+    SlackProjection { assignments, usergroup_order }
 }

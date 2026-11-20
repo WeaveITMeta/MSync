@@ -6,6 +6,7 @@ mod authz;
 mod examples;
 mod plan;
 mod policy;
+mod slack;
 mod standing;
 mod validation;
 

@@ -36,6 +36,7 @@ pub struct HierarchyRole {
     pub rank: u32,
     pub permissions: Vec<String>,
     pub discord_role: Option<String>,
+    pub slack_usergroup: Option<String>,
     pub min_merit: Option<u64>,
 }
 
@@ -68,6 +69,7 @@ pub fn hierarchy_get(handle: &CraHandle) -> Option<HierarchyView> {
             rank: r.rank,
             permissions: r.permissions.clone(),
             discord_role: r.discord_role.clone(),
+            slack_usergroup: r.slack_usergroup.clone(),
             min_merit: r.min_merit,
         })
         .collect();

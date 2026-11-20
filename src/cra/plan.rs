@@ -100,7 +100,7 @@ pub struct StatusChange {
 }
 
 /// A change to a member's record: an identity (`github`, `gitlab`,
-/// `discord`) or the display `name`.
+/// `discord`, `slack`) or the display `name`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct IdentityChange {
     pub member: MemberTarget,
@@ -123,6 +123,10 @@ pub struct Impact {
     pub discord_role_gains: BTreeMap<String, Vec<String>>,
     /// Discord role id to the members who would lose it through a position.
     pub discord_role_losses: BTreeMap<String, Vec<String>>,
+    /// Slack user group id to the members who would join it through a position.
+    pub slack_usergroup_gains: BTreeMap<String, Vec<String>>,
+    /// Slack user group id to the members who would leave it through a position.
+    pub slack_usergroup_losses: BTreeMap<String, Vec<String>>,
     /// The new snapshot's `promotion.merit_rank_ceiling`.
     pub new_merit_rank_ceiling: u32,
     /// Tiers (in either snapshot, at their higher rank) whose rank exceeds
@@ -139,7 +143,7 @@ pub struct ChangePlan {
     pub mode_change: Option<ModeChange>,
     /// Effective policy fields that change, keyed by the override key.
     pub policy_changes: Vec<FieldChange>,
-    /// Other `org.toml` changes: name, discord, `[[foundry]]` repositories, consumers,
+    /// Other `org.toml` changes: name, discord, slack, `[[foundry]]` repositories, consumers,
     /// compartments, permissions_extra, template.
     pub org_changes: Vec<FieldChange>,
     pub roles_added: Vec<RoleSummary>,
@@ -307,19 +311,30 @@ fn target(snaps: &[&Snapshot], id: &str) -> MemberTarget {
     MemberTarget { id: id.to_string(), name, rank, foundry_identities: ids }
 }
 
-fn position_pairs(s: &Snapshot) -> BTreeSet<(String, String)> {
+/// `(projected id, member id)` for every active position grant, where the
+/// projected id is what `pick` reads from the role (its Discord role or its
+/// Slack user group).
+fn position_pairs(s: &Snapshot, pick: fn(&super::model::Role) -> Option<&String>) -> BTreeSet<(String, String)> {
     let mut out = BTreeSet::new();
     for m in &s.members.members {
         if m.status != MemberStatus::Active {
             continue;
         }
         for g in &m.grants {
-            if let Some(d) = s.role(&g.role).filter(|r| r.kind == RoleKind::Position).and_then(|r| r.discord_role.clone()) {
+            if let Some(d) = s.role(&g.role).filter(|r| r.kind == RoleKind::Position).and_then(|r| pick(r).cloned()) {
                 out.insert((d, m.id.clone()));
             }
         }
     }
     out
+}
+
+fn discord_of(r: &super::model::Role) -> Option<&String> {
+    r.discord_role.as_ref()
+}
+
+fn slack_of(r: &super::model::Role) -> Option<&String> {
+    r.slack_usergroup.as_ref()
 }
 
 /// Diffs `new` against the active snapshot `old` (`None` for the first
@@ -419,6 +434,7 @@ pub fn plan_change(old: Option<&Snapshot>, new: &Snapshot) -> ChangePlan {
                     ("github", &p.identities.github, &m.identities.github),
                     ("gitlab", &p.identities.gitlab, &m.identities.gitlab),
                     ("discord", &p.identities.discord, &m.identities.discord),
+                    ("slack", &p.identities.slack, &m.identities.slack),
                 ];
                 for (field, a, b) in pairs {
                     if a != b {
@@ -478,14 +494,22 @@ pub fn plan_change(old: Option<&Snapshot>, new: &Snapshot) -> ChangePlan {
     let org_change_rank = tps.iter().copied().max().unwrap_or(0);
 
     // Impact.
-    let old_pairs = old.map(position_pairs).unwrap_or_default();
-    let new_pairs = position_pairs(new);
+    let old_pairs = old.map(|o| position_pairs(o, discord_of)).unwrap_or_default();
+    let new_pairs = position_pairs(new, discord_of);
     let mut impact = Impact { new_merit_rank_ceiling: new.policy.promotion_merit_rank_ceiling, ..Default::default() };
     for (d, m) in new_pairs.difference(&old_pairs) {
         impact.discord_role_gains.entry(d.clone()).or_default().push(m.clone());
     }
     for (d, m) in old_pairs.difference(&new_pairs) {
         impact.discord_role_losses.entry(d.clone()).or_default().push(m.clone());
+    }
+    let old_groups = old.map(|o| position_pairs(o, slack_of)).unwrap_or_default();
+    let new_groups = position_pairs(new, slack_of);
+    for (g, m) in new_groups.difference(&old_groups) {
+        impact.slack_usergroup_gains.entry(g.clone()).or_default().push(m.clone());
+    }
+    for (g, m) in old_groups.difference(&new_groups) {
+        impact.slack_usergroup_losses.entry(g.clone()).or_default().push(m.clone());
     }
     let mut tiers: BTreeMap<String, u32> = BTreeMap::new();
     for s in &snaps {
@@ -664,6 +688,15 @@ impl ChangePlan {
         for (d, ms) in &self.impact.discord_role_losses {
             let _ = writeln!(out, "- Discord role `{d}`: {} member(s) lose it ({})", ms.len(), ms.join(", "));
         }
+        if self.impact.slack_usergroup_gains.is_empty() && self.impact.slack_usergroup_losses.is_empty() {
+            let _ = writeln!(out, "- No member joins or leaves a position Slack user group.");
+        }
+        for (g, ms) in &self.impact.slack_usergroup_gains {
+            let _ = writeln!(out, "- Slack user group `{g}`: {} member(s) join it ({})", ms.len(), ms.join(", "));
+        }
+        for (g, ms) in &self.impact.slack_usergroup_losses {
+            let _ = writeln!(out, "- Slack user group `{g}`: {} member(s) leave it ({})", ms.len(), ms.join(", "));
+        }
         if self.impact.tiers_exceeding_new_ceiling.is_empty() {
             let _ = writeln!(out, "- No tier exceeds the new merit rank ceiling ({}).", self.impact.new_merit_rank_ceiling);
         } else {
@@ -677,7 +710,7 @@ impl ChangePlan {
                 list.join(", ")
             );
         }
-        let _ = writeln!(out, "- Tier Discord roles depend on merit and are recomputed at reconciliation; they are not counted here.\n");
+        let _ = writeln!(out, "- Tier Discord roles and Slack user groups depend on merit and are recomputed at reconciliation; they are not counted here.\n");
 
         let reqs = super::authz::requirements(self);
         if !reqs.is_empty() {

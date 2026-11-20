@@ -1,264 +1,111 @@
-use crate::models::{Contributor, ContributorStats, LeaderboardEntry};
-use serenity::all::*;
-use sqlx::SqlitePool;
-use uuid::Uuid;
+//! Discord adapter for the shared chat commands (`crate::chat`). It only translates: a
+//! serenity interaction in, a [`ChatActor`] and the command's argument out; a [`ChatReply`]
+//! in, an interaction response out. The commands themselves live in `crate::chat::commands`.
 
-pub async fn link_account(
-    db_pool: &SqlitePool,
-    command: &CommandInteraction,
-) -> String {
-    let github_username = command
+use std::sync::Arc;
+
+use async_trait::async_trait;
+use serenity::all::*;
+use tracing::warn;
+
+use crate::chat::{ChatActor, ChatCommand, ProjectionApplier, ProjectionPlan, SyncReport};
+use crate::services::discord_sync::DiscordSyncService;
+
+/// The caller as the shared commands see it. The admin flag is Discord's resolved
+/// administrator permission for the interaction; when Discord sends none it is unknown,
+/// which fails closed.
+pub fn actor_for(command: &CommandInteraction) -> ChatActor {
+    let is_admin = command.member.as_ref().and_then(|m| m.permissions).map(|p| p.administrator());
+    ChatActor::discord(command.user.id.get().to_string(), is_admin)
+}
+
+/// The command and its text argument (`link`'s `github` option).
+pub fn command_for(command: &CommandInteraction) -> Option<(ChatCommand, String)> {
+    let cmd = ChatCommand::from_name(command.data.name.as_str())?;
+    let arg = command
         .data
         .options
         .iter()
         .find(|opt| opt.name == "github")
-        .and_then(|opt| opt.value.as_str());
-
-    if let Some(github_username) = github_username {
-        let discord_user_id = command.user.id.get() as i64;
-
-        // Check if GitHub account is already linked
-        let existing = sqlx::query!(
-            "SELECT id FROM contributors WHERE github_username = ?",
-            github_username
-        )
-        .fetch_optional(db_pool)
-        .await;
-
-        match existing {
-            Ok(Some(_)) => {
-                // Update existing contributor with Discord ID
-                let result = sqlx::query!(
-                    "UPDATE contributors SET discord_user_id = ?, updated_at = CURRENT_TIMESTAMP 
-                     WHERE github_username = ?",
-                    discord_user_id,
-                    github_username
-                )
-                .execute(db_pool)
-                .await;
-
-                match result {
-                    Ok(_) => format!(
-                        "✅ Successfully linked your Discord account to GitHub user `{}`!",
-                        github_username
-                    ),
-                    Err(e) => format!("❌ Failed to link account: {}", e),
-                }
-            }
-            Ok(None) => {
-                // Create new contributor
-                let contributor = Contributor::new(github_username.to_string());
-                let result = sqlx::query!(
-                    "INSERT INTO contributors (id, github_username, discord_user_id, total_merit_points, 
-                     current_role, contributions_count, created_at, updated_at) 
-                     VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-                    contributor.id,
-                    contributor.github_username,
-                    discord_user_id,
-                    contributor.total_merit_points,
-                    contributor.current_role,
-                    contributor.contributions_count,
-                    contributor.created_at,
-                    contributor.updated_at
-                )
-                .execute(db_pool)
-                .await;
-
-                match result {
-                    Ok(_) => format!(
-                        "✅ Welcome! Linked your Discord account to GitHub user `{}`!",
-                        github_username
-                    ),
-                    Err(e) => format!("❌ Failed to create account: {}", e),
-                }
-            }
-            Err(e) => format!("❌ Database error: {}", e),
-        }
-    } else {
-        "❌ Please provide your GitHub username!".to_string()
-    }
+        .and_then(|opt| opt.value.as_str())
+        .unwrap_or("")
+        .to_string();
+    Some((cmd, arg))
 }
 
-pub async fn show_stats(
-    db_pool: &SqlitePool,
-    command: &CommandInteraction,
-) -> String {
-    let discord_user_id = command.user.id.get() as i64;
-
-    let contributor = sqlx::query_as::<_, Contributor>(
-        "SELECT * FROM contributors WHERE discord_user_id = ?"
-    )
-    .bind(discord_user_id)
-    .fetch_optional(db_pool)
-    .await;
-
-    match contributor {
-        Ok(Some(contributor)) => {
-            format!(
-                "📊 **Your Contribution Stats**\n\
-                👤 GitHub: `{}`\n\
-                🏆 Merit Points: `{}`\n\
-                📝 Total Contributions: `{}`\n\
-                🎭 Current Role: `{}`\n\
-                📅 Member Since: `{}`",
-                contributor.github_username,
-                contributor.total_merit_points,
-                contributor.contributions_count,
-                contributor.current_role,
-                contributor.created_at.format("%Y-%m-%d")
-            )
-        }
-        Ok(None) => {
-            "❌ No linked GitHub account found! Use `/link` to connect your GitHub account.".to_string()
-        }
-        Err(e) => format!("❌ Database error: {}", e),
-    }
+/// Applies a projection to one Discord guild.
+pub struct DiscordApplier {
+    pub http: Arc<Http>,
+    pub guild_id: Option<GuildId>,
+    pub pool: sqlx::SqlitePool,
 }
 
-pub async fn show_leaderboard(
-    db_pool: &SqlitePool,
-    _command: &CommandInteraction,
-) -> String {
-    let top_contributors = sqlx::query_as::<_, Contributor>(
-        "SELECT * FROM contributors ORDER BY total_merit_points DESC LIMIT 10"
-    )
-    .fetch_all(db_pool)
-    .await;
-
-    match top_contributors {
-        Ok(contributors) => {
-            if contributors.is_empty() {
-                "📊 No contributors yet! Be the first to contribute!".to_string()
+#[async_trait]
+impl ProjectionApplier for DiscordApplier {
+    /// For every CRA member with a Discord id: add the managed roles they should hold and
+    /// remove the managed roles they should not. Members outside the CRA are left alone
+    /// (drift reconciliation is a later round).
+    async fn apply(&self, plan: &ProjectionPlan) -> SyncReport {
+        let mut report = SyncReport::default();
+        let Some(guild_id) = self.guild_id else {
+            report.notes.push("Run this command inside the server.".into());
+            return report;
+        };
+        let managed: Vec<RoleId> = plan.managed.iter().filter_map(|r| r.parse::<u64>().ok()).map(RoleId::new).collect();
+        for user in &plan.users {
+            let Ok(uid) = user.parse::<u64>() else {
+                report.failed += 1;
+                continue;
+            };
+            let desired: Vec<RoleId> = plan.desired_for(user).iter().filter_map(|r| r.parse::<u64>().ok()).map(RoleId::new).collect();
+            let member = match guild_id.member(&self.http, UserId::new(uid)).await {
+                Ok(m) => m,
+                Err(e) => {
+                    warn!("sync: member {} not readable: {}", user, e);
+                    report.failed += 1;
+                    continue;
+                }
+            };
+            let mut ok = true;
+            for role in &managed {
+                let has = member.roles.contains(role);
+                let want = desired.contains(role);
+                let res = match (has, want) {
+                    (false, true) => member.add_role(&self.http, *role).await,
+                    (true, false) => member.remove_role(&self.http, *role).await,
+                    _ => Ok(()),
+                };
+                if let Err(e) = res {
+                    warn!("sync: role {} for {} failed: {}", role, user, e);
+                    ok = false;
+                }
+            }
+            if ok {
+                report.synced += 1;
             } else {
-                let mut leaderboard = "🏆 **Top Contributors**\n\n".to_string();
-                
-                for (rank, contributor) in contributors.iter().enumerate() {
-                    let medal = match rank {
-                        0 => "🥇",
-                        1 => "🥈",
-                        2 => "🥉",
-                        _ => "🏅",
-                    };
-                    
-                    leaderboard.push_str(&format!(
-                        "{} **#{}** `{}` - {} points ({} contributions)\n",
-                        medal,
-                        rank + 1,
-                        contributor.github_username,
-                        contributor.total_merit_points,
-                        contributor.contributions_count
-                    ));
-                }
-                
-                leaderboard
+                report.failed += 1;
             }
         }
-        Err(e) => format!("❌ Failed to fetch leaderboard: {}", e),
+        report
     }
-}
 
-pub async fn sync_roles(
-    db_pool: &SqlitePool,
-    ctx: &Context,
-    command: &CommandInteraction,
-) -> String {
-    let discord_user_id = command.user.id.get() as i64;
-    
-    // Check if user has admin permissions
-    if let Some(member) = &command.member {
-        if let Ok(permissions) = member.permissions(ctx) {
-            if !permissions.administrator() {
-                return "❌ You need administrator permissions to sync roles!".to_string();
+    /// No CRA: the pre-CRA merit roles from `merit_roles`.
+    async fn apply_legacy(&self) -> SyncReport {
+        let mut report = SyncReport::default();
+        let Some(guild_id) = self.guild_id else {
+            report.notes.push("Run this command inside the server.".into());
+            return report;
+        };
+        match DiscordSyncService::new(self.pool.clone(), self.http.clone()).sync_all_roles(guild_id).await {
+            Ok((synced, failed)) => {
+                report.synced = synced.max(0) as u32;
+                report.failed = failed.max(0) as u32;
             }
-        }
-    }
-
-    // Get all contributors with Discord IDs
-    let contributors = sqlx::query_as::<_, Contributor>(
-        "SELECT * FROM contributors WHERE discord_user_id IS NOT NULL"
-    )
-    .fetch_all(db_pool)
-    .await;
-
-    match contributors {
-        Ok(contributors) => {
-            let mut synced = 0;
-            let mut failed = 0;
-
-            for contributor in contributors {
-                // This would trigger the role sync logic in the bot
-                synced += 1;
-            }
-
-            format!(
-                "✅ Role sync complete!\n\
-                ✓ Successfully synced: {}\n\
-                ✗ Failed: {}",
-                synced, failed
-            )
-        }
-        Err(e) => format!("❌ Failed to sync roles: {}", e),
-    }
-}
-
-/// Roles allowed to view payouts from Discord. Approval itself is API-only (admin token).
-pub const PAYOUT_VIEWER_ROLES: &[&str] = &["Maintainer", "Core Contributor"];
-
-pub async fn list_pending_payouts(db_pool: &SqlitePool, command: &CommandInteraction) -> String {
-    let discord_user_id = command.user.id.get() as i64;
-    let role: Option<String> = sqlx::query_scalar("SELECT current_role FROM contributors WHERE discord_user_id = ?")
-        .bind(discord_user_id)
-        .fetch_optional(db_pool)
-        .await
-        .ok()
-        .flatten();
-    if !role.as_deref().map_or(false, |r| PAYOUT_VIEWER_ROLES.contains(&r)) {
-        return "Only Maintainers and Core Contributors can view pending payouts.".to_string();
-    }
-
-    match crate::payments::ledger::list(db_pool, Some(crate::payments::ledger::PENDING)).await {
-        Ok(entries) if entries.is_empty() => "No payouts pending approval.".to_string(),
-        Ok(entries) => {
-            let total: i64 = entries.iter().map(|e| e.amount_cents).sum();
-            let mut out = format!("**{} payout(s) pending approval** (total {:.2})\n", entries.len(), total as f64 / 100.0);
-            for e in entries.iter().take(15) {
-                out.push_str(&format!(
-                    "- PR #{} `{}` -> `{}`: {:.2} {} (id `{}`)\n",
-                    e.pr_number, e.github_username, e.branch, e.amount_cents as f64 / 100.0, e.currency.to_uppercase(), e.id
-                ));
-            }
-            if entries.len() > 15 {
-                out.push_str(&format!("...and {} more\n", entries.len() - 15));
-            }
-            out.push_str("Approve or reject via the admin API.");
-            out
-        }
-        Err(e) => format!("Failed to load payouts: {}", e),
-    }
-}
-
-/// /payout-setup: give a linked contributor their own Stripe Express onboarding link (ephemeral).
-pub async fn payout_setup(
-    db_pool: &SqlitePool,
-    stripe: &dyn crate::payments::StripeApi,
-    cfg: &crate::payments::PaymentConfig,
-    command: &CommandInteraction,
-) -> String {
-    use crate::payments::onboarding;
-    let discord_user_id = command.user.id.get() as i64;
-    match onboarding::contributor_for_discord(db_pool, discord_user_id).await {
-        Ok(None) => "Link your GitHub account first with `/link github:<username>`, then run `/payout-setup` again.".to_string(),
-        Ok(Some((_, true))) => "Your payout account is already set up and verified. Nothing else to do.".to_string(),
-        Ok(Some((github, false))) => match onboarding::onboarding_link_for_github(db_pool, stripe, cfg, &github).await {
-            Ok(link) => format!(
-                "Set up payouts for `{}` here (private link, expires in a few minutes):\n{}",
-                github, link.url
-            ),
             Err(e) => {
-                tracing::error!("payout-setup failed for {}: {}", github, e);
-                "Couldn't create your payout setup link right now. Please try again later or ask a maintainer.".to_string()
+                report.failed += 1;
+                report.notes.push(format!("❌ Failed to sync roles: {}", e));
             }
-        },
-        Err(e) => format!("Failed to look up your account: {}", e),
+        }
+        report
     }
 }

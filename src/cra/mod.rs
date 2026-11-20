@@ -11,7 +11,8 @@
 //!    (parse plus [`Snapshot::validate`]). Any error rejects the snapshot.
 //! 2. [`plan_change`] diffs the active snapshot against the new one.
 //! 3. [`authorize`] checks the plan against the ACTIVE snapshot.
-//! 4. [`standing`] and [`discord_projection`] compute what members hold.
+//! 4. [`standing`], [`discord_projection`] and [`slack_projection`] compute
+//!    what members hold.
 //!
 //! The engine side (database, network, clock) lives in [`store`], [`source`],
 //! [`loader`] and [`api`]; the pure modules above never call it.
@@ -42,7 +43,7 @@ pub use catalog::PermissionClass;
 pub use model::*;
 pub use plan::{plan_change, ChangePlan};
 pub use policy::{effective_policy, mode_defaults, Mode, Policy};
-pub use standing::{discord_projection, standing, DiscordProjection, Standing};
+pub use standing::{discord_projection, slack_projection, standing, DiscordProjection, SlackProjection, Standing};
 pub use loader::{load_commit, ActiveCra, CraContext, CraHandle, CraSettings, LoadOutcome};
 pub use source::{CraRepo, CraSource, GitHubSource, GitLabSource, SourceError};
 
@@ -155,6 +156,14 @@ pub enum ErrorCode {
     /// A tier's rank exceeds `promotion.merit_rank_ceiling`.
     TierAboveCeiling,
     DuplicateDiscordRole,
+    /// A Slack id with the wrong shape: uppercase letters and digits, with
+    /// the prefix for its kind (team `T`/`E`, user `U`/`W`, user group `S`,
+    /// channel `C`/`G`).
+    InvalidSlackId,
+    /// Two roles project onto the same Slack user group.
+    DuplicateSlackUsergroup,
+    /// `org.toml` has neither `[discord]` nor `[slack]` (contract 12.2).
+    NoChatPlatform,
     UnknownPermission,
     UnknownCompartment,
     CompartmentsDisabled,

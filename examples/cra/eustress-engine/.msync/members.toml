@@ -3,7 +3,7 @@ schema = 1
 # Owners (rank 1000) are engine configuration, never CRA content. This example
 # assumes MSYNC_OWNER_MEMBER_IDS = "github:example-founder".
 # Contributors who are not listed here still earn merit under their GitHub or
-# GitLab login and link Discord by OAuth proof.
+# GitLab login and link Discord or Slack by OAuth proof.
 
 [[member]]
 id = "founder"
@@ -13,6 +13,7 @@ status = "active"
 [member.identities]
 github = "example-founder"
 discord = "100000000000000101"
+slack = "U1000000101"
 
 [[member]]
 id = "mckale"
@@ -22,6 +23,7 @@ status = "active"
 [member.identities]
 github = "Simbuilder"
 discord = "100000000000000102"
+slack = "U1000000102"
 
 [[member.grant]]
 role = "lead-maintainer"
@@ -36,6 +38,7 @@ status = "active"
 [member.identities]
 github = "ada-example"
 discord = "100000000000000103"
+slack = "U1000000103"
 
 [[member.grant]]
 role = "maintainer"
@@ -50,6 +53,7 @@ status = "active"
 [member.identities]
 github = "bo-example"
 discord = "100000000000000104"
+slack = "U1000000104"
 
 [[member.grant]]
 role = "reviewer"

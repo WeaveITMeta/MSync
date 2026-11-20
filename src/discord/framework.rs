@@ -17,12 +17,12 @@ pub async fn register_slash_commands(ctx: &Context, guild_id: GuildId) -> Result
             &ctx.http,
             vec![
                 CreateCommand::new("link")
-                    .description("Link your GitHub account to Discord")
+                    .description("Link your GitHub or GitLab account (shows your CRA identity when a CRA is active)")
                     .add_option(
                         CreateCommandOption::new(
                             CommandOptionType::String,
                             "github",
-                            "Your GitHub username",
+                            "Your GitHub username, or gitlab:<username>",
                         )
                         .required(true),
                     ),
@@ -35,7 +35,7 @@ pub async fn register_slash_commands(ctx: &Context, guild_id: GuildId) -> Result
                 CreateCommand::new("payout-setup")
                     .description("Get your private Stripe link to receive contribution payouts"),
                 CreateCommand::new("payouts")
-                    .description("List contribution payouts pending approval (Maintainers only)"),
+                    .description("List contribution payouts pending approval (Admin only)"),
             ],
         )
         .await?;

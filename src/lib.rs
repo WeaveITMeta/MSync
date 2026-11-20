@@ -1,4 +1,5 @@
 pub mod auth;
+pub mod chat;
 pub mod config;
 pub mod cra;
 pub mod discord;
@@ -10,6 +11,7 @@ pub mod models;
 pub mod payments;
 pub mod routes;
 pub mod services;
+pub mod slack;
 
 use config::Config;
 use payments::{PaymentConfig, StripeApi};
@@ -126,7 +128,7 @@ mod tests {
         assert!(config.is_ok());
         
         let config = config.unwrap();
-        assert_eq!(config.discord.token, "test_token");
+        assert_eq!(config.discord.as_ref().map(|d| d.token.as_str()), Some("test_token"));
         assert_eq!(config.github.repo_owner, "owner");
     }
 }

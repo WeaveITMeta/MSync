@@ -20,7 +20,7 @@ title = "Contractor"
 kind = "position"
 rank = 10
 permissions = ["community.post", "payouts.read_own"]
-discord_role = "200000000000000010"
+slack_usergroup = "S2000000010"
 term_days = 90
 compartments = ["client-work"]
 
@@ -30,7 +30,7 @@ title = "Engineer"
 kind = "position"
 rank = 20
 permissions = ["community.post", "community.vote", "roster.read_members", "payouts.read_own"]
-discord_role = "200000000000000020"
+slack_usergroup = "S2000000020"
 
 [[role]]
 key = "senior-engineer"
@@ -38,7 +38,7 @@ title = "Senior Engineer"
 kind = "position"
 rank = 30
 permissions = ["community.post", "community.vote", "roster.read_members", "payouts.read_own", "members.invite"]
-discord_role = "200000000000000030"
+slack_usergroup = "S2000000030"
 term_days = 90
 
 [[role]]
@@ -47,6 +47,6 @@ title = "Director"
 kind = "position"
 rank = 70
 permissions = ["members.invite", "members.grant", "members.approve_grant", "members.revoke", "members.suspend", "payouts.read_all", "payouts.approve", "policy.propose_change", "policy.approve_change", "roster.read_full", "audit.read_all", "compartment.manage"]
-discord_role = "200000000000000070"
+slack_usergroup = "S2000000070"
 max_holders = 3
 term_days = 90

@@ -1,7 +1,7 @@
 schema = 1
 
 # Example CRA for a hybrid (open core) organization with one GitHub and one
-# GitLab repository. Every name except McKale Olson is a placeholder, every
+# GitLab repository, on Discord only (no Slack). Every name except McKale Olson is a placeholder, every
 # Discord id is a fake snowflake, and the repository paths are placeholders.
 # Replace them before use. This is an illustration of the file format, not a
 # description of the company.

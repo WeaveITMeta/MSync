@@ -33,14 +33,14 @@ async fn main() -> Result<()> {
         .with(tracing_subscriber::fmt::layer())
         .init();
 
-    info!("Starting MSync - Discord Bot for Merit-Based Open Source Communities");
+    info!("Starting MSync (MeritSync) - merit-based communities on Discord and Slack");
 
     // Load configuration
     let config = Config::from_env()?;
 
     // Initialize database
     let db_pool = SqlitePool::connect(&config.database_url).await?;
-    
+
     // Run migrations
     sqlx::migrate!("./migrations").run(&db_pool).await?;
     info!("Database migrations completed");
@@ -48,11 +48,6 @@ async fn main() -> Result<()> {
     // Initialize merit tracker
     let merit_tracker = Arc::new(RwLock::new(MeritTracker::new(db_pool.clone())));
 
-    // Clone values for Discord bot
-    let discord_token = config.discord.token.clone();
-    let discord_app_id = config.discord.application_id;
-    let discord_db_pool = db_pool.clone();
-    let discord_merit_tracker = merit_tracker.clone();
 
     // Payment model (ledger + Stripe Connect). Transfers only happen on admin approve.
     let payment_config = Arc::new(PaymentConfig::from_env());
@@ -64,32 +59,11 @@ async fn main() -> Result<()> {
     info!("Tracked payout branches: {:?}", payment_config.branches);
 
     let stripe_api: Arc<dyn payments::StripeApi> = Arc::new(stripe_client);
-    let discord_payments = payment_config.clone();
-    let discord_stripe = stripe_api.clone();
 
-    // Initialize Discord HTTP client for webhook use
-    let discord_http = Arc::new(serenity::http::Http::new(&discord_token));
-
-    // Start Discord bot in a separate task
-    let discord_handle = tokio::spawn(async move {
-        let intents = GatewayIntents::GUILDS
-            | GatewayIntents::GUILD_MEMBERS
-            | GatewayIntents::GUILD_MESSAGES
-            | GatewayIntents::MESSAGE_CONTENT;
-
-        let bot = DiscordBot::new(discord_db_pool, discord_merit_tracker, discord_payments, discord_stripe);
-        
-        let mut client = Client::builder(&discord_token, intents)
-            .application_id(discord_app_id.into())
-            .event_handler(bot)
-            .framework(discord::framework::get_framework())
-            .await
-            .expect("Failed to create Discord client");
-
-        if let Err(why) = client.start().await {
-            error!("Discord client error: {:?}", why);
-        }
-    });
+    // Discord HTTP client for webhook use. Without Discord it is never called.
+    let discord_http = Arc::new(serenity::http::Http::new(
+        config.discord.as_ref().map(|d| d.token.as_str()).unwrap_or(""),
+    ));
 
     // API tokens rank seam and payout controls (v1 API + scheduler)
     let env_directory = EnvDirectory::from_env();
@@ -120,6 +94,66 @@ async fn main() -> Result<()> {
         (None, _) => info!("No CRA repository configured (MSYNC_CRA_REPO); ranks from MSYNC_OWNER_MEMBER_IDS only"),
     }
     tokio::spawn(msync::cra::loader::run_merit_refresher(cra_ctx.clone(), std::time::Duration::from_secs(60)));
+
+    // The shared chat commands (contract 12.2): one context for the Discord bot and the Slack app.
+    let chat_ctx = Arc::new(msync::chat::ChatContext {
+        pool: db_pool.clone(),
+        payments: payment_config.clone(),
+        stripe: stripe_api.clone(),
+        directory: directory.clone(),
+        cra: cra_handle.clone(),
+        today: None,
+    });
+
+    // Discord: started only when DISCORD_TOKEN is set.
+    let discord_handle = match config.discord.clone() {
+        Some(dc) => {
+            let bot = DiscordBot::new(db_pool.clone(), merit_tracker.clone(), chat_ctx.clone());
+            Some(tokio::spawn(async move {
+                let intents = GatewayIntents::GUILDS
+                    | GatewayIntents::GUILD_MEMBERS
+                    | GatewayIntents::GUILD_MESSAGES
+                    | GatewayIntents::MESSAGE_CONTENT;
+
+                let mut client = Client::builder(&dc.token, intents)
+                    .application_id(dc.application_id.into())
+                    .event_handler(bot)
+                    .framework(discord::framework::get_framework())
+                    .await
+                    .expect("Failed to create Discord client");
+
+                if let Err(why) = client.start().await {
+                    error!("Discord client error: {:?}", why);
+                }
+            }))
+        }
+        None => {
+            info!("Discord not configured (DISCORD_TOKEN unset); running without the Discord bot");
+            None
+        }
+    };
+
+    // Slack: POST /slack/commands. Enabled only when MSYNC_SLACK_SIGNING_SECRET is set; with
+    // no secret the route rejects every request.
+    let slack_api: Arc<dyn msync::slack::SlackApi> = Arc::new(msync::slack::SlackWebApi::new(
+        config.slack.api_base.clone(),
+        config.slack.bot_token.clone(),
+    ));
+    let slack_state = msync::slack::SlackState {
+        chat: chat_ctx.clone(),
+        signing_secret: config.slack.signing_secret.clone(),
+        team_id: config.slack.team_id.clone(),
+        api: slack_api,
+    };
+    if slack_state.enabled() {
+        info!("Slack enabled: POST /slack/commands (team {:?} plus the CRA's [slack] team)", config.slack.team_id);
+        if config.slack.bot_token.is_none() {
+            info!("MSYNC_SLACK_BOT_TOKEN unset: Slack admin checks fail closed and /msync-sync cannot update user groups");
+        }
+    } else {
+        info!("Slack not configured (MSYNC_SLACK_SIGNING_SECRET unset); /slack/commands rejects every request");
+    }
+    let slack_data = web::Data::new(slack_state);
     let api_ctx = payments::api::ApiContext {
         pool: db_pool.clone(),
         payments: payment_config.clone(),
@@ -161,7 +195,7 @@ async fn main() -> Result<()> {
 
     // Start Actix web server
     info!("Starting web server on {}:{}", config.server.host, config.server.port);
-    
+
     HttpServer::new(move || {
         App::new()
             .app_data(app_state.clone())
@@ -169,11 +203,13 @@ async fn main() -> Result<()> {
             .app_data(cra_data.clone())
             .app_data(merit_data.clone())
             .app_data(mcp_data.clone())
+            .app_data(slack_data.clone())
             .wrap(middleware::Logger::default())
             .wrap(middleware::NormalizePath::trim())
             .service(routes::health_check)
             .service(routes::github_webhook)
             .service(routes::gitlab_webhook)
+            .service(msync::slack::slack_commands)
             .service(routes::get_contributor_stats)
             .service(routes::get_leaderboard)
             .service(payments::routes::onboard)
@@ -193,7 +229,9 @@ async fn main() -> Result<()> {
     .await?;
 
     // Wait for Discord bot to finish
-    discord_handle.await?;
+    if let Some(h) = discord_handle {
+        h.await?;
+    }
 
     Ok(())
 }

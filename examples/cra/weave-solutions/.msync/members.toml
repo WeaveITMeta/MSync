@@ -10,7 +10,7 @@ status = "active"
 
 [member.identities]
 github = "example-founder"
-discord = "200000000000000101"
+slack = "U2000000101"
 
 [[member]]
 id = "mckale"
@@ -19,7 +19,7 @@ status = "active"
 
 [member.identities]
 github = "Simbuilder"
-discord = "200000000000000102"
+slack = "U2000000102"
 
 [[member.grant]]
 role = "director"
@@ -33,7 +33,7 @@ status = "active"
 
 [member.identities]
 github = "dee-example"
-discord = "200000000000000103"
+slack = "U2000000103"
 
 [[member.grant]]
 role = "senior-engineer"
@@ -47,7 +47,7 @@ status = "active"
 
 [member.identities]
 github = "eli-example"
-discord = "200000000000000104"
+slack = "U2000000104"
 
 [[member.grant]]
 role = "engineer"
@@ -60,7 +60,7 @@ status = "active"
 
 [member.identities]
 github = "fay-example"
-discord = "200000000000000105"
+slack = "U2000000105"
 
 [[member.grant]]
 role = "contractor"

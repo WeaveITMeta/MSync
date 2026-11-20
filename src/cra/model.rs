@@ -24,7 +24,10 @@ pub struct OrgFile {
     /// Permissions beyond the built-in catalog.
     #[serde(default)]
     pub permissions_extra: Vec<ExtraPermission>,
+    /// Optional Discord guild. At least one of `[discord]` and `[slack]` is present.
     pub discord: Option<DiscordConfig>,
+    /// Optional Slack workspace. At least one of `[discord]` and `[slack]` is present.
+    pub slack: Option<SlackConfig>,
     #[serde(default, rename = "foundry")]
     pub foundries: Vec<FoundryRepo>,
     #[serde(default, rename = "consumer")]
@@ -55,6 +58,16 @@ pub struct ExtraPermission {
 #[serde(deny_unknown_fields)]
 pub struct DiscordConfig {
     pub guild_id: String,
+    pub alert_channel_id: Option<String>,
+}
+
+/// The Slack workspace an organization uses (contract 12.2). Slack ids are
+/// uppercase letters and digits: a team id starts with `T` (or `E` for an
+/// Enterprise Grid org), a channel id with `C` or `G`.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SlackConfig {
+    pub team_id: String,
     pub alert_channel_id: Option<String>,
 }
 
@@ -151,6 +164,9 @@ pub struct Role {
     #[serde(default)]
     pub permissions: Vec<String>,
     pub discord_role: Option<String>,
+    /// Slack has no roles: a job title is projected as membership in this
+    /// Slack user group (an id starting with `S`).
+    pub slack_usergroup: Option<String>,
     /// Tier only, required.
     pub min_merit: Option<u64>,
     /// Position only.
@@ -210,6 +226,8 @@ pub struct Identities {
     pub gitlab: Option<String>,
     /// Discord user snowflake.
     pub discord: Option<String>,
+    /// Slack user id (starts with `U` or `W`).
+    pub slack: Option<String>,
 }
 
 impl Identities {
@@ -224,6 +242,9 @@ impl Identities {
         }
         if let Some(x) = &self.discord {
             v.push(("discord", x.as_str()));
+        }
+        if let Some(x) = &self.slack {
+            v.push(("slack", x.as_str()));
         }
         v
     }

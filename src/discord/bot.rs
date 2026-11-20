@@ -10,23 +10,22 @@ use tracing::{error, info, warn};
 
 pub struct DiscordBot {
     db_pool: SqlitePool,
+    #[allow(dead_code)]
     merit_tracker: Arc<RwLock<MeritTracker>>,
-    payments: Arc<crate::payments::PaymentConfig>,
-    stripe: Arc<dyn crate::payments::StripeApi>,
+    /// The shared chat commands (`crate::chat`); this bot only translates.
+    chat: Arc<crate::chat::ChatContext>,
 }
 
 impl DiscordBot {
     pub fn new(
         db_pool: SqlitePool,
         merit_tracker: Arc<RwLock<MeritTracker>>,
-        payments: Arc<crate::payments::PaymentConfig>,
-        stripe: Arc<dyn crate::payments::StripeApi>,
+        chat: Arc<crate::chat::ChatContext>,
     ) -> Self {
         Self {
             db_pool,
             merit_tracker,
-            payments,
-            stripe,
+            chat,
         }
     }
 
@@ -107,25 +106,24 @@ impl EventHandler for DiscordBot {
     async fn interaction_create(&self, ctx: Context, interaction: Interaction) {
         match interaction {
             Interaction::Command(command) => {
-                let content = match command.data.name.as_str() {
-                    "link" => crate::discord::commands::link_account(&self.db_pool, &command).await,
-                    "stats" => crate::discord::commands::show_stats(&self.db_pool, &command).await,
-                    "leaderboard" => {
-                        crate::discord::commands::show_leaderboard(&self.db_pool, &command).await
+                let reply = match crate::discord::commands::command_for(&command) {
+                    Some((cmd, arg)) => {
+                        let actor = crate::discord::commands::actor_for(&command);
+                        let applier = crate::discord::commands::DiscordApplier {
+                            http: ctx.http.clone(),
+                            guild_id: command.guild_id,
+                            pool: self.db_pool.clone(),
+                        };
+                        crate::chat::commands::run(&self.chat, &actor, cmd, &arg, &applier).await
                     }
-                    "sync" => crate::discord::commands::sync_roles(&self.db_pool, &ctx, &command).await,
-                    "payouts" => crate::discord::commands::list_pending_payouts(&self.db_pool, &command).await,
-                    "payout-setup" => {
-                        crate::discord::commands::payout_setup(&self.db_pool, self.stripe.as_ref(), &self.payments, &command).await
-                    }
-                    _ => "Unknown command".to_string(),
+                    None => crate::chat::ChatReply::private("Unknown command"),
                 };
 
                 if let Err(why) = command
                     .create_response(&ctx.http, CreateInteractionResponse::Message(
                         CreateInteractionResponseMessage::new()
-                            .content(content)
-                            .ephemeral(matches!(command.data.name.as_str(), "payouts" | "payout-setup"))
+                            .content(reply.text)
+                            .ephemeral(reply.private)
                     ))
                     .await
                 {
@@ -137,13 +135,16 @@ impl EventHandler for DiscordBot {
     }
 
     async fn guild_member_addition(&self, ctx: Context, new_member: Member) {
-        // Check if this Discord user is linked to a GitHub account
-        let discord_user_id = new_member.user.id.get() as i64;
-        
+        // Is this Discord user bound to a contributor (chat_identities)?
+        let actor = crate::chat::ChatActor::discord(new_member.user.id.get().to_string(), None);
+        let key = match crate::chat::identity::binding_for(&self.db_pool, &actor).await {
+            Ok(Some(b)) => b.contributor,
+            _ => return,
+        };
         if let Ok(Some(contributor)) = sqlx::query_as::<_, Contributor>(
-            "SELECT * FROM contributors WHERE discord_user_id = ?"
+            "SELECT * FROM contributors WHERE github_username = ?"
         )
-        .bind(discord_user_id)
+        .bind(key)
         .fetch_optional(&self.db_pool)
         .await
         {

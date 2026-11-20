@@ -20,6 +20,7 @@ rank = 10
 min_merit = 50
 permissions = ["profile.self", "community.read", "leaderboard.read", "community.post", "community.vote"]
 discord_role = "100000000000000010"
+slack_usergroup = "S1000000010"
 
 [[role]]
 key = "active-contributor"
@@ -29,6 +30,7 @@ rank = 20
 min_merit = 150
 permissions = ["profile.self", "community.read", "leaderboard.read", "community.post", "community.vote", "community.events"]
 discord_role = "100000000000000020"
+slack_usergroup = "S1000000020"
 
 [[role]]
 key = "core-contributor"
@@ -38,6 +40,7 @@ rank = 30
 min_merit = 500
 permissions = ["profile.self", "community.read", "leaderboard.read", "community.post", "community.vote", "community.events", "roster.read_members"]
 discord_role = "100000000000000030"
+slack_usergroup = "S1000000030"
 
 [[role]]
 key = "reviewer"
@@ -46,6 +49,7 @@ kind = "position"
 rank = 40
 permissions = ["community.moderate", "roster.read_full", "merit.read_all"]
 discord_role = "100000000000000040"
+slack_usergroup = "S1000000040"
 
 [[role]]
 key = "maintainer"
@@ -54,6 +58,7 @@ kind = "position"
 rank = 60
 permissions = ["members.invite", "members.grant", "members.approve_grant", "members.revoke", "members.suspend", "payouts.read_all", "payouts.approve", "roster.read_full", "merit.award_manual"]
 discord_role = "100000000000000060"
+slack_usergroup = "S1000000060"
 max_holders = 5
 term_days = 180
 merit_eligibility = 1000
@@ -65,5 +70,6 @@ kind = "position"
 rank = 80
 permissions = ["members.invite", "members.grant", "members.approve_grant", "members.revoke", "members.suspend", "payouts.read_all", "payouts.approve", "roster.read_full", "merit.award_manual", "merit.clawback", "policy.propose_change", "policy.approve_change", "consumers.manage", "discord.reconcile", "audit.read_all"]
 discord_role = "100000000000000080"
+slack_usergroup = "S1000000080"
 max_holders = 2
 term_days = 180

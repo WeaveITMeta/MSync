@@ -39,6 +39,37 @@ pub fn is_snowflake(s: &str) -> bool {
     (17..=20).contains(&s.len()) && s.chars().all(|c| c.is_ascii_digit())
 }
 
+/// The kinds of Slack id the CRA names.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SlackIdKind {
+    Team,
+    User,
+    Usergroup,
+    Channel,
+}
+
+impl SlackIdKind {
+    fn prefixes(self) -> &'static [char] {
+        match self {
+            SlackIdKind::Team => &['T', 'E'],
+            SlackIdKind::User => &['U', 'W'],
+            SlackIdKind::Usergroup => &['S'],
+            SlackIdKind::Channel => &['C', 'G'],
+        }
+    }
+}
+
+/// A Slack id: the prefix for its kind, then 8 to 20 uppercase letters or
+/// digits (Slack ids are 9 to 11 characters today; the upper bound leaves
+/// room without accepting arbitrary text).
+pub fn is_slack_id(s: &str, kind: SlackIdKind) -> bool {
+    let mut chars = s.chars();
+    let Some(first) = chars.next() else { return false };
+    kind.prefixes().contains(&first)
+        && (9..=21).contains(&s.len())
+        && chars.all(|c| c.is_ascii_uppercase() || c.is_ascii_digit())
+}
+
 struct V<'a> {
     s: &'a Snapshot,
     today: NaiveDate,
@@ -91,6 +122,20 @@ fn org(v: &mut V) {
                 v.err(F, ErrorCode::InvalidSnowflake, format!("discord.alert_channel_id `{c}` is not a snowflake"));
             }
         }
+    }
+
+    if let Some(sl) = &o.slack {
+        if !is_slack_id(&sl.team_id, SlackIdKind::Team) {
+            v.err(F, ErrorCode::InvalidSlackId, format!("slack.team_id `{}` is not a Slack team id (T...)", sl.team_id));
+        }
+        if let Some(c) = &sl.alert_channel_id {
+            if !is_slack_id(c, SlackIdKind::Channel) {
+                v.err(F, ErrorCode::InvalidSlackId, format!("slack.alert_channel_id `{c}` is not a Slack channel id (C... or G...)"));
+            }
+        }
+    }
+    if o.discord.is_none() && o.slack.is_none() {
+        v.err(F, ErrorCode::NoChatPlatform, "org.toml needs [discord], [slack], or both");
     }
 
     // permissions_extra
@@ -183,6 +228,7 @@ fn roles(v: &mut V) {
     let p = &s.policy;
     let mut keys = BTreeSet::new();
     let mut discord_roles: BTreeMap<&str, &str> = BTreeMap::new();
+    let mut slack_groups: BTreeMap<&str, &str> = BTreeMap::new();
     for r in &s.roles.roles {
         if !is_valid_key(&r.key) {
             v.err(F, ErrorCode::InvalidKey, format!("role key `{}` must match [a-z0-9-]", r.key));
@@ -202,6 +248,14 @@ fn roles(v: &mut V) {
             }
             if let Some(prev) = discord_roles.insert(d.as_str(), r.key.as_str()) {
                 v.err(F, ErrorCode::DuplicateDiscordRole, format!("discord_role `{d}` is used by both `{prev}` and `{}`", r.key));
+            }
+        }
+        if let Some(g) = &r.slack_usergroup {
+            if !is_slack_id(g, SlackIdKind::Usergroup) {
+                v.err(F, ErrorCode::InvalidSlackId, format!("role `{}` slack_usergroup `{g}` is not a Slack user group id (S...)", r.key));
+            }
+            if let Some(prev) = slack_groups.insert(g.as_str(), r.key.as_str()) {
+                v.err(F, ErrorCode::DuplicateSlackUsergroup, format!("slack_usergroup `{g}` is used by both `{prev}` and `{}`", r.key));
             }
         }
         if let Some(guild) = s.org.discord.as_ref().map(|d| d.guild_id.as_str()) {
@@ -294,7 +348,11 @@ fn members(v: &mut V) {
             if provider == "discord" && !is_snowflake(value) {
                 v.err(F, ErrorCode::InvalidSnowflake, format!("member `{}` discord identity `{value}` is not a snowflake", m.id));
             }
-            // GitHub and GitLab logins are case-insensitive; Discord ids are exact.
+            if provider == "slack" && !is_slack_id(value, SlackIdKind::User) {
+                v.err(F, ErrorCode::InvalidSlackId, format!("member `{}` slack identity `{value}` is not a Slack user id (U... or W...)", m.id));
+            }
+            // GitHub and GitLab logins are case-insensitive; Discord ids are
+            // exact; Slack ids are uppercase only, so lowercasing is exact too.
             let norm = value.to_ascii_lowercase();
             if let Some(prev) = identities.insert((provider, norm), m.id.as_str()) {
                 v.err(F, ErrorCode::DuplicateIdentity, format!("{provider} identity `{value}` belongs to both `{prev}` and `{}`", m.id));
