@@ -393,3 +393,50 @@ GET        /api/v1/payouts/statement?payee=&from=&to=   everything paid or pendi
 ```
 
 MCP tools mirror these: `payees_list`, `payee_get`, `payorders_list`, `payorder_preview`, `payorder_create`, `payorder_approve`, `payorder_pause`, `invoices_list`, `invoice_submit`, `invoice_approve`, `payout_statement`. Tools that move toward money (`payorder_approve`, `invoice_approve`) follow the same rules as REST; execution still goes through payout runs and the MCP execute guard.
+
+## 12. MSync: the rebrand and two chat platforms (owner direction, 2026-11-19)
+
+DSync is now **MSync**, short for **MeritSync**. Earlier sections still say DSync where they have not been rewritten; the rules below win.
+
+### 12.1 Names
+
+| Was | Is |
+|---|---|
+| Product name DSync, Apache DSync | MSync (MeritSync). The license is still Apache 2.0. |
+| Crate and binary `dsync` | `msync` |
+| Repository config directory `.dsync/` | `.msync/` |
+| Environment variables `DSYNC_*` | `MSYNC_*`. A `DSYNC_*` variable is still read when its `MSYNC_*` twin is unset, with a startup warning, because a running deployment may have them set. |
+| API token prefix `dsync_` | `msync_` (no token has been issued in a release) |
+| Rubric id `dsync-rubric-v1` | `msync-rubric-v1`, with a new pinned hash (no score has been stored in a release) |
+| Docs, comments, log and error text, MCP server name | MSync |
+
+Three names do NOT change, each for a stated reason:
+
+- The Stripe idempotency key `dsync-ledger-<id>`. A payout approved before the rename and retried after it must present the same key, or Stripe could pay twice.
+- The default database file `sqlite://dsync.db`. Changing the default would start an existing deployment on an empty database.
+- The existing webhook dedupe keys.
+
+### 12.2 Chat platforms: Discord, Slack, or both
+
+An organization connects Discord, Slack, or both. Neither is the source of truth; both are projections of the CRA.
+
+- `org.toml` has optional `[discord]` (guild id, alert channel) and optional `[slack]` (team id, alert channel). At least one must be present.
+- A role may carry `discord_role` (a role id) and `slack_usergroup` (a user group id). Slack has no roles: a job title is projected as membership in a Slack user group.
+- A member's identities may include `discord` (a user id) and `slack` (a user id).
+- One command set, defined once, runs on both: `link`, `stats`, `leaderboard`, `sync`, `payouts`, `payout-setup`. Each command is a platform-neutral function that takes who asked and returns a reply; a Discord adapter and a Slack adapter translate.
+- Slack: slash commands arrive at `POST /slack/commands`. Every request is verified with the Slack signing secret (`X-Slack-Signature` `v0` HMAC-SHA256 over `v0:<timestamp>:<body>`, constant-time compare, timestamp within 5 minutes). A reply that was private on Discord is ephemeral on Slack.
+- The same person on both platforms is one contributor: their Discord and Slack ids both map to it.
+- `link` on both platforms refuses to bind a GitHub or GitLab login that is already bound to a different chat user, and refuses to change an existing binding. With a CRA active, identities come from `members.toml` and `link` only reports them.
+- Admin-only commands use the CRA rank or the platform's admin flag, and fail closed when neither can be read.
+- MSync ships both bots: the Discord bot as today, and a Slack app manifest (`slack/manifest.yaml`) with the slash commands, scopes and request URL to install.
+
+### 12.3 MSync as an OAuth 2.0 and OpenID Connect provider (designed, not built)
+
+So that a platform such as Eustress Engine can sign people in with MSync and host its groups on it:
+
+- MSync becomes an authorization server: authorization code flow with PKCE, an OpenID Connect discovery document, a JWKS endpoint, ID tokens signed with a rotating key, refresh tokens, and token revocation.
+- Each platform is a registered client (client id, redirect URIs, allowed scopes), created by an owner. This replaces the per-portal `[[consumer]]` shared secret for sign-in; the signed sync API stays for server-to-server reads.
+- Standing travels as claims and scopes: `openid`, `profile`, `groups` (the member's roles and job titles in that organization), `rank`, `merit`. A client receives only the claims its registration allows, and a pairwise subject id, so two platforms cannot correlate people.
+- Groups: a group is a CRA role, or a named set of roles. A platform reads membership from the `groups` claim at sign-in, from `GET /oauth/userinfo`, and, to stay current between sign-ins, from a SCIM 2.0 feed or a signed webhook when a snapshot changes.
+- Sign-in itself is the root account with linked identities (GitHub, GitLab, Discord, Slack, Google, email link). This depends on root accounts and sessions, which are not built.
+- A suspended member gets no token, and existing tokens are revoked when a snapshot removes them.
