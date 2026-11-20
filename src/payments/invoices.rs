@@ -196,6 +196,28 @@ async fn event(conn: &mut SqliteConnection, id: &str, action: &str, from: Option
     .bind(now)
     .execute(&mut *conn)
     .await?;
+    // Every invoice transition is audited in the same transaction: no audit entry, no change.
+    let verb = match action {
+        "submit" => "submitted",
+        "approval" => "approval",
+        "approve" => "approved",
+        "schedule" => "scheduled",
+        "reject" => "rejected",
+        "void" => "voided",
+        "paid" => "paid",
+        other => other,
+    };
+    crate::audit::append_in(
+        conn,
+        &crate::audit::AuditEntry::new(
+            crate::audit::kind_for_member(actor),
+            actor,
+            format!("invoice.{verb}"),
+            format!("invoice:{id}"),
+            serde_json::json!({ "invoice_id": id, "from_status": from, "to_status": to, "note": note }),
+        ),
+    )
+    .await?;
     Ok(())
 }
 

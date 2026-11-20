@@ -267,6 +267,9 @@ pub async fn activate(pool: &SqlitePool, a: &Attempt<'_>, expected_active: Optio
         }
         Err(e) => return Err(e),
     };
+    // Activation changes who holds authority: it commits only together with its audit entry
+    // (contract 13.1).
+    crate::audit::append_in(&mut tx, &super::loader::activation_audit(a, id, current)).await?;
     tx.commit().await?;
     Ok(Activation::Activated(id))
 }

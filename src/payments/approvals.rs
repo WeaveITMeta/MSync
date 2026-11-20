@@ -34,16 +34,38 @@ pub enum RowApproval {
     AlreadyApproved,
 }
 
-async fn insert_approval(pool: &SqlitePool, ledger_id: &str, member_id: &str, token_id: &str, org: &str) -> Result<RowApproval, sqlx::Error> {
+/// Record `approver`'s approval of one ledger row. A new approval and its audit entry commit
+/// together: no audit entry, no approval.
+async fn insert_approval(pool: &SqlitePool, entry: &LedgerEntry, approver: &Principal) -> Result<RowApproval, sqlx::Error> {
+    let mut tx = pool.begin().await?;
     let res = sqlx::query(
         "INSERT OR IGNORE INTO payout_approvals (ledger_id, approver_member_id, org_id, token_id) VALUES (?, ?, ?, ?)",
     )
-    .bind(ledger_id)
-    .bind(member_id)
-    .bind(org)
-    .bind(token_id)
-    .execute(pool)
+    .bind(&entry.id)
+    .bind(&approver.member_id)
+    .bind(&approver.org_id)
+    .bind(&approver.token_id)
+    .execute(&mut *tx)
     .await?;
+    if res.rows_affected() > 0 {
+        crate::audit::append_in(
+            &mut tx,
+            &crate::audit::AuditEntry::by_principal(
+                approver,
+                "ledger.approval",
+                format!("ledger:{}", entry.id),
+                serde_json::json!({
+                    "ledger_id": entry.id,
+                    "source_kind": entry.source_kind,
+                    "payee": entry.github_username,
+                    "amount_cents": entry.amount_cents,
+                    "currency": entry.currency,
+                }),
+            ),
+        )
+        .await?;
+    }
+    tx.commit().await?;
     Ok(if res.rows_affected() == 0 { RowApproval::AlreadyApproved } else { RowApproval::Recorded })
 }
 
@@ -91,7 +113,7 @@ pub async fn approve_row(
     if !is_open(&entry.status) {
         return Err(PayoutError::InvalidState(format!("ledger entry is '{}' and cannot be approved", entry.status)));
     }
-    Ok(insert_approval(pool, &entry.id, &principal.member_id, &principal.token_id, &principal.org_id).await?)
+    Ok(insert_approval(pool, &entry, principal).await?)
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -373,22 +395,81 @@ pub async fn load_facts(pool: &SqlitePool, directory: &dyn Directory, entry: Led
         blocked = blocked || hit.is_some();
     }
     let payee_inactive = payee_inactive_reason(pool, &entry).await?;
-    let verified: Option<i64> = sqlx::query_scalar(
-        "SELECT 1 FROM contributors WHERE lower(github_username) = ? AND discord_user_id IS NOT NULL",
-    )
-    .bind(&key)
-    .fetch_optional(pool)
-    .await?;
+    let verified = payee_identity_verified(pool, &key).await?;
     let payee_member = directory.member_for_payee(&key).or(payee_member);
     Ok(RowFacts {
         approvers,
         blocked,
-        verified_identity: verified.is_some(),
+        verified_identity: verified,
         payee_rank: payee_member.as_deref().and_then(|m| directory.rank_of(m)),
         payee_roles: payee_member.as_deref().map(|m| directory.roles_of(m)).unwrap_or_default(),
         payee_inactive,
         entry,
     })
+}
+
+/// `(provider, host, login)` of a ledger payee key: a bare GitHub login, `gitlab:<login>`, or
+/// `<provider>:<host>:<login>` (`foundry::legacy_username`).
+fn payee_key_identity(key: &str) -> Option<(crate::foundry::FoundryProvider, Option<String>, String)> {
+    let parts: Vec<&str> = key.trim().split(':').collect();
+    let (p, host, login) = match parts.as_slice() {
+        [login] => (crate::foundry::FoundryProvider::GitHub, None, *login),
+        [p, login] => (crate::foundry::FoundryProvider::parse(p)?, None, *login),
+        [p, host, login] => (crate::foundry::FoundryProvider::parse(p)?, Some(host.to_ascii_lowercase()), *login),
+        _ => return None,
+    };
+    (!login.is_empty()).then(|| (p, host, login.to_string()))
+}
+
+/// Seam for the accounts worker: a completed OAuth sign-in marks a code-host identity verified
+/// (contract 13.4). Replace the body with
+/// `crate::accounts::login_is_verified(pool, provider, login).await` once `src/accounts` lands.
+async fn account_login_verified(_pool: &SqlitePool, _provider: &str, _login: &str) -> Result<bool, sqlx::Error> {
+    Ok(false)
+}
+
+/// Is the identity a ledger row pays (its payee key) verified? Yes when any of:
+///
+/// 1. a chat account bound to that contributor is verified (`chat_identities.verified = 1`,
+///    set only by a proven link, never by typing a login into `link`);
+/// 2. the accounts module says the login was proven by OAuth sign-in ([`account_login_verified`]);
+/// 3. the active CRA snapshot lists the login for a member (`members.toml`, attested by the
+///    administration through a reviewed commit).
+///
+/// A typed-in `link` (which fills `contributors.discord_user_id` and an unverified chat
+/// binding) proves nothing and no longer counts.
+pub async fn payee_identity_verified(pool: &SqlitePool, key: &str) -> Result<bool, sqlx::Error> {
+    if crate::audit::mutant("eligibility_discord_column") {
+        let v: Option<i64> = sqlx::query_scalar("SELECT 1 FROM contributors WHERE lower(github_username) = ? AND discord_user_id IS NOT NULL")
+            .bind(key.to_lowercase())
+            .fetch_optional(pool)
+            .await?;
+        return Ok(v.is_some());
+    }
+    let key = key.trim().to_lowercase();
+    let chat: Option<i64> = sqlx::query_scalar(
+        "SELECT 1 FROM chat_identities ci JOIN contributors c ON c.id = ci.contributor_id
+         WHERE lower(c.github_username) = ? AND ci.verified = 1 LIMIT 1",
+    )
+    .bind(&key)
+    .fetch_optional(pool)
+    .await?;
+    if chat.is_some() {
+        return Ok(true);
+    }
+    let Some((provider, host, login)) = payee_key_identity(&key) else { return Ok(false) };
+    if account_login_verified(pool, provider.as_str(), &login).await? {
+        return Ok(true);
+    }
+    let Some(row) = crate::cra::store::active(pool, crate::cra::loader::ORG_ID).await? else { return Ok(false) };
+    // An active snapshot that does not reproduce attests nothing (fail closed).
+    let Ok(snap) = crate::cra::loader::parse_stored(&row) else { return Ok(false) };
+    let host = host.unwrap_or_else(|| provider.default_host().to_string());
+    Ok(snap.members.members.iter().any(|m| {
+        crate::cra::loader::member_foundry_logins(&snap, &m.id)
+            .iter()
+            .any(|(p, h, l)| *p == provider && h.eq_ignore_ascii_case(&host) && l.eq_ignore_ascii_case(&login))
+    }))
 }
 
 /// Why the payee record behind a row cannot be paid now, if it cannot.
@@ -488,7 +569,7 @@ pub async fn legacy_admin_approve(
         return Err(PayoutError::Ledger(ledger::LedgerError::InvalidState(entry.status, "approved")));
     }
     let admin = Principal::legacy_admin();
-    insert_approval(pool, &entry.id, LEGACY_ADMIN_MEMBER, &admin.token_id, &admin.org_id).await?;
+    insert_approval(pool, &entry, &admin).await?;
 
     let mut blockers: Vec<String> = Vec::new();
     if p.approval.approvals_required != 1 {

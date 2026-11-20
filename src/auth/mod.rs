@@ -33,6 +33,8 @@ pub mod scopes {
     pub const INVOICES_SUBMIT: &str = "invoices.submit";
     pub const INVOICES_READ: &str = "invoices.read";
     pub const INVOICES_APPROVE: &str = "invoices.approve";
+    // Audit log (contract 13.1).
+    pub const AUDIT_READ: &str = "audit.read";
 
     pub const ALL: &[&str] = &[
         HIERARCHY_READ,
@@ -52,6 +54,7 @@ pub mod scopes {
         INVOICES_SUBMIT,
         INVOICES_READ,
         INVOICES_APPROVE,
+        AUDIT_READ,
     ];
 }
 

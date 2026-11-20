@@ -390,6 +390,17 @@ pub async fn put_policy(
         Err(sqlx::Error::Database(e)) if e.message().contains("UNIQUE") => return Err(PolicyError::Conflict(current)),
         Err(e) => return Err(e.into()),
     }
+    // The new version and its audit entry commit together: no audit entry, no policy change.
+    crate::audit::append_in(
+        &mut tx,
+        &crate::audit::AuditEntry::by_principal(
+            principal,
+            "payout.policy.changed",
+            format!("payout_policy:{}", principal.org_id),
+            serde_json::json!({ "version": next, "previous_version": current, "policy": policy }),
+        ),
+    )
+    .await?;
     tx.commit().await?;
     Ok(next)
 }

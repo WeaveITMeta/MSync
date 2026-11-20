@@ -263,6 +263,8 @@ const ALL_TOOL_NAMES: &[&str] = &[
     "invoice_submit",
     "invoice_approve",
     "payout_statement",
+    "audit_list",
+    "audit_verify",
 ];
 
 // ------------------------------------------------------------------ auth
@@ -895,4 +897,43 @@ async fn payroll_tools_act_as_the_token_member_and_refuse_actor_fields() {
     assert_eq!(structured(&v)["payorder"]["status"], "paused");
     // No payroll tool moved money.
     assert_eq!(stripe.transfers.lock().unwrap().len(), 0);
+}
+
+// ------------------------------------------------------------------ audit
+
+#[actix_web::test]
+async fn audit_tools_and_rest_list_and_verify_the_chain() {
+    let pool = pool().await;
+    let stripe = Arc::new(MockStripe::default());
+    let c = ctx(&pool, stripe, false);
+    let api = c.api.clone();
+    let app = app!(c);
+    let reader = token(&pool, "auditor", &[scopes::AUDIT_READ], &[]).await;
+    let other = token(&pool, "bob", &[scopes::PAYOUTS_READ], &[]).await;
+
+    let v = tool!(app, &reader, "audit_list", json!({"action": "token.*", "limit": 1}));
+    assert!(!is_error(&v), "{v}");
+    let entries = structured(&v)["entries"].as_array().unwrap().clone();
+    assert_eq!(entries.len(), 1);
+    assert_eq!(entries[0]["action"], "token.created");
+    assert_eq!(entries[0]["detail"]["member_id"], "auditor");
+    assert_eq!(structured(&v)["next_after"], 1);
+    let v = tool!(app, &reader, "audit_verify", json!({}));
+    assert_eq!(structured(&v)["verify"]["ok"], true, "{v}");
+    assert_eq!(structured(&v)["verify"]["checked"], 2);
+
+    // REST, same scope.
+    let rest_app = atest::init_service(App::new().app_data(web::Data::new(api)).configure(crate::audit::api::configure)).await;
+    let get = |uri: &str, tok: &str| atest::TestRequest::get().uri(uri).insert_header(("Authorization", format!("Bearer {tok}")));
+    let (s, body) = rest!(rest_app, get("/api/v1/audit?after=1", &reader));
+    assert_eq!(s, StatusCode::OK, "{body}");
+    assert_eq!(body["entries"].as_array().unwrap().len(), 1);
+    assert_eq!(body["entries"][0]["detail"]["member_id"], "bob");
+    let (s, body) = rest!(rest_app, get("/api/v1/audit/verify", &reader));
+    assert_eq!(s, StatusCode::OK);
+    assert_eq!(body["verify"]["ok"], true);
+    let (s, _) = rest!(rest_app, get("/api/v1/audit", &other));
+    assert_eq!(s, StatusCode::FORBIDDEN, "audit.read is required");
+    let (s, _) = rest!(rest_app, atest::TestRequest::get().uri("/api/v1/audit/verify"));
+    assert_eq!(s, StatusCode::UNAUTHORIZED);
 }

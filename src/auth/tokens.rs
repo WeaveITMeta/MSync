@@ -340,6 +340,8 @@ pub async fn create_token(
     let token = format!("{TOKEN_PREFIX}{id}_{secret}");
     let expires_at = req.expires_at.map(format_db_time);
 
+    // The token row and its audit entry commit together: no audit entry, no token.
+    let mut tx = pool.begin().await?;
     sqlx::query(
         "INSERT INTO api_tokens (id, org_id, label, token_hash, scopes, member_id, payee_keys, created_by, created_at, expires_at)
          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
@@ -354,8 +356,28 @@ pub async fn create_token(
     .bind(&created_by)
     .bind(format_db_time(now))
     .bind(&expires_at)
-    .execute(pool)
+    .execute(&mut *tx)
     .await?;
+    let (kind, actor) = audit_actor(&created_by);
+    crate::audit::append_in(
+        &mut tx,
+        &crate::audit::AuditEntry::new(
+            kind,
+            actor,
+            "token.created",
+            format!("token:{id}"),
+            serde_json::json!({
+                "token_id": id,
+                "label": label,
+                "member_id": member_id,
+                "scopes": token_scopes,
+                "payee_keys": payee_keys,
+                "expires_at": expires_at,
+            }),
+        ),
+    )
+    .await?;
+    tx.commit().await?;
 
     Ok(CreatedToken {
         id,
@@ -383,18 +405,49 @@ pub async fn revoke_token(
     let Some(member) = member else {
         return Err(TokenError::NotFound);
     };
-    if let TokenCreator::Principal(p) = creator {
-        p.require(scopes::TOKENS_MANAGE)?;
-        if !may_manage_member(p, &member, directory) {
-            return Err(TokenError::Forbidden("cannot revoke a token of a member you do not outrank".into()));
+    let revoked_by = match creator {
+        TokenCreator::Bootstrap => LEGACY_ADMIN_MEMBER.to_string(),
+        TokenCreator::Principal(p) => {
+            p.require(scopes::TOKENS_MANAGE)?;
+            if !may_manage_member(p, &member, directory) {
+                return Err(TokenError::Forbidden("cannot revoke a token of a member you do not outrank".into()));
+            }
+            p.member_id.clone()
         }
-    }
-    sqlx::query("UPDATE api_tokens SET revoked_at = COALESCE(revoked_at, ?) WHERE id = ?")
+    };
+    // Idempotent: only the first revocation changes the row, and only it is audited, in the
+    // same transaction.
+    let mut tx = pool.begin().await?;
+    let res = sqlx::query("UPDATE api_tokens SET revoked_at = ? WHERE id = ? AND revoked_at IS NULL")
         .bind(format_db_time(now))
         .bind(token_id)
-        .execute(pool)
+        .execute(&mut *tx)
         .await?;
+    if res.rows_affected() > 0 {
+        let (kind, actor) = audit_actor(&revoked_by);
+        crate::audit::append_in(
+            &mut tx,
+            &crate::audit::AuditEntry::new(
+                kind,
+                actor,
+                "token.revoked",
+                format!("token:{token_id}"),
+                serde_json::json!({ "token_id": token_id, "member_id": member }),
+            ),
+        )
+        .await?;
+    }
+    tx.commit().await?;
     Ok(())
+}
+
+/// The audit actor for a token write made by `member` (`admin-token` for the bootstrap token).
+fn audit_actor(member: &str) -> (crate::audit::ActorKind, String) {
+    if member == LEGACY_ADMIN_MEMBER {
+        (crate::audit::ActorKind::AdminToken, member.to_string())
+    } else {
+        (crate::audit::ActorKind::Member, member.to_string())
+    }
 }
 
 /// Every payee key ever declared for a member, across ALL of its tokens (revoked and expired
