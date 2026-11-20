@@ -697,4 +697,20 @@ async fn record_sync_event_writes_only_drift_today() {
         assert!(record_sync_event(&pool, &mk(k)).await.unwrap().is_none());
     }
     assert_eq!(drift_rows(&pool).await.len(), 2);
+    // Every kind reaches the audit log, and the chain stays intact.
+    let actions: Vec<String> = sqlx::query_scalar("SELECT action FROM audit_log WHERE action LIKE 'chat.sync.%' ORDER BY seq")
+        .fetch_all(&pool)
+        .await
+        .unwrap();
+    assert_eq!(
+        actions,
+        vec![
+            "chat.sync.drift_reverted",
+            "chat.sync.drift_held",
+            "chat.sync.change_applied",
+            "chat.sync.role_refused",
+            "chat.sync.holds_released"
+        ]
+    );
+    assert!(crate::audit::verify(&pool).await.unwrap().ok);
 }

@@ -191,10 +191,40 @@ pub struct SyncEvent {
     pub detail: String,
 }
 
-/// The seam for the audit log (contract 13.1: "role sync changes and drift"). Today it
-/// writes drift (reverted and held) to `chat_drift_events` and logs the other kinds; the
-/// audit log is wired here later. Returns the drift row id when one was written.
+/// The audit action for a role sync event.
+pub fn sync_audit_action(kind: SyncEventKind) -> &'static str {
+    match kind {
+        SyncEventKind::DriftReverted => "chat.sync.drift_reverted",
+        SyncEventKind::DriftHeld => "chat.sync.drift_held",
+        SyncEventKind::ChangeApplied => "chat.sync.change_applied",
+        SyncEventKind::RoleRefused => "chat.sync.role_refused",
+        SyncEventKind::HoldsReleased => "chat.sync.holds_released",
+    }
+}
+
+/// The seam for the audit log (contract 13.1: "role sync changes and drift"). Every event
+/// is appended to the audit log, best effort (a failed audit write is logged and never
+/// stops role sync). Drift (reverted and held) is also written to `chat_drift_events`, which
+/// the anti-flap hold reads. Returns the drift row id when one was written.
 pub async fn record_sync_event(pool: &SqlitePool, ev: &SyncEvent) -> Result<Option<i64>, sqlx::Error> {
+    let mut entry = crate::audit::AuditEntry::new(
+        crate::audit::ActorKind::System,
+        "system:role-sync",
+        sync_audit_action(ev.kind),
+        format!("{}:{}:{}", ev.platform.as_str(), ev.role, ev.member),
+        serde_json::json!({
+            "platform": ev.platform.as_str(),
+            "role": ev.role,
+            "member": ev.member,
+            "direction": ev.direction.map(|d| d.as_str()),
+            "observed_at": ts(ev.observed_at),
+            "reverted_at": ev.reverted_at.map(ts),
+            "snapshot_id": ev.snapshot_id,
+            "detail": ev.detail,
+        }),
+    );
+    entry.org_id = crate::cra::loader::ORG_ID.to_string();
+    crate::audit::append_best_effort(pool, &entry).await;
     let outcome = match ev.kind {
         SyncEventKind::DriftReverted => "reverted",
         SyncEventKind::DriftHeld => "held",

@@ -303,3 +303,70 @@ fn refresh_links_are_signed() {
     assert!(!verify_refresh_sig(&c, "acct_2", &sig));
     assert!(!verify_refresh_sig(&c, "acct_1", "deadbeef"));
 }
+
+/// Contract 13.1: the legacy reject route and a Stripe `account.updated` webhook are audited.
+#[actix_web::test]
+async fn legacy_reject_and_stripe_account_status_are_audited() {
+    use actix_web::{test as atest, web, App};
+    use std::sync::Arc;
+    let pool = pool().await;
+    add_contributor(&pool, "alice", Some("acct_1234WXYZ"), false).await;
+    let e = ledger::record_merge(&pool, &cfg(), &merge(41, "abc41", "main")).await.unwrap().unwrap();
+
+    let mut payments = cfg();
+    payments.admin_token = Some("admin-secret".into());
+    payments.stripe_webhook_secret = Some("whsec_test".into());
+    let config: crate::config::Config = serde_json::from_value(serde_json::json!({
+        "github": {"token": "", "webhook_secret": "", "repo_owner": "", "repo_name": ""},
+        "coderabbit": {"api_key": null},
+        "database_url": "sqlite::memory:",
+        "server": {"host": "127.0.0.1", "port": 0}
+    }))
+    .unwrap();
+    let dir: Arc<dyn crate::auth::Directory> = Arc::new(crate::auth::EnvDirectory::default());
+    let state = web::Data::new(crate::AppState {
+        config,
+        db_pool: pool.clone(),
+        merit_tracker: Arc::new(tokio::sync::RwLock::new(crate::merit::tracker::MeritTracker::new(pool.clone()))),
+        discord_http: Arc::new(serenity::http::Http::new("x")),
+        payments: Arc::new(payments),
+        stripe: Arc::new(MockStripe::default()),
+        directory: dir.clone(),
+        cra: Arc::new(crate::cra::CraContext::disabled(pool.clone(), crate::cra::CraHandle::new(), dir)),
+    });
+    let app = atest::init_service(
+        App::new().app_data(state).service(super::routes::reject_entry).service(super::routes::stripe_webhook),
+    )
+    .await;
+
+    let req = atest::TestRequest::post()
+        .uri(&format!("/api/admin/ledger/{}/reject", e.id))
+        .insert_header(("Authorization", "Bearer admin-secret"))
+        .set_json(serde_json::json!({"decided_by": "ops", "reason": "duplicate"}))
+        .to_request();
+    assert_eq!(atest::call_service(&app, req).await.status().as_u16(), 200);
+
+    let body = serde_json::json!({"id": "evt_1", "type": "account.updated", "data": {"object": {
+        "id": "acct_1234WXYZ", "payouts_enabled": true, "capabilities": {"transfers": "active"}}}})
+    .to_string();
+    let t = chrono::Utc::now().timestamp();
+    let sig = stripe_v1_signature("whsec_test", t, body.as_bytes());
+    let req = atest::TestRequest::post()
+        .uri("/stripe/webhook")
+        .insert_header(("Stripe-Signature", format!("t={t},v1={sig}")))
+        .set_payload(body)
+        .to_request();
+    assert_eq!(atest::call_service(&app, req).await.status().as_u16(), 200);
+
+    let rows: Vec<(String, String, String)> = sqlx::query_as("SELECT action, actor, detail FROM audit_log ORDER BY seq")
+        .fetch_all(&pool)
+        .await
+        .unwrap();
+    let rejected = rows.iter().find(|r| r.0 == "ledger.rejected").expect("ledger.rejected audited");
+    assert_eq!(rejected.1, "admin-token");
+    assert!(rejected.2.contains("duplicate"));
+    let acct = rows.iter().find(|r| r.0 == "stripe.account_status").expect("stripe.account_status audited");
+    assert!(acct.2.contains("acct_...WXYZ") && acct.2.contains("\"transfers_enabled\":true"), "{}", acct.2);
+    assert!(!acct.2.contains("acct_1234WXYZ"), "the full Stripe account id is never written");
+    assert!(crate::audit::verify(&pool).await.unwrap().ok);
+}

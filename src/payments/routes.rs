@@ -149,7 +149,24 @@ pub async fn stripe_webhook(req: HttpRequest, body: web::Bytes, state: web::Data
         };
         let enabled = account_transfers_enabled(obj);
         match ledger::update_account_status(&state.db_pool, account_id, enabled).await {
-            Ok(n) => info!("account.updated {} transfers_enabled={} ({} contributor rows)", account_id, enabled, n),
+            Ok(n) => {
+                info!("account.updated {} transfers_enabled={} ({} contributor rows)", account_id, enabled, n);
+                // Contract 13.1: a payout account's state change is audited. Stripe redelivers
+                // on failure, so a missed entry is logged, not answered with an error.
+                let e = crate::audit::AuditEntry::new(
+                    crate::audit::ActorKind::System,
+                    "system:stripe-webhook",
+                    "stripe.account_status",
+                    format!("stripe_account:{}", crate::audit::stripe_last4(account_id)),
+                    json!({
+                        "stripe_account": crate::audit::stripe_last4(account_id),
+                        "transfers_enabled": enabled,
+                        "rows_updated": n,
+                        "event_id": event["id"].as_str(),
+                    }),
+                );
+                crate::audit::append_best_effort(&state.db_pool, &e).await;
+            }
             Err(e) => return ledger_error(e.into()),
         }
     }
@@ -222,7 +239,19 @@ pub async fn reject_entry(req: HttpRequest, path: web::Path<String>, body: web::
     }
     let reason = body.reason.as_deref().unwrap_or("rejected by admin");
     match ledger::reject(&state.db_pool, &path, &body.decided_by, reason).await {
-        Ok(entry) => HttpResponse::Ok().json(json!({"status": "success", "entry": entry})),
+        Ok(entry) => {
+            // Contract 13.1: the legacy reject is audited like every other ledger decision.
+            // The row is already rejected (a rejection never moves money), so best effort.
+            let e = crate::audit::AuditEntry::new(
+                crate::audit::ActorKind::AdminToken,
+                crate::auth::LEGACY_ADMIN_MEMBER,
+                "ledger.rejected",
+                format!("ledger:{}", path.as_str()),
+                json!({"ledger_id": path.as_str(), "decided_by": body.decided_by, "reason": reason, "via": "legacy_admin_route"}),
+            );
+            crate::audit::append_best_effort(&state.db_pool, &e).await;
+            HttpResponse::Ok().json(json!({"status": "success", "entry": entry}))
+        }
         Err(e) => ledger_error(e),
     }
 }

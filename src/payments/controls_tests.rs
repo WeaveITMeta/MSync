@@ -405,6 +405,23 @@ async fn blocked_payee_is_not_paid() {
     assert!(approvals::unblock_payee(&pool, &Principal::legacy_admin(), "alice").await.unwrap());
     assert_eq!(execute(&pool, &stripe, &run_id, Utc::now()).await.items[0].outcome, "paid");
     assert_eq!(status(&pool, &e.id).await, PAID);
+
+    // Contract 13.1: the block and the unblock are both in the audit log; an unblock of a
+    // payee that was not blocked records nothing.
+    assert!(!approvals::unblock_payee(&pool, &Principal::legacy_admin(), "nobody").await.unwrap());
+    let rows: Vec<(String, String)> =
+        sqlx::query_as("SELECT action, target FROM audit_log WHERE action LIKE 'payee.%block%' ORDER BY seq")
+            .fetch_all(&pool)
+            .await
+            .unwrap();
+    assert_eq!(
+        rows,
+        vec![
+            ("payee.blocked".to_string(), "payee_key:alice".to_string()),
+            ("payee.unblocked".to_string(), "payee_key:alice".to_string())
+        ]
+    );
+    assert!(crate::audit::verify(&pool).await.unwrap().ok);
 }
 
 // ------------------------------------------------------------------ limits

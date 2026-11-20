@@ -144,6 +144,9 @@ pub async fn block_payee(pool: &SqlitePool, principal: &Principal, payee: &str, 
     if key.is_empty() || reason.trim().is_empty() {
         return Err(PayoutError::Invalid(vec!["payee_key and reason are required".into()]));
     }
+    // The block and its audit entry commit together (contract 13.1): a block that is not
+    // recorded is not applied.
+    let mut tx = pool.begin().await?;
     sqlx::query(
         "INSERT INTO payout_blocks (payee_key, org_id, reason, created_by) VALUES (?, ?, ?, ?)
          ON CONFLICT(payee_key) DO UPDATE SET reason = excluded.reason, created_by = excluded.created_by, created_at = datetime('now')",
@@ -152,19 +155,38 @@ pub async fn block_payee(pool: &SqlitePool, principal: &Principal, payee: &str, 
     .bind(&principal.org_id)
     .bind(reason.trim())
     .bind(&principal.member_id)
-    .execute(pool)
+    .execute(&mut *tx)
     .await?;
+    let entry = crate::audit::AuditEntry::by_principal(
+        principal,
+        "payee.blocked",
+        format!("payee_key:{key}"),
+        serde_json::json!({"payee_key": key, "reason": reason.trim()}),
+    );
+    crate::audit::append_in(&mut tx, &entry).await?;
+    tx.commit().await?;
     Ok(())
 }
 
 /// Remove a block (`payouts.policy`). Returns whether a block existed.
 pub async fn unblock_payee(pool: &SqlitePool, principal: &Principal, payee: &str) -> Result<bool, PayoutError> {
     principal.require(scopes::PAYOUTS_POLICY)?;
-    let res = sqlx::query("DELETE FROM payout_blocks WHERE payee_key = ?")
-        .bind(payee.trim().to_lowercase())
-        .execute(pool)
-        .await?;
-    Ok(res.rows_affected() > 0)
+    let key = payee.trim().to_lowercase();
+    // Lifting a block makes a payee payable again, so it is recorded in the same transaction.
+    let mut tx = pool.begin().await?;
+    let res = sqlx::query("DELETE FROM payout_blocks WHERE payee_key = ?").bind(&key).execute(&mut *tx).await?;
+    let existed = res.rows_affected() > 0;
+    if existed {
+        let entry = crate::audit::AuditEntry::by_principal(
+            principal,
+            "payee.unblocked",
+            format!("payee_key:{key}"),
+            serde_json::json!({"payee_key": key}),
+        );
+        crate::audit::append_in(&mut tx, &entry).await?;
+    }
+    tx.commit().await?;
+    Ok(existed)
 }
 
 pub async fn is_blocked(pool: &SqlitePool, payee: &str) -> Result<bool, sqlx::Error> {
