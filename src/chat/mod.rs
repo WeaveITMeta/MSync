@@ -1,7 +1,7 @@
 //! Platform-neutral chat commands (contract 12.2).
 //!
-//! One definition of the six commands (`link`, `stats`, `leaderboard`, `sync`, `payouts`,
-//! `payout-setup`) runs on Discord and on Slack. Each command takes a [`ChatActor`] (who
+//! One definition of the commands (`link`, `stats`, `leaderboard`, `sync`, `payouts`,
+//! `payout-setup`, and for hourly pay `clock-in` and `shift`) runs on Discord and on Slack. Each command takes a [`ChatActor`] (who
 //! asked, on which platform) and returns a [`ChatReply`]. The Discord adapter
 //! (`crate::discord`) and the Slack adapter (`crate::slack`) only translate requests in and
 //! replies out; no serenity or Slack type appears in [`commands`].
@@ -66,7 +66,7 @@ impl ChatPlatform {
     }
 }
 
-/// The six shared commands.
+/// The shared commands.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum ChatCommand {
     Link,
@@ -75,16 +75,22 @@ pub enum ChatCommand {
     Sync,
     Payouts,
     PayoutSetup,
+    /// Clock in for the caller's current shift (contract 14.6). Private reply.
+    ClockIn,
+    /// The caller's current or next shift. Private reply.
+    Shift,
 }
 
 impl ChatCommand {
-    pub const ALL: [ChatCommand; 6] = [
+    pub const ALL: [ChatCommand; 8] = [
         ChatCommand::Link,
         ChatCommand::Stats,
         ChatCommand::Leaderboard,
         ChatCommand::Sync,
         ChatCommand::Payouts,
         ChatCommand::PayoutSetup,
+        ChatCommand::ClockIn,
+        ChatCommand::Shift,
     ];
 
     /// The bare name (`payout-setup`). Discord registers it as is; Slack prefixes it.
@@ -96,6 +102,8 @@ impl ChatCommand {
             ChatCommand::Sync => "sync",
             ChatCommand::Payouts => "payouts",
             ChatCommand::PayoutSetup => "payout-setup",
+            ChatCommand::ClockIn => "clock-in",
+            ChatCommand::Shift => "shift",
         }
     }
 

@@ -609,6 +609,7 @@ pub fn payout_policy_from_cra(p: &PayoutsFile) -> Result<pay::PayoutPolicy, Vec<
             .iter()
             .map(|r| pay::Rate { branch: r.branch.clone(), base_cents: to_i64(r.base_cents), merit_multiplier: r.merit_multiplier })
             .collect(),
+        time_auto_approve: p.time_auto_approve,
     };
     let errs = policy.validate();
     if errs.is_empty() {

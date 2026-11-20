@@ -37,6 +37,12 @@ pub mod scopes {
     pub const AUDIT_READ: &str = "audit.read";
     // MSync as an OAuth provider (contract 12.3): register platforms, rotate the signing key.
     pub const OAUTH_CLIENTS: &str = "oauth.clients";
+    // Hourly pay and time (contract 14.6). `time.clock` only ever acts on the token member's
+    // own payee: no request names a payee.
+    pub const TIME_CLOCK: &str = "time.clock";
+    pub const TIME_READ: &str = "time.read";
+    pub const TIME_MANAGE: &str = "time.manage";
+    pub const TIME_APPROVE: &str = "time.approve";
 
     pub const ALL: &[&str] = &[
         HIERARCHY_READ,
@@ -58,6 +64,10 @@ pub mod scopes {
         INVOICES_APPROVE,
         AUDIT_READ,
         OAUTH_CLIENTS,
+        TIME_CLOCK,
+        TIME_READ,
+        TIME_MANAGE,
+        TIME_APPROVE,
     ];
 }
 

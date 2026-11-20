@@ -348,6 +348,10 @@ pub struct PayoutsFile {
     pub eligibility: Eligibility,
     #[serde(default, rename = "rate")]
     pub rates: Vec<Rate>,
+    /// Closed time entries count as approved without a `time.approve` approval (contract
+    /// 14.5). Optional; default false.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub time_auto_approve: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]

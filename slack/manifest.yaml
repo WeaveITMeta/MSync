@@ -1,7 +1,7 @@
 # MSync (MeritSync) Slack app manifest. Create the app from this file at
 # https://api.slack.com/apps ("Create New App", "From an app manifest").
 # Replace https://msync.example.com with the public URL of your MSync service
-# in all six commands before you create the app. See docs/SLACK.md.
+# in all eight commands before you create the app. See docs/SLACK.md.
 display_information:
   name: MSync
   description: Merit, job titles and payouts from your organization's CRA.
@@ -35,6 +35,14 @@ features:
     - command: /msync-payout-setup
       url: https://msync.example.com/slack/commands
       description: Your private Stripe link to receive payouts
+      should_escape: false
+    - command: /msync-clock-in
+      url: https://msync.example.com/slack/commands
+      description: Clock in for your current shift (the shift sets the end)
+      should_escape: false
+    - command: /msync-shift
+      url: https://msync.example.com/slack/commands
+      description: Your current or next shift
       should_escape: false
 oauth_config:
   scopes:

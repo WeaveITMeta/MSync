@@ -265,6 +265,11 @@ const ALL_TOOL_NAMES: &[&str] = &[
     "payout_statement",
     "audit_list",
     "audit_verify",
+    "time_clock_in",
+    "time_entries_list",
+    "time_shifts_list",
+    "time_timesheet_get",
+    "time_entry_approve",
 ];
 
 // ------------------------------------------------------------------ auth
@@ -936,4 +941,49 @@ async fn audit_tools_and_rest_list_and_verify_the_chain() {
     assert_eq!(s, StatusCode::FORBIDDEN, "audit.read is required");
     let (s, _) = rest!(rest_app, atest::TestRequest::get().uri("/api/v1/audit/verify"));
     assert_eq!(s, StatusCode::UNAUTHORIZED);
+}
+
+// ------------------------------------------------------------------ time (contract 14.6)
+
+#[actix_web::test]
+async fn time_tools_act_only_on_the_token_members_own_time() {
+    use crate::payments::{payees, shifts};
+    let pool = pool().await;
+    let admin = crate::auth::Principal::legacy_admin();
+    let bob: payees::NewPayee = serde_json::from_value(json!({"display_name": "Bob", "kind": "individual", "member_id": "bob"})).unwrap();
+    let bob = payees::create(&pool, &EnvDirectory::default(), &admin, bob, Utc::now()).await.unwrap().row.id;
+    let now = Utc::now();
+    let from = now - chrono::Duration::hours(1);
+    let body = json!({"payee_id": bob, "kind": "single", "date": from.format("%Y-%m-%d").to_string(),
+        "start_time": from.format("%H:%M").to_string(), "end_time": (now + chrono::Duration::hours(3)).format("%H:%M").to_string(), "time_zone": "UTC"});
+    shifts::create(&pool, &EnvDirectory::default(), &admin, serde_json::from_value(body).unwrap(), now).await.unwrap();
+    let app = app!(ctx(&pool, Arc::new(MockStripe::default()), false));
+    let alice = token(&pool, "alice", &[scopes::TIME_CLOCK], &[]).await;
+    let bob_tok = token(&pool, "bob", &[scopes::TIME_CLOCK, scopes::TIME_APPROVE], &[]).await;
+
+    // No argument can name a payee or an approver.
+    for (tok, name, args) in [
+        (&alice, "time_clock_in", json!({"payee_id": bob})),
+        (&alice, "time_clock_in", json!({"member_id": "bob"})),
+        (&bob_tok, "time_entry_approve", json!({"entry_id": "x", "approver_member_id": "mallory"})),
+    ] {
+        let (s, v) = rpc!(app, tok, "tools/call", json!({"name": name, "arguments": args}));
+        assert_eq!(s, StatusCode::OK);
+        assert_eq!(v["error"]["code"], -32602, "{name}: {v}");
+    }
+    // alice is not a payee: refused, and bob's shift is never used for her
+    let v = tool!(app, &alice, "time_clock_in", json!({}));
+    assert!(is_error(&v) && text(&v).contains("not a payee"), "{v}");
+    assert_eq!(count(&pool, "time_entries").await, 0);
+    // bob clocks in as bob, twice: one entry
+    let v = tool!(app, &bob_tok, "time_clock_in", json!({}));
+    assert!(!is_error(&v), "{v}");
+    assert_eq!(structured(&v)["entry"]["payee_id"], bob.as_str());
+    let v = tool!(app, &bob_tok, "time_clock_in", json!({}));
+    assert_eq!(structured(&v)["result"], "existing");
+    assert_eq!(count(&pool, "time_entries").await, 1);
+    // bob can never approve his own time
+    let id: String = sqlx::query_scalar("SELECT id FROM time_entries").fetch_one(&pool).await.unwrap();
+    let v = tool!(app, &bob_tok, "time_entry_approve", json!({"entry_id": id}));
+    assert!(is_error(&v) && text(&v).contains("cannot approve their own"), "{v}");
 }

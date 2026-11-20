@@ -132,8 +132,9 @@ pub enum TickOutcome {
 /// One scheduler step at time `now`. Safe to call any number of times per period.
 ///
 /// First it materializes the due occurrences of active, approved pay orders into ledger rows
-/// (contract 11.3; never a transfer) and marks invoices whose ledger row was paid. A failure
-/// there is logged and does not stop the payout run below. Then, as before, it creates the
+/// (contract 11.3; never a transfer), marks invoices whose ledger row was paid, and writes the
+/// timesheet rows of ended pay periods (contract 14.5; never a transfer). A failure there is
+/// logged and does not stop the payout run below. Then, as before, it creates the
 /// period's scheduled run when one is due.
 pub async fn scheduler_tick(ctx: &ApiContext, now: DateTime<Utc>) -> Result<TickOutcome, super::error::PayoutError> {
     if let Err(e) = super::payorders::materialize_due(ctx, now).await {
@@ -141,6 +142,11 @@ pub async fn scheduler_tick(ctx: &ApiContext, now: DateTime<Utc>) -> Result<Tick
     }
     if let Err(e) = super::invoices::sync_paid(&ctx.pool, now).await {
         error!("invoice paid sync failed: {}", e);
+    }
+    // Ended pay periods of approved time become timesheet ledger rows (contract 14.5; never
+    // a transfer), each exactly once.
+    if let Err(e) = super::timesheet::materialize_due(ctx, now).await {
+        error!("timesheet materialization failed: {}", e);
     }
     let org = crate::auth::DEFAULT_ORG;
     let eff = super::policy::load_effective(&ctx.pool, org, &ctx.payments).await?;

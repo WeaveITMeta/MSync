@@ -15,7 +15,7 @@ use crate::payments::error::PayoutError;
 use crate::payments::ledger::LedgerError;
 use crate::payments::policy::{self, PolicyError};
 use crate::payments::runs::{self, CreateRunResult};
-use crate::payments::{invoices, payees, payorders, statement};
+use crate::payments::{invoices, payees, payorders, shifts, statement, timeclock, timesheet};
 use chrono::Utc;
 use serde::de::DeserializeOwned;
 use serde::Deserialize;
@@ -295,6 +295,62 @@ pub const TOOLS: &[ToolDef] = &[
         read_only: true,
         destructive: false,
     },
+    ToolDef {
+        name: "time_clock_in",
+        title: "Clock in",
+        scope: Some(scopes::TIME_CLOCK),
+        description: "Clocks in the token's own member for their current shift. Takes no arguments: it can never clock in \
+            anyone else. The entry starts now (never before the shift start) and ends at the shift's end, which is fixed at \
+            clock-in; there is no clock-out to remember. A second call for the same shift returns the same entry. Refused \
+            outside every shift window (unless the member has an open-shift allowance) and after the shift's end.",
+        input_schema: no_args_schema,
+        read_only: false,
+        destructive: false,
+    },
+    ToolDef {
+        name: "time_entries_list",
+        title: "List time entries",
+        scope: Some(scopes::TIME_READ),
+        description: "Lists time entries, optionally for one payee and a date range (UTC days of the entry start, \
+            inclusive). Each entry has its start and end, its state (open, closed, approved, void) and its whole minutes. \
+            Confidential.",
+        input_schema: entries_schema,
+        read_only: true,
+        destructive: false,
+    },
+    ToolDef {
+        name: "time_shifts_list",
+        title: "List shifts",
+        scope: Some(scopes::TIME_READ),
+        description: "Lists shifts (weekly patterns, single dated shifts and open-shift allowances), optionally for one \
+            payee and by status (active, ended), with their local times, IANA time zone and early clock-in window.",
+        input_schema: shifts_schema,
+        read_only: true,
+        destructive: false,
+    },
+    ToolDef {
+        name: "time_timesheet_get",
+        title: "Get a timesheet",
+        scope: Some(scopes::TIME_READ),
+        description: "Returns one payee's timesheet for a pay period (a period key from a timesheet, or a date; default the \
+            current period): every entry, minutes per day by state, what the approved time owes (minutes per day times \
+            the rate in force that day, overtime if set, floored to the cent, with the leftover fraction), and the ledger \
+            rows already written for the period. Confidential; persists nothing.",
+        input_schema: timesheet_schema,
+        read_only: true,
+        destructive: false,
+    },
+    ToolDef {
+        name: "time_entry_approve",
+        title: "Approve a time entry",
+        scope: Some(scopes::TIME_APPROVE),
+        description: "Approves one closed time entry (its end has passed) as the token's member. Refused when you are the \
+            payee of the entry. Approved time becomes pay when its period ends: one ledger row per payee per period, paid \
+            through the normal payout approvals and runs. Approving moves no money.",
+        input_schema: entry_id_schema,
+        read_only: false,
+        destructive: false,
+    },
 ];
 
 pub fn find(name: &str) -> Option<&'static ToolDef> {
@@ -324,7 +380,9 @@ fn tool_json(t: &ToolDef) -> Value {
                 || t.name == EXECUTE_TOOL
                 || t.name == "payouts_run_approve"
                 || t.name == "payorder_approve"
-                || t.name == "invoice_approve",
+                || t.name == "invoice_approve"
+                || t.name == "time_clock_in"
+                || t.name == "time_entry_approve",
             "openWorldHint": t.name == EXECUTE_TOOL,
         },
         "_meta": {"msync/scope": t.scope},
@@ -483,6 +541,40 @@ struct InvoiceIdArgs {
 
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
+struct EntryIdArgs {
+    entry_id: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ShiftsArgs {
+    #[serde(default)]
+    payee_id: Option<String>,
+    #[serde(default)]
+    status: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct EntriesArgs {
+    #[serde(default)]
+    payee_id: Option<String>,
+    #[serde(default)]
+    from: Option<String>,
+    #[serde(default)]
+    to: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct TimesheetArgs {
+    payee_id: String,
+    #[serde(default)]
+    period: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
 struct StatementArgs {
     payee_id: String,
     from: String,
@@ -508,7 +600,7 @@ pub async fn call(ctx: &McpContext, p: &Principal, name: &str, args: Option<Valu
         ));
     }
     if let Some(scope) = tool.scope {
-        if !p.has(scope) {
+        if !p.has(scope) && !crate::payments::mutant::on("mcp_no_scope") {
             return Ok(failure(&format!("tool '{}' requires scope '{}', which this token does not have", tool.name, scope)));
         }
     }
@@ -684,6 +776,42 @@ pub async fn call(ctx: &McpContext, p: &Principal, name: &str, args: Option<Valu
                     error!("mcp audit db error: {e}");
                     Err("internal error".into())
                 }
+            }
+        }
+        "time_clock_in" => {
+            let _: NoArgs = parse_args(name, args)?;
+            match timeclock::clock_in(&api.pool, p, Utc::now()).await {
+                Ok(v) => Ok(json!({ "result": v.result, "entry": v.entry })),
+                Err(e) => Err(payout_msg(e)),
+            }
+        }
+        "time_entries_list" => {
+            let input: EntriesArgs = parse_args(name, args)?;
+            let f = timeclock::EntryFilter { payee: input.payee_id, from: input.from, to: input.to };
+            match timeclock::list(&api.pool, p, &f, Utc::now()).await {
+                Ok(v) => Ok(json!({ "entries": v })),
+                Err(e) => Err(payout_msg(e)),
+            }
+        }
+        "time_shifts_list" => {
+            let input: ShiftsArgs = parse_args(name, args)?;
+            match shifts::list(&api.pool, p, input.payee_id.as_deref(), input.status.as_deref()).await {
+                Ok(v) => Ok(json!({ "shifts": v })),
+                Err(e) => Err(payout_msg(e)),
+            }
+        }
+        "time_timesheet_get" => {
+            let input: TimesheetArgs = parse_args(name, args)?;
+            match timesheet::timesheet(&api.pool, &api.payments, api.directory.as_ref(), p, Some(&input.payee_id), input.period.as_deref(), Utc::now()).await {
+                Ok(v) => Ok(json!({ "timesheet": v })),
+                Err(e) => Err(payout_msg(e)),
+            }
+        }
+        "time_entry_approve" => {
+            let input: EntryIdArgs = parse_args(name, args)?;
+            match timeclock::approve(&api.pool, api.directory.as_ref(), p, &input.entry_id, Utc::now()).await {
+                Ok(v) => Ok(json!({ "entry": v })),
+                Err(e) => Err(payout_msg(e)),
             }
         }
         "payout_statement" => {
@@ -888,6 +1016,50 @@ fn statement_schema() -> Value {
             "to": {"type": "string", "format": "date", "description": "YYYY-MM-DD, inclusive."}
         },
         "required": ["payee_id", "from", "to"],
+        "additionalProperties": false
+    })
+}
+
+fn entry_id_schema() -> Value {
+    json!({
+        "type": "object",
+        "properties": {"entry_id": {"type": "string", "description": "The time entry id from time_entries_list."}},
+        "required": ["entry_id"],
+        "additionalProperties": false
+    })
+}
+
+fn entries_schema() -> Value {
+    json!({
+        "type": "object",
+        "properties": {
+            "payee_id": {"type": "string"},
+            "from": {"type": "string", "format": "date", "description": "YYYY-MM-DD, inclusive (UTC day of the entry start)."},
+            "to": {"type": "string", "format": "date", "description": "YYYY-MM-DD, inclusive."}
+        },
+        "additionalProperties": false
+    })
+}
+
+fn shifts_schema() -> Value {
+    json!({
+        "type": "object",
+        "properties": {
+            "payee_id": {"type": "string"},
+            "status": {"type": "string", "enum": ["active", "ended"]}
+        },
+        "additionalProperties": false
+    })
+}
+
+fn timesheet_schema() -> Value {
+    json!({
+        "type": "object",
+        "properties": {
+            "payee_id": {"type": "string"},
+            "period": {"type": "string", "description": "A period key from a timesheet (such as weekly-2026-11-20) or a date YYYY-MM-DD. Default: the current period."}
+        },
+        "required": ["payee_id"],
         "additionalProperties": false
     })
 }

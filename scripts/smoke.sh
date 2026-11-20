@@ -4,8 +4,8 @@
 # It drives the real HTTP surface with signed requests and asserts on every answer:
 # health, auth, the hierarchy, signed GitHub and GitLab webhooks (and their dedupe and
 # refusals), rubric scores over REST and MCP, the leaderboard, payout controls (never a
-# transfer), a signed Slack command, a signed portal lookup, the audit chain and the
-# OpenID Connect discovery document.
+# transfer), hourly pay (a wage, a shift, clocking in, a timesheet), a signed Slack command,
+# a signed portal lookup, the audit chain and the OpenID Connect discovery document.
 #
 # It expects the server to have the eustress-engine example as its CRA
 # (examples/cra/eustress-engine, loaded with MSYNC_CRA_LOCAL_DIR in dev mode) and
@@ -137,7 +137,7 @@ expect "an unauthenticated /api/v1 call is 401" 401
 
 # ------------------------------------------------------------------ tokens
 
-FOUNDER=$(token "smoke-founder-$RUN" founder '["hierarchy.read","merit.read","merit.score","payouts.read","payouts.prepare","payouts.approve","payees.read","payees.manage","payorders.read","payorders.manage","payorders.approve","invoices.read","invoices.submit","invoices.approve","audit.read","tokens.manage"]')
+FOUNDER=$(token "smoke-founder-$RUN" founder '["hierarchy.read","merit.read","merit.score","payouts.read","payouts.prepare","payouts.approve","payees.read","payees.manage","payorders.read","payorders.manage","payorders.approve","invoices.read","invoices.submit","invoices.approve","audit.read","tokens.manage","time.read","time.manage","time.approve"]')
 if [ -n "$FOUNDER" ]; then pass "bootstrap an API token for the owner with the admin token"; else fail "bootstrap an API token for the owner with the admin token" "HTTP $STATUS: $(body)"; fi
 MCKALE=$(token "smoke-mckale-$RUN" mckale '["hierarchy.read","merit.read","merit.score","payouts.read","payorders.read","payorders.approve","invoices.read","invoices.approve"]')
 [ -n "$MCKALE" ] && pass "a second token for a second approver (mckale)" || fail "a second token for a second approver (mckale)" "HTTP $STATUS: $(body)"
@@ -258,6 +258,48 @@ expect "an invoice is submitted" 201 "d['invoice']['id']"
 INVOICE=$(j "d['invoice']['id']")
 req POST "/api/v1/invoices/$INVOICE/approve" -H "$(auth "$MCKALE")"
 expect "the invoice is approved by a second token" 200 "d['status'] == 'success'"
+
+# ------------------------------------------------------------------ hourly pay and time
+
+# Fresh member ids per run, so the smoke test can run again against the same server.
+req POST /api/v1/payees -H "$(auth "$FOUNDER")" -H "$json_hdr"   -d "{\"display_name\":\"Worker $RUN\",\"kind\":\"individual\",\"member_id\":\"worker-$RUN\",\"payee_keys\":[\"worker-$RUN\"]}"
+expect "a payee for hourly work is created" 201 "d['payee']['id']"
+WPAYEE=$(j "d['payee']['id']")
+req POST "/api/v1/payees/$WPAYEE/wage" -H "$(auth "$FOUNDER")" -H "$json_hdr" \
+  -d "{\"rate_cents_per_hour\":2500,\"effective_from\":\"$TODAY\"}"
+expect "an hourly wage is set (waiting for approval)" 201 "d['wage']['id'] and d['wage']['approved'] == False"
+WAGE=$(j "d['wage']['id']")
+req POST "/api/v1/payees/$WPAYEE/wage/$WAGE/approve" -H "$(auth "$FOUNDER")"
+expect "the member who set the wage cannot approve it" 403
+req POST "/api/v1/payees/$WPAYEE/wage/$WAGE/approve" -H "$(auth "$MCKALE")"
+expect "the wage is approved with a second token" 200 "d['result']['result'] == 'recorded' and d['result']['approver_member_id'] == 'mckale'"
+
+SHIFT_DATE=$(date -u -d "-1 hour" +%Y-%m-%d)
+SHIFT_START=$(date -u -d "-1 hour" +%H:%M)
+SHIFT_END=$(date -u -d "+3 hours" +%H:%M)
+req POST /api/v1/time/shifts -H "$(auth "$FOUNDER")" -H "$json_hdr" \
+  -d "{\"payee_id\":\"$WPAYEE\",\"kind\":\"single\",\"date\":\"$SHIFT_DATE\",\"start_time\":\"$SHIFT_START\",\"end_time\":\"$SHIFT_END\",\"time_zone\":\"UTC\"}"
+expect "a shift that contains now is created" 201 "d['shift']['id']"
+
+WORKER=$(token "smoke-worker-$RUN" "worker-$RUN" '["time.clock","time.approve"]')
+req POST /api/v1/time/clock-in -H "$(auth "$WORKER")"
+expect "the worker clocks in; the entry ends at the shift's end" 201 "d['result'] == 'created' and d['entry']['payee_id'] == '$WPAYEE' and d['entry']['state'] == 'open'"
+ENTRY=$(j "d['entry']['id']")
+req POST /api/v1/time/clock-in -H "$(auth "$WORKER")"
+expect "a second clock-in returns the same entry" 200 "d['result'] == 'existing' and d['entry']['id'] == '$ENTRY'"
+req POST /api/v1/time/clock-in -H "$(auth "$WORKER")" -H "$json_hdr" -d "{\"payee_id\":\"$WPAYEE\"}"
+expect "a clock-in body naming a payee is refused" 400
+req GET "/api/v1/time/timesheet?payee=$WPAYEE" -H "$(auth "$FOUNDER")"
+expect "the timesheet shows the entry, its minutes and the period" 200 \
+  "any(e['id'] == '$ENTRY' and e['minutes'] > 0 for e in d['timesheet']['entries']) and d['timesheet']['period_key'] and 'cents' in d['timesheet']['pay']"
+
+req POST /api/v1/payees -H "$(auth "$FOUNDER")" -H "$json_hdr" \
+  -d "{\"display_name\":\"Cy Example $RUN\",\"kind\":\"individual\",\"member_id\":\"cy-$RUN\",\"payee_keys\":[\"cy-$RUN\"]}"
+CY_TOKEN=$(token "smoke-cy-$RUN" "cy-$RUN" '["time.clock"]')
+req POST /api/v1/time/clock-in -H "$(auth "$CY_TOKEN")"
+expect "a clock-in for a payee with no shift is refused" 409 "'no shift' in d['message']"
+req POST "/api/v1/time/entries/$ENTRY/approve" -H "$(auth "$WORKER")"
+expect "the worker's own approval of their time is refused" 403
 
 # ------------------------------------------------------------------ Slack
 

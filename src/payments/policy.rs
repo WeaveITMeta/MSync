@@ -27,6 +27,15 @@ pub struct PayoutPolicy {
     pub eligibility: Eligibility,
     #[serde(default)]
     pub rate: Vec<Rate>,
+    /// Closed time entries count as approved without a `time.approve` approval (contract
+    /// 14.5). Optional, default false. Not serialized when false, so a policy that does not use
+    /// it reads and stores exactly as before.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub time_auto_approve: bool,
+}
+
+fn is_false(b: &bool) -> bool {
+    !*b
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -151,6 +160,7 @@ impl PayoutPolicy {
                     merit_multiplier: cfg.merit_multiplier,
                 })
                 .collect(),
+            time_auto_approve: false,
         }
     }
 

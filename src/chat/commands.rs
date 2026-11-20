@@ -1,4 +1,4 @@
-//! The six chat commands, defined once for Discord and Slack (contract 12.2).
+//! The chat commands, defined once for Discord and Slack (contract 12.2 and 14.6).
 //!
 //! Every command is a plain async function: who asked ([`ChatActor`]) and its arguments in,
 //! a [`ChatReply`] out. Nothing here knows a Discord or Slack type.
@@ -33,6 +33,8 @@ pub async fn run(ctx: &ChatContext, actor: &ChatActor, cmd: ChatCommand, arg: &s
         ChatCommand::Sync => sync(ctx, actor, applier).await,
         ChatCommand::Payouts => payouts(ctx, actor).await,
         ChatCommand::PayoutSetup => payout_setup(ctx, actor).await,
+        ChatCommand::ClockIn => clock_in(ctx, actor, chrono::Utc::now()).await,
+        ChatCommand::Shift => shift(ctx, actor, chrono::Utc::now()).await,
     }
 }
 
@@ -570,4 +572,150 @@ pub async fn payout_setup(ctx: &ChatContext, actor: &ChatActor) -> ChatReply {
             ChatReply::private("Couldn't create your payout setup link right now. Please try again later or ask a maintainer.")
         }
     }
+}
+
+// --------------------------------------------------------- clock-in, shift
+
+/// The chat account as an audit actor (`discord:<id>` or `slack:<team>:<id>`).
+pub fn chat_actor_id(actor: &ChatActor) -> String {
+    match actor.platform {
+        ChatPlatform::Discord => format!("discord:{}", actor.user_id),
+        ChatPlatform::Slack => format!("slack:{}:{}", actor.team_id, actor.user_id),
+    }
+}
+
+/// The payee behind a chat account, only through a verified identity: a CRA listing (an
+/// active member), or a binding proven by an OAuth sign-in (`accounts`). An unverified
+/// binding made with `link` is refused, so typing someone else's login can never clock in as
+/// them. Err is the private reply.
+pub async fn verified_payee(ctx: &ChatContext, actor: &ChatActor) -> Result<crate::payments::payees::Payee, String> {
+    use crate::payments::payees;
+    let p = actor.platform;
+    let db = |e: sqlx::Error| format!("❌ Database error: {e}");
+    let (payee, who) = match resolve(ctx, actor, false).await.map_err(db)? {
+        Caller::Unknown if ctx.cra.active().is_some() => {
+            return Err(format!("❌ This {} account is not in the CRA member list, so it cannot clock in. Ask an administrator to add it.", p.label()))
+        }
+        Caller::Unknown => {
+            return Err(format!(
+                "❌ This {} account is not linked to a verified identity, so it cannot clock in. Ask an administrator to add you to the CRA member list.",
+                p.label()
+            ))
+        }
+        Caller::Member { status, .. } if status != MemberStatus::Active => {
+            return Err(format!("❌ Your CRA membership is {}, so you cannot clock in.", status.as_str()))
+        }
+        Caller::Member { id, contributor, .. } => {
+            let own: Option<String> = sqlx::query_scalar("SELECT id FROM payees WHERE member_id = ? AND status <> 'closed' ORDER BY id LIMIT 1")
+                .bind(&id)
+                .fetch_optional(&ctx.pool)
+                .await
+                .map_err(db)?;
+            let mut found = match own {
+                Some(pid) => payees::load(&ctx.pool, &pid).await.map_err(db)?,
+                None => None,
+            };
+            if found.is_none() {
+                if let Some(c) = contributor {
+                    found = payees::by_key(&ctx.pool, &c.to_lowercase()).await.map_err(db)?;
+                }
+            }
+            if found.is_none() {
+                if let Some(active) = ctx.cra.active() {
+                    for (prov, host, login) in member_foundry_logins(&active.snapshot, &id) {
+                        if let Some(x) = payees::by_key(&ctx.pool, &legacy_username(prov, &host, &login).to_lowercase()).await.map_err(db)? {
+                            found = Some(x);
+                            break;
+                        }
+                    }
+                }
+            }
+            (found, id)
+        }
+        Caller::Bound(b) => {
+            let proven = b.verified
+                || crate::accounts::chat_binding_is_verified(&ctx.pool, p, actor.storage_team(), &actor.user_id, &b.contributor)
+                    .await
+                    .unwrap_or(false);
+            if !proven && !crate::payments::mutant::on("chat_unverified_clocks") {
+                audit_clock_in_refused(ctx, actor, "unverified_binding").await;
+                return Err(format!(
+                    "❌ Your {} account is linked, but the link is not verified, so it cannot clock in. Ask an administrator to add you to the CRA member list, or sign in to MSync with both accounts.",
+                    p.label()
+                ));
+            }
+            (payees::by_key(&ctx.pool, &b.contributor.to_lowercase()).await.map_err(db)?, b.contributor)
+        }
+    };
+    payee.ok_or_else(|| format!("❌ `{who}` has no payee record, so there is no time to clock. Ask an administrator."))
+}
+
+async fn audit_clock_in_refused(ctx: &ChatContext, actor: &ChatActor, reason: &str) {
+    crate::audit::append_best_effort(
+        &ctx.pool,
+        &crate::audit::AuditEntry::new(
+            crate::audit::ActorKind::Chat,
+            chat_actor_id(actor),
+            "time.clock_in.refused",
+            format!("chat:{}", chat_actor_id(actor)),
+            serde_json::json!({ "platform": actor.platform.as_str(), "team_or_guild": actor.storage_team(), "user_id": actor.user_id, "reason": reason }),
+        ),
+    )
+    .await;
+}
+
+fn local_text(t: &str, tz: &str) -> String {
+    match (crate::auth::tokens::parse_db_time(t), crate::payments::shifts::parse_tz(tz)) {
+        (Some(t), Ok(z)) => t.with_timezone(&z).format("%a %Y-%m-%d %H:%M %Z").to_string(),
+        _ => format!("{t} UTC"),
+    }
+}
+
+/// `clock-in`: clock in for the caller's current shift. The shift sets the end; there is no
+/// clock-out in chat. A second clock-in answers with the same entry.
+pub async fn clock_in(ctx: &ChatContext, actor: &ChatActor, now: chrono::DateTime<chrono::Utc>) -> ChatReply {
+    use crate::payments::timeclock;
+    let payee = match verified_payee(ctx, actor).await {
+        Ok(p) => p,
+        Err(msg) => return ChatReply::private(msg),
+    };
+    let who = timeclock::Actor { kind: crate::audit::ActorKind::Chat, id: chat_actor_id(actor), token_id: None };
+    match timeclock::clock_in_for(&ctx.pool, &payee, &who, now).await {
+        Ok(r) => {
+            let e = &r.entry.row;
+            let head = if r.result == "created" { "✅ Clocked in." } else { "✅ You are already clocked in for this shift. Nothing changed." };
+            ChatReply::private(format!(
+                "{head}\nPaid from {} to {} ({} minutes). The shift's end ends your time; you do not need to clock out.",
+                local_text(&e.start_at, &e.time_zone),
+                local_text(&e.end_at, &e.time_zone),
+                r.entry.minutes
+            ))
+        }
+        Err(e) => ChatReply::private(format!("❌ Not clocked in: {e}")),
+    }
+}
+
+/// `shift`: the caller's current or next shift.
+pub async fn shift(ctx: &ChatContext, actor: &ChatActor, now: chrono::DateTime<chrono::Utc>) -> ChatReply {
+    use crate::payments::shifts;
+    let payee = match verified_payee(ctx, actor).await {
+        Ok(p) => p,
+        Err(msg) => return ChatReply::private(msg),
+    };
+    let specs = match shifts::active_specs(&ctx.pool, &payee.row.id).await {
+        Ok(s) => s,
+        Err(e) => return ChatReply::private(format!("❌ Database error: {e}")),
+    };
+    let open = specs.iter().any(|s| matches!(s.pattern, shifts::Pattern::Open { .. }));
+    let Some(o) = shifts::current_or_next(&specs, now) else {
+        return ChatReply::private(if open {
+            "You have no scheduled shift in the next two weeks. You have an open-shift allowance, so a clock-in starts one.".to_string()
+        } else {
+            "You have no shift in the next two weeks.".to_string()
+        });
+    };
+    let tz = specs.iter().find(|s| s.id == o.shift_id).map(|s| s.tz).unwrap_or(chrono_tz::UTC);
+    let fmt = |t: chrono::DateTime<chrono::Utc>| t.with_timezone(&tz).format("%a %Y-%m-%d %H:%M %Z").to_string();
+    let when = if o.window_start <= now { "Your current shift" } else { "Your next shift" };
+    ChatReply::private(format!("{when}: {} to {}. You can clock in from {}.", fmt(o.start), fmt(o.end), fmt(o.window_start)))
 }

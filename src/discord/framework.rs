@@ -36,6 +36,10 @@ pub async fn register_slash_commands(ctx: &Context, guild_id: GuildId) -> Result
                     .description("Get your private Stripe link to receive contribution payouts"),
                 CreateCommand::new("payouts")
                     .description("List contribution payouts pending approval (Admin only)"),
+                CreateCommand::new("clock-in")
+                    .description("Clock in for your current shift (private reply; the shift sets the end)"),
+                CreateCommand::new("shift")
+                    .description("Show your current or next shift (private reply)"),
             ],
         )
         .await?;

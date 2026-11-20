@@ -34,6 +34,8 @@ tags:
     description: Payout policy, ledger, runs and blocks.
   - name: payroll
     description: Payees, pay orders, invoices and the payee statement.
+  - name: time
+    description: Hourly wages, shifts, clocking in and timesheets (contract 14). Compensation data; confidential.
   - name: audit
     description: The hash-chained audit log.
   - name: portal
@@ -895,6 +897,470 @@ paths:
           $ref: "#/components/responses/NotFound"
         "409":
           $ref: "#/components/responses/Conflict"
+  "/api/v1/payees/{id}/wage":
+    get:
+      tags: [time]
+      summary: Get a payee's wage history
+      description: |
+        Every hourly rate of the payee (newest first) with its approvals, and the approved rate
+        in force today. An unapproved rate pays nothing. Needs scope `payees.read`.
+      x-msync-scope: payees.read
+      security:
+        - bearerToken: []
+      parameters:
+        - $ref: "#/components/parameters/Id"
+      responses:
+        "200":
+          description: "`{status, wage: {payee_id, in_force, wages}}`."
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Success"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+    post:
+      tags: [time]
+      summary: Set a new hourly rate
+      description: |
+        Adds a rate row (cents per hour from an effective date, optional weekly overtime). The
+        setter is the token's member and can never approve it; a payee can never set their own
+        rate (403). It pays nothing until it has the payout policy's required approvals. Needs
+        scope `payees.manage`. Unknown fields are 400.
+      x-msync-scope: payees.manage
+      security:
+        - bearerToken: []
+      parameters:
+        - $ref: "#/components/parameters/Id"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/NewWage"
+      responses:
+        "201":
+          description: "`{status, wage}`."
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Success"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+  "/api/v1/payees/{id}/wage/{wage_id}/approve":
+    post:
+      tags: [time]
+      summary: Approve an hourly rate
+      description: |
+        Records the token member's approval of one rate, under the same rule as a pay order:
+        refused for the member who set it and for the payee (403); an approval below
+        `min_approver_rank` is recorded but does not count. Needs scope `payorders.approve`.
+        Body must be empty or `{}`.
+      x-msync-scope: payorders.approve
+      security:
+        - bearerToken: []
+      parameters:
+        - $ref: "#/components/parameters/Id"
+        - name: wage_id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/EmptyBody"
+      responses:
+        "200":
+          description: "`{status, result}`."
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Success"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+  "/api/v1/time/clock-in":
+    post:
+      tags: [time]
+      summary: Clock in
+      description: |
+        Clocks in the token member's own payee for the shift whose window (early clock-in
+        window included) contains now. The body must be empty or `{}`: nothing names a payee.
+        The entry starts at the clock-in (never before the shift start by default), in whole
+        minutes, and ends at the shift's end, fixed now. 201 with a new entry; 200 with the same
+        entry on a second clock-in. 409 outside every window (unless an open-shift allowance
+        applies) or after the shift's end. Needs scope `time.clock`.
+      x-msync-scope: time.clock
+      security:
+        - bearerToken: []
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/EmptyBody"
+      responses:
+        "200":
+          description: "`{status, result: existing, entry}`."
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Success"
+        "201":
+          description: "`{status, result: created, entry}`."
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Success"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "409":
+          $ref: "#/components/responses/Conflict"
+  "/api/v1/time/clock-out":
+    post:
+      tags: [time]
+      summary: Leave early
+      description: |
+        Optional. Shortens the caller's running entry to now (rounded down to the minute). It
+        never extends an entry. 409 when nothing is running. Body empty or `{}`. Needs scope
+        `time.clock`.
+      x-msync-scope: time.clock
+      security:
+        - bearerToken: []
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/EmptyBody"
+      responses:
+        "200":
+          description: "`{status, result: {result: shortened | unchanged, entry}}`."
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Success"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "409":
+          $ref: "#/components/responses/Conflict"
+  "/api/v1/time/entries":
+    get:
+      tags: [time]
+      summary: List time entries
+      description: |
+        Time entries with their state (open, closed, approved, void) and whole minutes. Needs
+        scope `time.read`; with only `time.clock`, the caller's own entries (naming another
+        payee is 403).
+      x-msync-scope: time.read
+      security:
+        - bearerToken: []
+      parameters:
+        - name: payee
+          in: query
+          required: false
+          schema:
+            type: string
+        - name: from
+          in: query
+          required: false
+          description: YYYY-MM-DD, inclusive (UTC day of the entry start).
+          schema:
+            type: string
+            format: date
+        - name: to
+          in: query
+          required: false
+          schema:
+            type: string
+            format: date
+      responses:
+        "200":
+          description: "`{status, entries: [...]}`."
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Success"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+  "/api/v1/time/entries/{id}/approve":
+    post:
+      tags: [time]
+      summary: Approve a time entry
+      description: |
+        Approves a closed entry (its end has passed). The payee of the entry can never approve
+        it (403). 409 while the entry is open or void. Body empty or `{}`. Needs scope
+        `time.approve`.
+      x-msync-scope: time.approve
+      security:
+        - bearerToken: []
+      parameters:
+        - $ref: "#/components/parameters/Id"
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/EmptyBody"
+      responses:
+        "200":
+          description: "`{status, entry}`."
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Success"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+  "/api/v1/time/entries/{id}/adjust":
+    post:
+      tags: [time]
+      summary: Adjust a time entry
+      description: |
+        Sets a new start and/or end (whole minutes) with a required reason. Never by the payee
+        (403). An approved entry goes back to needing approval. 409 for a void entry, an
+        overlap with another entry, or an entry already paid into a timesheet row. Needs scope
+        `time.manage`.
+      x-msync-scope: time.manage
+      security:
+        - bearerToken: []
+      parameters:
+        - $ref: "#/components/parameters/Id"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AdjustBody"
+      responses:
+        "200":
+          description: "`{status, entry}`."
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Success"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+  "/api/v1/time/entries/{id}/void":
+    post:
+      tags: [time]
+      summary: Void a time entry
+      description: |
+        Voids an entry with a required reason; a void entry pays nothing. Never by the payee
+        (403). 409 for an entry already paid into a timesheet row. Needs scope `time.manage`.
+      x-msync-scope: time.manage
+      security:
+        - bearerToken: []
+      parameters:
+        - $ref: "#/components/parameters/Id"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ReasonBody"
+      responses:
+        "200":
+          description: "`{status, entry}`."
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Success"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+  "/api/v1/time/shifts":
+    get:
+      tags: [time]
+      summary: List shifts
+      description: |
+        Shifts, optionally for one payee and by status. Needs scope `time.read`; with only
+        `time.clock`, the caller's own shifts.
+      x-msync-scope: time.read
+      security:
+        - bearerToken: []
+      parameters:
+        - name: payee
+          in: query
+          required: false
+          schema:
+            type: string
+        - name: status
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: [active, ended]
+      responses:
+        "200":
+          description: "`{status, shifts: [...]}`."
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Success"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+    post:
+      tags: [time]
+      summary: Create a shift
+      description: |
+        A weekly pattern, a single dated shift, or an open-shift allowance, in an IANA time
+        zone. Never by the payee for themselves (403). Needs scope `time.manage`.
+      x-msync-scope: time.manage
+      security:
+        - bearerToken: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/NewShift"
+      responses:
+        "201":
+          description: "`{status, shift}`."
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Success"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+  "/api/v1/time/shifts/{id}":
+    patch:
+      tags: [time]
+      summary: Change or end a shift
+      description: |
+        Absent fields are unchanged; `null` clears `valid_from` or `valid_until`. `status:
+        ended` ends the shift. The payee and kind never change, and entries already clocked
+        keep their own times. Never by the payee (403). Needs scope `time.manage`.
+      x-msync-scope: time.manage
+      security:
+        - bearerToken: []
+      parameters:
+        - $ref: "#/components/parameters/Id"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ShiftPatch"
+      responses:
+        "200":
+          description: "`{status, shift}`."
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Success"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+  "/api/v1/time/timesheet":
+    get:
+      tags: [time]
+      summary: Get a timesheet
+      description: |
+        One payee's pay period: every entry, minutes per day by state, what the approved time
+        owes (minutes per day times the rate in force that day, overtime if set, floored to the
+        cent with the leftover fraction reported), and the ledger rows already written. Needs
+        scope `time.read`; with only `time.clock`, the caller's own timesheet.
+      x-msync-scope: time.read
+      security:
+        - bearerToken: []
+      parameters:
+        - name: payee
+          in: query
+          required: false
+          description: Required with `time.read`; omitted with `time.clock` (your own).
+          schema:
+            type: string
+        - name: period
+          in: query
+          required: false
+          description: A period key from a timesheet (for example `weekly-2026-11-16`) or a date. Default the current period.
+          schema:
+            type: string
+      responses:
+        "200":
+          description: "`{status, timesheet}`."
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Success"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
   "/api/v1/payorders":
     get:
       tags: [payroll]
@@ -2608,7 +3074,7 @@ components:
         merit.score, payouts.read, payouts.prepare, payouts.approve, payouts.execute,
         payouts.policy, tokens.manage, payees.read, payees.manage, payorders.read,
         payorders.manage, payorders.approve, invoices.submit, invoices.read, invoices.approve,
-        audit.read, oauth.clients.
+        audit.read, oauth.clients, time.clock, time.read, time.manage, time.approve.
     adminToken:
       type: http
       scheme: bearer
@@ -2848,6 +3314,10 @@ components:
               - invoices.approve
               - audit.read
               - oauth.clients
+              - time.clock
+              - time.read
+              - time.manage
+              - time.approve
         payee_keys:
           type: array
           items:
@@ -2962,6 +3432,125 @@ components:
                 type: integer
               merit_multiplier:
                 type: number
+        time_auto_approve:
+          type: boolean
+          default: false
+          description: Closed time entries count as approved without a `time.approve` approval.
+    NewWage:
+      type: object
+      additionalProperties: false
+      required: [rate_cents_per_hour, effective_from]
+      properties:
+        rate_cents_per_hour:
+          type: integer
+          minimum: 0
+          maximum: 10000000
+        effective_from:
+          type: string
+          format: date
+          description: The first day (in the shift's time zone) this rate pays.
+        currency:
+          type: string
+          description: Defaults to the payout policy currency; must equal it.
+        overtime_after_minutes:
+          type: integer
+          minimum: 0
+          description: Minutes per week (Monday to Sunday) paid at the base rate. Set together with overtime_bps.
+        overtime_bps:
+          type: integer
+          minimum: 10000
+          maximum: 50000
+          description: Overtime multiplier in basis points (15000 = 1.5x).
+        memo:
+          type: string
+    NewShift:
+      type: object
+      additionalProperties: false
+      required: [payee_id, kind, time_zone]
+      properties:
+        payee_id:
+          type: string
+        kind:
+          type: string
+          enum: [weekly, single, open]
+        weekday:
+          type: string
+          description: weekly only, monday .. sunday.
+        date:
+          type: string
+          format: date
+          description: single only.
+        start_time:
+          type: string
+          description: HH:MM local (weekly, single).
+        end_time:
+          type: string
+          description: HH:MM local; at or before start_time means the next day.
+        length_minutes:
+          type: integer
+          minimum: 1
+          maximum: 1440
+          description: open only, the length of an open-shift entry.
+        time_zone:
+          type: string
+          description: An IANA time zone name such as America/Phoenix.
+        valid_from:
+          type: string
+          format: date
+        valid_until:
+          type: string
+          format: date
+        early_minutes:
+          type: integer
+          minimum: 0
+          maximum: 240
+          default: 15
+        paid_from:
+          type: string
+          enum: [later_of_clock_in_and_start, clock_in]
+          default: later_of_clock_in_and_start
+    ShiftPatch:
+      type: object
+      additionalProperties: false
+      properties:
+        weekday:
+          type: string
+        date:
+          type: string
+          format: date
+        start_time:
+          type: string
+        end_time:
+          type: string
+        length_minutes:
+          type: integer
+        time_zone:
+          type: string
+        valid_from:
+          type: [string, "null"]
+        valid_until:
+          type: [string, "null"]
+        early_minutes:
+          type: integer
+        paid_from:
+          type: string
+          enum: [later_of_clock_in_and_start, clock_in]
+        status:
+          type: string
+          enum: [active, ended]
+    AdjustBody:
+      type: object
+      additionalProperties: false
+      required: [reason]
+      properties:
+        start_at:
+          type: string
+          description: A whole minute, RFC 3339 or `YYYY-MM-DD HH:MM` UTC.
+        end_at:
+          type: string
+        reason:
+          type: string
+          maxLength: 500
     NewPayee:
       type: object
       additionalProperties: false

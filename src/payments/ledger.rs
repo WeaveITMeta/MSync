@@ -16,6 +16,9 @@ pub const REJECTED: &str = "rejected";
 pub const SOURCE_MERIT: &str = "merit";
 pub const SOURCE_PAY_ORDER: &str = "pay_order";
 pub const SOURCE_INVOICE: &str = "invoice";
+/// Approved hours times the rate in force (contract 14.5): one row per payee per pay period,
+/// plus correction rows for time approved after the period's row was written.
+pub const SOURCE_TIMESHEET: &str = "timesheet";
 
 #[derive(Debug, Clone, Serialize, sqlx::FromRow)]
 pub struct LedgerEntry {
@@ -38,9 +41,10 @@ pub struct LedgerEntry {
     pub decided_by: Option<String>,
     pub created_at: String,
     pub updated_at: String,
-    /// merit | pay_order | invoice
+    /// merit | pay_order | invoice | timesheet
     pub source_kind: String,
-    /// The pay order occurrence id or the invoice id (None for merit rows).
+    /// The pay order occurrence id, the invoice id, or `<payee>:<period>[:<n>]` for a timesheet
+    /// row (None for merit rows).
     pub source_ref: Option<String>,
     /// payees.id for pay_order and invoice rows.
     pub payee_id: Option<String>,
@@ -524,9 +528,9 @@ pub async fn update_account_status(pool: &SqlitePool, account_id: &str, payouts_
 /// ledger. Never moves money.
 #[derive(Debug, Clone)]
 pub struct SourceRow {
-    /// SOURCE_PAY_ORDER or SOURCE_INVOICE.
+    /// SOURCE_PAY_ORDER, SOURCE_INVOICE or SOURCE_TIMESHEET.
     pub source_kind: &'static str,
-    /// Occurrence id or invoice id.
+    /// Occurrence id, invoice id, or `<payee>:<period>[:<n>]` for a timesheet row.
     pub source_ref: String,
     pub payee_id: String,
     /// The payee key written to github_username: the payee's first key, or `payee:<id>`.
@@ -545,6 +549,8 @@ pub struct SourceRow {
 pub fn legacy_columns(source_kind: &str, source_ref: &str, payee_id: &str) -> (i64, String) {
     match source_kind {
         SOURCE_INVOICE => (-2, format!("invoice:{source_ref}")),
+        // source_ref is `<payee>:<period>` or `<payee>:<period>:<n>` (correction n).
+        SOURCE_TIMESHEET => (-3, format!("timesheet:{source_ref}")),
         _ => (-1, format!("pay_order:{source_ref}:{payee_id}")),
     }
 }

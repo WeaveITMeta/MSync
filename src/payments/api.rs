@@ -282,5 +282,6 @@ pub fn configure(cfg: &mut web::ServiceConfig) {
         .service(cancel_run)
         .service(block_payee)
         .service(unblock_payee)
-        .configure(super::payroll_api::configure);
+        .configure(super::payroll_api::configure)
+        .configure(super::time_api::configure);
 }
