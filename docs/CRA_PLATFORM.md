@@ -410,9 +410,10 @@ DSync is now **MSync**, short for **MeritSync**. Earlier sections have been rewr
 | Rubric id `dsync-rubric-v1` | `msync-rubric-v1`, with a new pinned hash (no score has been stored in a release) |
 | Docs, comments, log and error text, MCP server name | MSync |
 
-Three names do NOT change, each for a stated reason:
+Four names do NOT change, each for a stated reason:
 
 - The Stripe idempotency key `dsync-ledger-<id>`. A payout approved before the rename and retried after it must present the same key, or Stripe could pay twice.
+- The Stripe account-creation idempotency key `dsync-account-<login>`, for the same reason: a retried account creation must not open a second account.
 - The default database file `sqlite://dsync.db`. Changing the default would start an existing deployment on an empty database.
 - The existing webhook dedupe keys.
 
