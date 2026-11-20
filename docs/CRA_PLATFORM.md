@@ -476,3 +476,58 @@ There is no dashboard in the 90%. The MSync repository is public and works as a 
 - **A reviewable hierarchy**: a GitHub Actions workflow and a GitLab CI job, shipped in each template, that run `msync check` and `msync plan` on a pull or merge request that touches `.msync/` and post the preview as a comment.
 - **Machine-readable surfaces**: `openapi.yaml` for `/api/v1`, generated or hand-written but tested against the registered routes so it cannot drift; an example `.mcp.json` for connecting a client to `/mcp`; and `docs/SETUP_WITH_AN_ASSISTANT.md` for the human, with the three prompts to paste.
 - **Public-repository hygiene**: no secret in the tree or in history, a `SECURITY.md` with how to report a vulnerability, and `.env.example` as the only env file.
+
+## 14. Hourly pay and time (owner direction, 2026-11-20)
+
+### 14.1 Where the `.msync/` files live, stated once
+
+There are two kinds of repository, and they are not the same thing.
+
+- **The hierarchy repository** holds `.msync/`. It is a small, dedicated repository that belongs to the administration, and it is **private by default**. It names members, their identities and who outranks whom. The owner manages it, usually with an assistant such as Claude, and the few people allowed to change the hierarchy have write access so that changes arrive as reviewed pull requests. Ordinary members and outside contributors never need access to it. An open-source project may choose to make it public; nothing in it is a secret, but a roster is not something to publish by accident.
+- **Work repositories** are where people write code. They are listed in `org.toml` under `[[foundry]]`. They can be public or private, on GitHub or GitLab, and they never contain `.msync/`. MSync only receives their events.
+
+Putting `.msync/` inside a shared work repository is allowed for a small open project but is not the recommended layout: everyone with write access to the code could then propose hierarchy changes, and the roster would be as visible as the code.
+
+Compensation is in neither: pay orders, hourly rates, shifts, timesheets and invoices are engine data behind scoped tokens (section 11.1).
+
+### 14.2 Hourly wages
+
+- A payee may have an hourly wage: a rate in cents per hour, a currency, and an effective-from date. A new rate is a new row; history is kept. Setting or changing a rate follows the pay order authority rules: the person who sets it cannot approve it, and a payee can never set or approve their own.
+- Optional overtime: a multiplier in basis points applied to minutes beyond a weekly threshold. Off unless set.
+
+### 14.3 Shifts
+
+- A shift says when someone is expected to work. Either a repeating weekly pattern (weekday, start time, end time, time zone) or a single dated shift. Shifts belong to a payee, are created by someone with `time.manage`, and never by the payee for themselves.
+- A shift has an early clock-in window (default 15 minutes) and may be marked paid from clock-in or paid from the shift start, whichever is later (the default).
+
+### 14.4 Clocking in: the shift does the end
+
+- A person clocks in. They do not clock out. The time entry starts at the clock-in time (never before the shift start) and **ends at the shift's end time**, which is known the moment they clock in.
+- Clocking in with no shift in its window is refused, unless the payee has an open-shift allowance: a fixed length (for example four hours) that a clock-in outside any shift starts.
+- Clocking in twice for the same shift returns the same entry. One entry per shift occurrence.
+- Clocking in after the shift's end is refused. A late clock-in is paid from the clock-in time.
+- Leaving early is the exception: `POST /time/clock-out` exists and shortens the open entry to now. It is optional and never extends an entry.
+- A manager with `time.manage` may adjust or void an entry, with a reason. The person the entry pays cannot adjust it.
+
+### 14.5 From time to pay
+
+- Entries are `open` until their end time passes, then `closed`. Closed entries need approval by someone with `time.approve` who is not the payee, unless the payout policy sets `time_auto_approve`.
+- A pay period (weekly, every two weeks, or monthly, from the payout policy's schedule) turns each payee's approved minutes into one ledger row: minutes times the rate in force on each day, rounded down to the cent, with overtime if configured. Source `timesheet`, one row per payee per period (`UNIQUE`), never created twice.
+- That row is paid like any other: approvals, limits, hold, blocks, eligibility and the kill switch all apply, through the one transfer path.
+
+### 14.6 Scopes, REST, MCP and chat
+
+New scopes: `time.clock` (your own time only), `time.read`, `time.manage`, `time.approve`.
+
+```
+POST /api/v1/time/clock-in                  time.clock     body: {} (the caller's own payee)
+POST /api/v1/time/clock-out                 time.clock     optional early end
+GET  /api/v1/time/entries?payee=&from=&to=  time.read (or time.clock for your own)
+POST /api/v1/time/entries/{id}/approve      time.approve
+POST /api/v1/time/entries/{id}/adjust|void  time.manage
+GET/POST /api/v1/time/shifts                time.read / time.manage
+GET/POST /api/v1/payees/{id}/wage           payees.read / payees.manage
+GET  /api/v1/time/timesheet?payee=&period=  time.read
+```
+
+MCP: `time_clock_in`, `time_entries_list`, `time_shifts_list`, `time_timesheet_get`, `time_entry_approve`. Chat, on Discord and Slack: `clock-in` (`/msync-clock-in`) and `shift` (shows the caller's current or next shift), both private replies. A chat clock-in is accepted only from a verified identity (CRA listing or a proven sign-in), so nobody can clock in as someone else.
