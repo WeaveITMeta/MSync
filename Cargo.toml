@@ -11,7 +11,10 @@ categories = ["web-programming", "command-line-utilities"]
 
 [dependencies]
 # Web framework
-actix-web = "4.5"
+# Defaults minus http2. The server binds plain TCP, where actix serves HTTP/1.x only (an h2c
+# preface already got a 400), and nginx terminates TLS. The feature only compiled in h2 0.3,
+# which has RUSTSEC-2026-0258 and no 0.3 fix.
+actix-web = { version = "4.5", default-features = false, features = ["macros", "compress-brotli", "compress-gzip", "compress-zstd", "cookies", "unicode", "compat", "ws"] }
 actix-rt = "2.9"
 
 # Discord
