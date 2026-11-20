@@ -272,6 +272,29 @@ pub const TOOLS: &[ToolDef] = &[
         read_only: true,
         destructive: false,
     },
+    ToolDef {
+        name: "audit_list",
+        title: "List audit log entries",
+        scope: Some(scopes::AUDIT_READ),
+        description: "Lists entries of the append-only, hash-chained audit log, oldest first, one page at a time: who did what \
+            to what, when, with a JSON detail and each entry's hash. Filter by actor, action (exact, or a prefix ending in \
+            '.' or '*', such as 'payout.*') and target. Pass next_after from a page as after to read the next one. Entries \
+            never contain secrets, tokens or full Stripe account ids.",
+        input_schema: audit_list_schema,
+        read_only: true,
+        destructive: false,
+    },
+    ToolDef {
+        name: "audit_verify",
+        title: "Verify the audit log",
+        scope: Some(scopes::AUDIT_READ),
+        description: "Walks the whole audit chain from the first entry and checks every link and hash. Returns ok and the \
+            head (seq and hash), or the first broken entry and why: a removed entry, a broken link, or contents that no \
+            longer match their hash.",
+        input_schema: no_args_schema,
+        read_only: true,
+        destructive: false,
+    },
 ];
 
 pub fn find(name: &str) -> Option<&'static ToolDef> {
@@ -643,6 +666,26 @@ pub async fn call(ctx: &McpContext, p: &Principal, name: &str, args: Option<Valu
                 Err(e) => Err(payout_msg(e)),
             }
         }
+        "audit_list" => {
+            let input: crate::audit::AuditFilter = parse_args(name, args)?;
+            match crate::audit::list(&api.pool, &input).await {
+                Ok(page) => Ok(json!({ "entries": page.entries, "next_after": page.next_after })),
+                Err(e) => {
+                    error!("mcp audit db error: {e}");
+                    Err("internal error".into())
+                }
+            }
+        }
+        "audit_verify" => {
+            let _: NoArgs = parse_args(name, args)?;
+            match crate::audit::verify(&api.pool).await {
+                Ok(report) => Ok(json!({ "verify": report })),
+                Err(e) => {
+                    error!("mcp audit db error: {e}");
+                    Err("internal error".into())
+                }
+            }
+        }
         "payout_statement" => {
             let input: StatementArgs = parse_args(name, args)?;
             match statement::statement(&api.pool, p, &input.payee_id, &input.from, &input.to).await {
@@ -741,6 +784,20 @@ fn member_schema() -> Value {
         "type": "object",
         "properties": {"contributor_id": {"type": "string", "format": "uuid", "description": "contributor_id from a leaderboard row."}},
         "required": ["contributor_id"],
+        "additionalProperties": false
+    })
+}
+
+fn audit_list_schema() -> Value {
+    json!({
+        "type": "object",
+        "properties": {
+            "actor": {"type": "string", "description": "Only entries by this actor (a member id, admin-token, system:<name>, discord:<id>, consumer:<key>)."},
+            "action": {"type": "string", "description": "An exact action such as token.created, or a prefix ending in '.' or '*' such as payout.*"},
+            "target": {"type": "string", "description": "Only entries about this target, such as ledger:<id> or payee:<id>."},
+            "after": {"type": "integer", "minimum": 0, "description": "Only entries with seq greater than this; next_after from the previous page."},
+            "limit": {"type": "integer", "minimum": 1, "maximum": 500, "description": "Page size, default 100."}
+        },
         "additionalProperties": false
     })
 }

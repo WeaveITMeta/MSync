@@ -181,6 +181,11 @@ async fn main() -> Result<()> {
     });
     let cra_data = web::Data::from(cra_ctx);
 
+    // Portal sync API (contract 13.2): consumers from the active CRA, secrets from
+    // MSYNC_CONSUMER_SECRET_<KEY>_<KEYID>, pairwise subjects from MSYNC_SUBJECT_KEY.
+    let portal_data = web::Data::new(msync::portal::PortalContext::from_env(db_pool.clone(), cra_handle.clone()));
+    info!("Portal sync API: subject key configured: {}", portal_data.subject_key_configured());
+
     // v1 merit/leaderboard REST and the MCP server share one MeritContext. Registry and rules
     // are read per request through the routes seams (foundry_registry, merit_rules).
     let merit_ctx = merit_api::MeritContext {
@@ -203,6 +208,7 @@ async fn main() -> Result<()> {
             .app_data(merit_data.clone())
             .app_data(mcp_data.clone())
             .app_data(slack_data.clone())
+            .app_data(portal_data.clone())
             .wrap(middleware::Logger::default())
             .wrap(middleware::NormalizePath::trim())
             .service(routes::health_check)
@@ -222,6 +228,8 @@ async fn main() -> Result<()> {
             .configure(payments::api::configure)
             .configure(merit_api::configure)
             .configure(mcp::configure)
+            .configure(msync::audit::api::configure)
+            .configure(msync::portal::configure)
     })
     .bind((config.server.host.as_str(), config.server.port))?
     .run()

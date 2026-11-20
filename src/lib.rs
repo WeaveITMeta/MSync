@@ -1,3 +1,4 @@
+pub mod audit;
 pub mod auth;
 pub mod chat;
 pub mod config;
@@ -9,6 +10,7 @@ pub mod mcp;
 pub mod merit;
 pub mod models;
 pub mod payments;
+pub mod portal;
 pub mod routes;
 pub mod services;
 pub mod slack;

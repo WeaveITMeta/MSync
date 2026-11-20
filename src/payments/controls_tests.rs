@@ -921,3 +921,75 @@ fn evaluate_is_pure_over_facts() {
     let facts = RowFacts { entry, approvers: vec![], blocked: false, verified_identity: false, payee_rank: None, payee_roles: vec![], payee_inactive: None };
     assert_eq!(evaluate(&p, &facts, Utc::now(), &Usage::default()), vec![Blocker::Approvals { have: 0, need: 1 }]);
 }
+
+// ------------------------------------------------------------------ verified identity
+
+/// A login typed into chat `link` fills `contributors.discord_user_id` and an unverified chat
+/// binding. Neither proves anything, so neither makes the login eligible under
+/// `require_verified_identity`. A proven chat binding or a CRA listing does.
+#[tokio::test]
+async fn a_typed_in_link_no_longer_makes_a_login_eligible() {
+    let pool = pool().await;
+    let mut p = base_policy();
+    p.eligibility.require_verified_identity = true;
+    store(&pool, &p).await;
+
+    // alice: what a typed-in `/link alice` leaves behind (discord_user_id = 42, unverified binding).
+    add_contributor(&pool, "alice", Some("acct_alice"), true).await;
+    sqlx::query(
+        "INSERT INTO chat_identities (platform, team_or_guild, user_id, contributor_id, verified, source)
+         SELECT 'discord', '', '42', id, 0, 'link' FROM contributors WHERE github_username = 'alice'",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+    let e = row(&pool, 1, "alice").await;
+    let unverified = Blocker::Ineligible { reason: "payee identity not verified".into() };
+
+    let facts = approvals::load_facts(&pool, &dir(), e.clone()).await.unwrap();
+    assert!(!facts.verified_identity, "a typed-in link must not verify a login");
+    assert!(evaluate(&p, &facts, Utc::now(), &Usage::default()).contains(&unverified));
+    assert!(plan_blockers(&pool, Utc::now()).await.iter().any(|(id, b)| id == &e.id && b.contains(&unverified)));
+
+    // A proven binding (a future OAuth link sets verified = 1) does.
+    sqlx::query("UPDATE chat_identities SET verified = 1").execute(&pool).await.unwrap();
+    let facts = approvals::load_facts(&pool, &dir(), e.clone()).await.unwrap();
+    assert!(facts.verified_identity);
+    assert!(!evaluate(&p, &facts, Utc::now(), &Usage::default()).contains(&unverified));
+}
+
+#[tokio::test]
+async fn a_cra_listing_verifies_a_login() {
+    let pool = pool().await;
+    assert!(!approvals::payee_identity_verified(&pool, "ada-example").await.unwrap(), "no CRA: nothing attested");
+    let files = crate::cra::CraFiles {
+        org: include_str!("../../examples/cra/eustress-engine/.msync/org.toml").into(),
+        roles: include_str!("../../examples/cra/eustress-engine/.msync/roles.toml").into(),
+        members: include_str!("../../examples/cra/eustress-engine/.msync/members.toml").into(),
+        merit: include_str!("../../examples/cra/eustress-engine/.msync/merit.toml").into(),
+        payouts: include_str!("../../examples/cra/eustress-engine/.msync/payouts.toml").into(),
+    };
+    let repo = crate::cra::CraRepo::new(crate::foundry::FoundryProvider::GitHub, "github.com", "example-eustress/cra");
+    let sha = "a".repeat(40);
+    let a = crate::cra::store::Attempt {
+        org_id: crate::cra::loader::ORG_ID,
+        org_slug: Some("eustress-engine"),
+        repo: &repo,
+        commit_sha: &sha,
+        files: Some(&files),
+        ctx: None,
+        violations: &[],
+        plan_markdown: None,
+        retryable: false,
+    };
+    assert!(matches!(crate::cra::store::activate(&pool, &a, None).await.unwrap(), crate::cra::store::Activation::Activated(_)));
+    assert!(approvals::payee_identity_verified(&pool, "ada-example").await.unwrap());
+    assert!(approvals::payee_identity_verified(&pool, "Ada-Example").await.unwrap(), "logins are case-insensitive");
+    assert!(approvals::payee_identity_verified(&pool, "github:github.com:ada-example").await.unwrap());
+    assert!(!approvals::payee_identity_verified(&pool, "gitlab:ada-example").await.unwrap(), "another provider is another identity");
+    assert!(!approvals::payee_identity_verified(&pool, "mallory").await.unwrap());
+    // The activation was audited in its own transaction.
+    let entries = crate::audit::list(&pool, &crate::audit::AuditFilter { action: Some("cra.snapshot.activated".into()), ..Default::default() }).await.unwrap();
+    assert_eq!(entries.entries.len(), 1);
+    assert_eq!(entries.entries[0].detail["commit_sha"], serde_json::json!(sha));
+}

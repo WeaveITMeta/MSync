@@ -150,11 +150,39 @@ fn cra_identities_text(ids: &Identities) -> String {
     }
 }
 
+/// Audit a refused `link` (contract 13.1). The refusal already happened, so this is best
+/// effort: a failed write is logged and the reply is unchanged.
+async fn audit_link_refused(ctx: &ChatContext, actor: &ChatActor, login: &str, reason: &str) {
+    let who = match actor.platform {
+        ChatPlatform::Discord => format!("discord:{}", actor.user_id),
+        _ => format!("{}:{}:{}", actor.platform.as_str(), actor.team_id, actor.user_id),
+    };
+    let login: String = login.trim().chars().take(100).collect();
+    crate::audit::append_best_effort(
+        &ctx.pool,
+        &crate::audit::AuditEntry::new(
+            crate::audit::ActorKind::Chat,
+            who,
+            "chat.link.refused",
+            format!("login:{login}"),
+            serde_json::json!({
+                "platform": actor.platform.as_str(),
+                "team_or_guild": actor.storage_team(),
+                "user_id": actor.user_id,
+                "login": login,
+                "reason": reason,
+            }),
+        ),
+    )
+    .await;
+}
+
 /// `link`: bind this chat account to a GitHub or GitLab login, or, with a CRA, report what
 /// the CRA says. Never overwrites a binding.
 pub async fn link(ctx: &ChatContext, actor: &ChatActor, arg: &str) -> ChatReply {
     let p = actor.platform;
     if ctx.cra.active().is_some() {
+        audit_link_refused(ctx, actor, arg, "cra_active").await;
         let head = "🔒 Identities come from the CRA member list (`members.toml`), so link changes nothing.";
         return match resolve(ctx, actor, false).await {
             Ok(Caller::Member { id, name, identities, .. }) => ChatReply::private(format!(
@@ -184,6 +212,7 @@ pub async fn link(ctx: &ChatContext, actor: &ChatActor, arg: &str) -> ChatReply 
             return ChatReply::private(format!("✅ Your {} account is already linked to `{}`. Nothing changed.", p.label(), b.contributor));
         }
         Ok(Some(b)) => {
+            audit_link_refused(ctx, actor, &key, "caller_already_linked").await;
             return ChatReply::private(format!(
                 "❌ Your {} account is already linked to `{}`. A link cannot be changed from chat; ask an administrator.",
                 p.label(),
@@ -207,12 +236,16 @@ pub async fn link(ctx: &ChatContext, actor: &ChatActor, arg: &str) -> ChatReply 
     if let Some(c) = &existing {
         match identity::accounts_of(&ctx.pool, p, &c.github_username).await {
             Ok(accounts) if accounts.is_empty() => {}
-            Ok(_) => return ChatReply::private(taken),
+            Ok(_) => {
+                audit_link_refused(ctx, actor, &key, "login_taken").await;
+                return ChatReply::private(taken);
+            }
             Err(e) => return ChatReply::private(format!("❌ Database error: {}", e)),
         }
         if p == ChatPlatform::Discord {
             if let Some(d) = c.discord_user_id {
                 if d.to_string() != actor.user_id {
+                    audit_link_refused(ctx, actor, &key, "login_taken").await;
                     return ChatReply::private(taken);
                 }
             }
@@ -229,7 +262,10 @@ pub async fn link(ctx: &ChatContext, actor: &ChatActor, arg: &str) -> ChatReply 
     };
     match identity::bind(&ctx.pool, actor, &contributor.github_username, false, "link").await {
         Ok(true) => {}
-        Ok(false) => return ChatReply::private(taken),
+        Ok(false) => {
+            audit_link_refused(ctx, actor, &key, "login_taken").await;
+            return ChatReply::private(taken);
+        }
         Err(e) => return ChatReply::private(format!("❌ Failed to link account: {}", e)),
     }
     if p == ChatPlatform::Discord {

@@ -215,6 +215,11 @@ pub fn stripe_idempotency_key(ledger_id: &str) -> String {
     format!("dsync-ledger-{}", ledger_id)
 }
 
+/// The audit actor kind of whoever decided a transfer (`decided_by`).
+fn transfer_actor_kind(by: &str) -> crate::audit::ActorKind {
+    crate::audit::kind_for_member(by)
+}
+
 /// The ONLY place a transfer is created. Claims the row atomically (status pending/failed ->
 /// approved, plus any guard conditions in the same UPDATE) and uses idempotency key
 /// `dsync-ledger-<id>` so a retry can never pay twice on Stripe's side.
@@ -362,7 +367,34 @@ async fn claim_and_transfer(
             q = q.bind(run_id.clone()).bind(*cap);
         }
     }
-    let claimed = q.execute(pool).await?;
+    // The claim and the audit entry for this transfer attempt commit together: if the attempt
+    // cannot be audited, the claim rolls back and no transfer is made (contract 13.1).
+    let mut tx = pool.begin().await?;
+    let claimed = q.execute(&mut *tx).await?;
+    if claimed.rows_affected() > 0 {
+        crate::audit::append_in(
+            &mut tx,
+            &crate::audit::AuditEntry::new(
+                transfer_actor_kind(by),
+                by,
+                "payout.transfer.attempt",
+                format!("ledger:{id}"),
+                serde_json::json!({
+                    "ledger_id": entry.id,
+                    "source_kind": entry.source_kind,
+                    "payee": entry.github_username,
+                    "payee_id": entry.payee_id,
+                    "amount_cents": entry.amount_cents,
+                    "currency": entry.currency,
+                    "destination": crate::audit::stripe_last4(&destination),
+                    "idempotency_key": stripe_idempotency_key(&entry.id),
+                    "guarded": guard.is_some(),
+                }),
+            ),
+        )
+        .await?;
+    }
+    tx.commit().await?;
     if claimed.rows_affected() == 0 {
         let current = get(pool, id).await?.map(|e| e.status).unwrap_or_default();
         if current == entry.status {
@@ -396,6 +428,19 @@ async fn claim_and_transfer(
             .execute(pool)
             .await?;
             info!("Ledger {} paid via transfer {}", id, transfer_id);
+            // The money has moved: the outcome is recorded on the row first and audited after.
+            // A failed audit write here is logged loudly but cannot undo the transfer.
+            crate::audit::append_best_effort(
+                pool,
+                &crate::audit::AuditEntry::new(
+                    transfer_actor_kind(by),
+                    by,
+                    "payout.transfer.succeeded",
+                    format!("ledger:{id}"),
+                    serde_json::json!({ "ledger_id": id, "transfer_id": transfer_id, "amount_cents": entry.amount_cents, "currency": entry.currency }),
+                ),
+            )
+            .await;
         }
         Err(e) => {
             warn!("Transfer for ledger {} failed: {}", id, e);
@@ -405,27 +450,57 @@ async fn claim_and_transfer(
                 .bind(id)
                 .execute(pool)
                 .await?;
+            crate::audit::append_best_effort(
+                pool,
+                &crate::audit::AuditEntry::new(
+                    transfer_actor_kind(by),
+                    by,
+                    "payout.transfer.failed",
+                    format!("ledger:{id}"),
+                    serde_json::json!({ "ledger_id": id, "reason": e.to_string(), "amount_cents": entry.amount_cents, "currency": entry.currency }),
+                ),
+            )
+            .await;
         }
     }
     get(pool, id).await?.ok_or(LedgerError::NotFound)
 }
 
 pub async fn set_stripe_account(pool: &SqlitePool, github_username: &str, account_id: &str) -> Result<(), sqlx::Error> {
+    // Both updates and their audit entry (contract 13.1: a Stripe account changed) commit
+    // together.
+    let mut tx = pool.begin().await?;
     sqlx::query("UPDATE contributors SET stripe_account_id = ?, updated_at = datetime('now') WHERE github_username = ?")
         .bind(account_id)
         .bind(github_username)
-        .execute(pool)
+        .execute(&mut *tx)
         .await?;
     // A payee linked by this payee key and without an account of its own takes the same
     // account, not yet enabled (only the Stripe webhook enables it).
-    sqlx::query(
+    let linked = sqlx::query(
         "UPDATE payees SET stripe_account_id = ?, stripe_payouts_enabled = 0, updated_at = datetime('now')
          WHERE stripe_account_id IS NULL AND id IN (SELECT payee_id FROM payee_keys WHERE payee_key = lower(?))",
     )
     .bind(account_id)
     .bind(github_username)
-    .execute(pool)
+    .execute(&mut *tx)
     .await?;
+    crate::audit::append_in(
+        &mut tx,
+        &crate::audit::AuditEntry::new(
+            crate::audit::ActorKind::System,
+            "system:onboarding",
+            "payee.stripe_account_set",
+            format!("contributor:{github_username}"),
+            serde_json::json!({
+                "github_username": github_username,
+                "stripe_account": crate::audit::stripe_last4(account_id),
+                "payees_linked": linked.rows_affected(),
+            }),
+        ),
+    )
+    .await?;
+    tx.commit().await?;
     Ok(())
 }
 

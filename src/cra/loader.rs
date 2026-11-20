@@ -85,6 +85,41 @@ impl LoadOutcome {
     }
 }
 
+/// The audit entry for a snapshot attempt (contract 13.1). The actor is the authenticated
+/// pusher or merger; a reload with no webhook is `system:cra-reload`.
+fn attempt_audit(a: &Attempt<'_>, action: &str, snapshot_id: i64, superseded: Option<i64>) -> crate::audit::AuditEntry {
+    let (kind, actor) = match a.ctx {
+        Some(c) => (crate::audit::ActorKind::Foundry, c.actor.to_string()),
+        None => (crate::audit::ActorKind::System, "system:cra-reload".to_string()),
+    };
+    let mut e = crate::audit::AuditEntry::new(
+        kind,
+        actor,
+        action,
+        format!("cra_snapshot:{snapshot_id}"),
+        serde_json::json!({
+            "snapshot_id": snapshot_id,
+            "repo": a.repo.spec(),
+            "commit_sha": a.commit_sha,
+            "org_slug": a.org_slug,
+            "content_hash": a.files.map(|f| f.content_hash()),
+            "via_pull_request": a.ctx.map(|c| c.via_pull_request),
+            "author": a.ctx.and_then(|c| c.author.as_ref()).map(|x| x.to_string()),
+            "approvers": a.ctx.map(|c| c.approvers.iter().map(|x| x.to_string()).collect::<Vec<_>>()),
+            "superseded_snapshot_id": superseded,
+            "violations": a.violations.iter().map(|v| serde_json::json!({"code": v.code, "item": v.item, "message": v.message})).collect::<Vec<_>>(),
+            "retryable": a.retryable,
+        }),
+    );
+    e.org_id = a.org_id.to_string();
+    e
+}
+
+/// The audit entry `store::activate` writes in the activation transaction.
+pub(crate) fn activation_audit(a: &Attempt<'_>, snapshot_id: i64, superseded: Option<i64>) -> crate::audit::AuditEntry {
+    attempt_audit(a, "cra.snapshot.activated", snapshot_id, superseded)
+}
+
 fn source_violation(e: &SourceError) -> RecordedViolation {
     RecordedViolation::new("SourceError", "foundry", e.to_string())
 }
@@ -145,7 +180,11 @@ pub async fn load_commit(
             retryable,
         };
         Ok::<LoadOutcome, sqlx::Error>(match store::record_rejected(pool, &a).await? {
-            Recorded::Inserted(id) => LoadOutcome::Rejected { snapshot_id: id, commit_sha: sha.clone(), retryable, violations },
+            Recorded::Inserted(id) => {
+                // A rejection changes nothing, so its audit entry is best effort (logged on failure).
+                crate::audit::append_best_effort(pool, &attempt_audit(&a, "cra.snapshot.rejected", id, None)).await;
+                LoadOutcome::Rejected { snapshot_id: id, commit_sha: sha.clone(), retryable, violations }
+            }
             Recorded::AlreadyFinal(row) => already(&row),
         })
     };

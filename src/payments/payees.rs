@@ -474,6 +474,24 @@ pub async fn create(
     write_keys(&mut tx, &id, &principal.org_id, &f.payee_keys).await?;
     link_contributor_account(&mut tx, &id).await?;
     record_event(&mut tx, &id, "create", &principal.member_id, json!({}), &now_s).await?;
+    crate::audit::append_in(
+        &mut tx,
+        &crate::audit::AuditEntry::by_principal(
+            principal,
+            "payee.created",
+            format!("payee:{id}"),
+            json!({
+                "payee_id": id,
+                "display_name": f.display_name,
+                "kind": f.kind,
+                "member_id": f.member_id,
+                "payee_keys": f.payee_keys,
+                "stripe_account": f.stripe_account_id.as_deref().map(crate::audit::stripe_last4),
+                "status": f.status,
+            }),
+        ),
+    )
+    .await?;
     tx.commit().await?;
     load(pool, &id).await?.ok_or(PayoutError::NotFound("payee"))
 }
@@ -591,6 +609,27 @@ pub async fn update(
     }
     link_contributor_account(&mut tx, id).await?;
     record_event(&mut tx, id, "update", &principal.member_id, json!({ "fields": changed }), &now_s).await?;
+    // Always audited, and always with the Stripe account change spelled out (last four only).
+    crate::audit::append_in(
+        &mut tx,
+        &crate::audit::AuditEntry::by_principal(
+            principal,
+            "payee.updated",
+            format!("payee:{id}"),
+            json!({
+                "payee_id": id,
+                "fields": changed,
+                "stripe_account_changed": account_changed,
+                "stripe_account_before": cur.row.stripe_account_id.as_deref().map(crate::audit::stripe_last4),
+                "stripe_account_after": f.stripe_account_id.as_deref().map(crate::audit::stripe_last4),
+                "status_before": cur.row.status,
+                "status_after": f.status,
+                "member_id": f.member_id,
+                "payee_keys": f.payee_keys,
+            }),
+        ),
+    )
+    .await?;
     tx.commit().await?;
     load(pool, id).await?.ok_or(PayoutError::NotFound("payee"))
 }

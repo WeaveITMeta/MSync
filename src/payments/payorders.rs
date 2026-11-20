@@ -25,7 +25,7 @@ use crate::auth::{is_payee, member_payee_keys, scopes, tokens::format_db_time, t
 use chrono::{DateTime, Datelike, Duration, NaiveDate, TimeZone, Utc};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
-use sqlx::{Row, SqlitePool};
+use sqlx::{Row, SqliteConnection, SqlitePool};
 use std::collections::{BTreeMap, HashMap, HashSet};
 use tracing::{error, info, warn};
 use uuid::Uuid;
@@ -715,7 +715,10 @@ async fn load_scoped(pool: &SqlitePool, principal: &Principal, id: &str) -> Resu
     Ok(row)
 }
 
-async fn event(pool: &SqlitePool, order: &str, action: &str, from: Option<&str>, to: Option<&str>, revision: i64, actor: &str, now: &str) -> Result<(), sqlx::Error> {
+/// Record a pay order event and its audit entry (`payorder.<action>`) inside the caller's
+/// transaction: no audit entry, no change.
+#[allow(clippy::too_many_arguments)]
+async fn event(conn: &mut SqliteConnection, order: &str, action: &str, from: Option<&str>, to: Option<&str>, revision: i64, actor: &str, now: &str) -> Result<(), sqlx::Error> {
     sqlx::query(
         "INSERT INTO pay_order_events (order_id, action, from_status, to_status, revision, actor, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
     )
@@ -726,7 +729,28 @@ async fn event(pool: &SqlitePool, order: &str, action: &str, from: Option<&str>,
     .bind(revision)
     .bind(actor)
     .bind(now)
-    .execute(pool)
+    .execute(&mut *conn)
+    .await?;
+    let verb = match action {
+        "create" => "created",
+        "update" => "updated",
+        "approve" => "approved",
+        "pause" => "paused",
+        "resume" => "resumed",
+        "cancel" => "cancelled",
+        "end" => "ended",
+        other => other,
+    };
+    crate::audit::append_in(
+        conn,
+        &crate::audit::AuditEntry::new(
+            crate::audit::kind_for_member(actor),
+            actor,
+            format!("payorder.{verb}"),
+            format!("payorder:{order}"),
+            serde_json::json!({ "order_id": order, "from_status": from, "to_status": to, "revision": revision }),
+        ),
+    )
     .await?;
     Ok(())
 }
@@ -952,6 +976,7 @@ pub async fn create(
     let id = Uuid::new_v4().to_string();
     let now_s = format_db_time(now);
     let status = if input.draft { DRAFT } else { ACTIVE };
+    let mut tx = pool.begin().await?;
     sqlx::query(
         "INSERT INTO pay_orders (id, org_id, name, status, currency, amount_rule, schedule, memo, revision, revised_by,
          created_by, created_at, updated_by, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?, ?)",
@@ -969,9 +994,10 @@ pub async fn create(
     .bind(&now_s)
     .bind(&principal.member_id)
     .bind(&now_s)
-    .execute(pool)
+    .execute(&mut *tx)
     .await?;
-    event(pool, &id, "create", None, Some(status), 1, &principal.member_id, &now_s).await?;
+    event(&mut tx, &id, "create", None, Some(status), 1, &principal.member_id, &now_s).await?;
+    tx.commit().await?;
     let row = load_scoped(pool, principal, &id).await?;
     view(pool, cfg, directory, row).await
 }
@@ -1019,6 +1045,7 @@ pub async fn update(
     let material = rule_s != row.amount_rule || sched_s != row.schedule || currency != row.currency;
     let (revision, revised_by) = if material { (row.revision + 1, principal.member_id.clone()) } else { (row.revision, row.revised_by.clone()) };
     let now_s = format_db_time(now);
+    let mut tx = pool.begin().await?;
     let res = sqlx::query(
         "UPDATE pay_orders SET name = ?, memo = ?, currency = ?, amount_rule = ?, schedule = ?, revision = ?, revised_by = ?,
          updated_by = ?, updated_at = ? WHERE id = ? AND revision = ? AND status NOT IN ('ended', 'cancelled')",
@@ -1034,12 +1061,13 @@ pub async fn update(
     .bind(&now_s)
     .bind(id)
     .bind(row.revision)
-    .execute(pool)
+    .execute(&mut *tx)
     .await?;
     if res.rows_affected() == 0 {
         return Err(PayoutError::InvalidState("pay order changed concurrently; read it again".into()));
     }
-    event(pool, id, "update", Some(&row.status), Some(&row.status), revision, &principal.member_id, &now_s).await?;
+    event(&mut tx, id, "update", Some(&row.status), Some(&row.status), revision, &principal.member_id, &now_s).await?;
+    tx.commit().await?;
     let row = load_scoped(pool, principal, id).await?;
     view(pool, cfg, directory, row).await
 }
@@ -1076,6 +1104,7 @@ pub async fn approve(
         return Err(PayoutError::Forbidden("the author of a pay order change can never approve it".into()));
     }
     refuse_payee(pool, directory, principal, &row.rule()?, "approve").await?;
+    let mut tx = pool.begin().await?;
     let res = sqlx::query(
         "INSERT OR IGNORE INTO pay_order_approvals (order_id, revision, approver_member_id, org_id, token_id, created_at)
          VALUES (?, ?, ?, ?, ?, ?)",
@@ -1086,12 +1115,13 @@ pub async fn approve(
     .bind(&principal.org_id)
     .bind(&principal.token_id)
     .bind(format_db_time(now))
-    .execute(pool)
+    .execute(&mut *tx)
     .await?;
     let recorded = res.rows_affected() > 0;
     if recorded {
-        event(pool, id, "approve", Some(&row.status), Some(&row.status), row.revision, &principal.member_id, &format_db_time(now)).await?;
+        event(&mut tx, id, "approve", Some(&row.status), Some(&row.status), row.revision, &principal.member_id, &format_db_time(now)).await?;
     }
+    tx.commit().await?;
     let revision = row.revision;
     let order = view(pool, cfg, directory, row).await?;
     Ok(ApproveOrderResult {
@@ -1141,6 +1171,7 @@ pub async fn transition(
     let now_s = format_db_time(now);
     // Resuming a paused order skips what fell while paused: nothing dated before now is paid.
     let resume_from = if t == Transition::Resume && row.status == PAUSED { Some(now_s.clone()) } else { row.resume_from.clone() };
+    let mut tx = pool.begin().await?;
     let res = sqlx::query("UPDATE pay_orders SET status = ?, resume_from = ?, updated_by = ?, updated_at = ? WHERE id = ? AND status = ?")
         .bind(to)
         .bind(&resume_from)
@@ -1148,12 +1179,13 @@ pub async fn transition(
         .bind(&now_s)
         .bind(id)
         .bind(&row.status)
-        .execute(pool)
+        .execute(&mut *tx)
         .await?;
     if res.rows_affected() == 0 {
         return Err(PayoutError::InvalidState("pay order changed concurrently; read it again".into()));
     }
-    event(pool, id, verb, Some(&row.status), Some(to), row.revision, &principal.member_id, &now_s).await?;
+    event(&mut tx, id, verb, Some(&row.status), Some(to), row.revision, &principal.member_id, &now_s).await?;
+    tx.commit().await?;
     let row = load_scoped(pool, principal, id).await?;
     view(pool, cfg, directory, row).await
 }
@@ -1481,6 +1513,28 @@ async fn record_occurrence(
             ids.push(lid);
         }
     }
+    crate::audit::append_in(
+        &mut tx,
+        &crate::audit::AuditEntry::new(
+            crate::audit::ActorKind::System,
+            "system:scheduler",
+            "payorder.occurrence",
+            format!("payorder:{}", row.id),
+            serde_json::json!({
+                "order_id": row.id,
+                "occurrence_id": occ_id,
+                "period_key": occ.period_key,
+                "status": status,
+                "revision": row.revision,
+                "ledger_ids": ids,
+                "approvers": approvers,
+                "paid_cents": split.map_or(0, |s| s.paid_cents),
+                "leftover_cents": split.map_or(0, |s| s.leftover_cents),
+                "reason": reason,
+            }),
+        ),
+    )
+    .await?;
     tx.commit().await?;
     Ok(Some(ids))
 }
@@ -1541,18 +1595,20 @@ pub async fn materialize_due(ctx: &ApiContext, now: DateTime<Utc>) -> Result<Mat
         }
 
         if plan.schedule_exhausted && !pending {
+            let mut tx = pool.begin().await?;
             let res = sqlx::query("UPDATE pay_orders SET status = ?, updated_by = ?, updated_at = ? WHERE id = ? AND status = ?")
                 .bind(ENDED)
                 .bind("system:scheduler")
                 .bind(format_db_time(now))
                 .bind(&row.id)
                 .bind(ACTIVE)
-                .execute(pool)
+                .execute(&mut *tx)
                 .await?;
             if res.rows_affected() > 0 {
-                event(pool, &row.id, "end", Some(ACTIVE), Some(ENDED), row.revision, "system:scheduler", &format_db_time(now)).await?;
+                event(&mut tx, &row.id, "end", Some(ACTIVE), Some(ENDED), row.revision, "system:scheduler", &format_db_time(now)).await?;
                 report.ended.push(row.id.clone());
             }
+            tx.commit().await?;
         }
     }
     if !report.waiting.is_empty() {
