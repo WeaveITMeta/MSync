@@ -465,3 +465,14 @@ Hierarchy doc section 6 and contract 12.3. Root accounts with identities (`githu
 ### 13.5 Running it
 
 One command starts the service with only a database: no Discord, no Slack and no Stripe configured is a valid local mode. A local directory can stand in for the CRA repository in development (`MSYNC_CRA_LOCAL_DIR`, refused unless `MSYNC_DEV_MODE=true`, loaded as the configured owner). A quickstart, and a smoke test that drives a real running binary through signed webhooks, a score, a payout dry run, a pay order, an invoice, a Slack command and an MCP call.
+
+### 13.6 The repository as a public template (owner direction, 2026-11-20)
+
+There is no dashboard in the 90%. The MSync repository is public and works as a template and a kit, in the way an SDK does: a person gives it to an AI assistant such as Claude, and the assistant sets MSync up for them through the files, the REST API and the MCP server.
+
+- **Agent instructions at the root**: `AGENTS.md` (and a `CLAUDE.md` that points to it): what MSync is in ten lines, the setup steps in order, the commands to run, how to check each step worked, what never to do (commit a secret, turn on MCP payout execution, approve anything on the owner's behalf), and which decisions belong to the human (mode, roles and ranks, who is an owner, payout amounts). Written to be followed literally.
+- **Templates**: `templates/<name>/.msync/` for `open-source`, `source-available`, `hybrid`, `closed-source` and `merit-dao`, each a complete, valid, commented CRA with placeholders an assistant fills in, plus a one-page `README.md` saying who it is for.
+- **A command-line front door** in the same binary: `msync init --template <name> --dir <path>` (writes `.msync/` from a template, refusing to overwrite), `msync check <dir>` (parse and validate, print every error with file and reason, exit non-zero on failure), `msync plan <old-dir> <new-dir>` (the change preview and who would have to approve it), `msync token create ...` (bootstrap the first API token), `msync doctor` (which connectors are configured, with each missing variable named), `msync serve` (the default).
+- **A reviewable hierarchy**: a GitHub Actions workflow and a GitLab CI job, shipped in each template, that run `msync check` and `msync plan` on a pull or merge request that touches `.msync/` and post the preview as a comment.
+- **Machine-readable surfaces**: `openapi.yaml` for `/api/v1`, generated or hand-written but tested against the registered routes so it cannot drift; an example `.mcp.json` for connecting a client to `/mcp`; and `docs/SETUP_WITH_AN_ASSISTANT.md` for the human, with the three prompts to paste.
+- **Public-repository hygiene**: no secret in the tree or in history, a `SECURITY.md` with how to report a vulnerability, and `.env.example` as the only env file.
