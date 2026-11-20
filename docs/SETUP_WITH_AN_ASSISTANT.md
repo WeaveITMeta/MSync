@@ -14,10 +14,21 @@ Make these decisions. The assistant will ask for each one, so having them ready 
 - **Payouts.** Whether you pay anyone, and if so amounts, currency, limits, schedule and who approves.
 - **Chat platform.** Discord, Slack, both, or none for now.
 - **Repositories.** Which repositories earn merit, and which one holds the hierarchy.
+- **Where `.msync/` lives.** A private hierarchy repository (the recommended default), or `.msync/` inside a shared work repository. The difference is below.
+
+## Where the `.msync/` files live
+
+**Where the `.msync/` files live.** There are two kinds of repository, and they are not the same thing.
+
+- **The hierarchy repository** holds `.msync/`. It is a small, private repository that the owner manages, usually with an assistant such as Claude. Only the few people allowed to change the hierarchy get write access, so every change arrives as a reviewed pull request. Ordinary members and outside contributors never need access to it.
+- **Work repositories** are where people write code. They are listed in `org.toml` under `[[foundry]]`. They can be public or private, on GitHub or GitLab, and they never contain `.msync/`. MSync only receives their events.
+- **Compensation is in neither.** Pay orders, hourly rates, shifts, timesheets and invoices live in MSync's own database, behind scoped tokens.
+
+Putting `.msync/` inside a shared work repository is allowed for a small open project, but it is not the recommended layout: everyone with write access to the code could then propose hierarchy changes, and the roster would be as visible as the code.
 
 Accounts you may need:
 
-- A GitHub or GitLab repository to hold the hierarchy (the CRA). It can be private.
+- A small private GitHub or GitLab repository to hold the hierarchy (the CRA). The assistant connects it and your work repositories as `docs/CRA_CONFIG.md` section 14.2 describes.
 - A Discord application and bot, or a Slack app, if you want chat roles. Not needed to try MSync locally.
 - A Stripe test-mode account, only if you want to try payouts. Use test keys (`sk_test_...`). Live money is a deliberate step you take yourself.
 

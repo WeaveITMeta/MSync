@@ -6,6 +6,16 @@ For a project whose code is public to read but whose license is not an open-sour
 
 `source_available` mode keeps the code readable but treats the community as members: the roster, leaderboard and profiles are for members only. Outside contributors still earn merit in every listed repository. Appointed positions from rank 50 up are two-person and serve at most 180 days.
 
+## Where the `.msync/` files live
+
+**Where the `.msync/` files live.** There are two kinds of repository, and they are not the same thing.
+
+- **The hierarchy repository** holds `.msync/`. It is a small, private repository that the owner manages, usually with an assistant such as Claude. Only the few people allowed to change the hierarchy get write access, so every change arrives as a reviewed pull request. Ordinary members and outside contributors never need access to it.
+- **Work repositories** are where people write code. They are listed in `org.toml` under `[[foundry]]`. They can be public or private, on GitHub or GitLab, and they never contain `.msync/`. MSync only receives their events.
+- **Compensation is in neither.** Pay orders, hourly rates, shifts, timesheets and invoices live in MSync's own database, behind scoped tokens.
+
+Putting `.msync/` inside a shared work repository is allowed for a small open project, but it is not the recommended layout: everyone with write access to the code could then propose hierarchy changes, and the roster would be as visible as the code.
+
 ## What to fill in
 
 Open the five files in `.msync/` and replace every `REPLACE_ME_...` value. Each file has comments saying what the value does and what you must decide.

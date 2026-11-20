@@ -1,16 +1,16 @@
 # MSync on Slack
 
-MSync runs on Slack and on Discord with the same six commands. An organization can use Slack only, Discord only, or both at once. Neither platform is the source of truth: both show what the CRA (`.msync/` in your repository) says. This page sets up the Slack app. `docs/DISCORD.md` sets up the Discord bot.
+MSync runs on Slack and on Discord with the same eight commands. An organization can use Slack only, Discord only, or both at once. Neither platform is the source of truth: both show what the CRA (`.msync/` in your repository) says. This page sets up the Slack app. `docs/DISCORD.md` sets up the Discord bot.
 
 ## 1. Create the app from the manifest
 
-1. Open `slack/manifest.yaml` and replace `https://msync.example.com` with the public URL of your MSync service in all six commands. The path stays `/slack/commands`.
+1. Open `slack/manifest.yaml` and replace `https://msync.example.com` with the public URL of your MSync service in all eight commands. The path stays `/slack/commands`.
 2. Go to https://api.slack.com/apps, choose **Create New App**, then **From an app manifest**, pick your workspace and paste the file.
 3. The manifest asks for five bot scopes and nothing else:
 
 | Scope | Why |
 |---|---|
-| `commands` | The six slash commands. |
+| `commands` | The eight slash commands. |
 | `users:read` | `users.info`, to check whether the caller is a workspace admin. |
 | `usergroups:read` | Read the user groups that carry job titles. |
 | `usergroups:write` | Set the members of those user groups (`usergroups.users.update`). |
@@ -46,6 +46,8 @@ Slack slash commands are shared by every app in a workspace, so MSync's start wi
 | `/msync-sync` | `/sync` | Applies the CRA job titles to Slack user groups. Admins only. | Channel |
 | `/msync-payouts` | `/payouts` | Payouts waiting for approval. Admins only. Approval itself is in the admin API. | Only you |
 | `/msync-payout-setup` | `/payout-setup` | Your private Stripe link to receive payouts. Verified members only. | Only you |
+| `/msync-clock-in` | `/clock-in` | Clock in for your current shift; the shift sets the end. Verified members only. | Only you |
+| `/msync-shift` | `/shift` | Your current or next shift. Verified members only. | Only you |
 
 ### Linking rules
 

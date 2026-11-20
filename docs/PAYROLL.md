@@ -1,6 +1,6 @@
 # Payroll in MSync (MeritSync): a guide for the business owner
 
-MSync can pay the people and companies who work for you: salaries, stipends, bonuses, shared pools, commissions and contractor invoices. It also pays contributors for merged work (merit payouts) as before. Every payment, whatever its source, lands in one ledger and leaves through one path: a payout run that sends a Stripe transfer. The same approvals, limits, hold, blocks and kill switch apply to all of it.
+MSync can pay the people and companies who work for you: salaries, stipends, bonuses, shared pools, commissions, contractor invoices and hourly wages. It also pays contributors for merged work (merit payouts) as before. Every payment, whatever its source, lands in one ledger and leaves through one path: a payout run that sends a Stripe transfer. The same approvals, limits, hold, blocks and kill switch apply to all of it.
 
 This guide shows each task with its REST call (`/api/v1`, bearer token) and its MCP tool (`POST /mcp`). The contract behind it is section 11 of `docs/CRA_PLATFORM.md`.
 
@@ -175,6 +175,9 @@ It lists everything recorded for that payee between the two dates (inclusive): p
 | Submit an invoice | the payee, or staff with `invoices.submit` | |
 | Approve, reject or void an invoice | members with `invoices.approve` at or above `min_approver_rank` | the payee; the submitter cannot approve |
 | Add or change a payee | a member with `payees.manage` | the payee themselves |
+| Set or approve an hourly wage | `payees.manage` to set, `payorders.approve` at or above `min_approver_rank` to approve | the payee; the setter cannot approve |
+| Create or change a shift; adjust or void time | a member with `time.manage` | the payee |
+| Approve time | a member with `time.approve` | the payee |
 | Pay | payout runs, as for merit payouts | |
 
 - An order or invoice needs the policy's `approvals_required` approvals, each from a different member at or above `min_approver_rank`. An approval below that rank is recorded but does not count. The same member approving twice counts once.
@@ -194,6 +197,107 @@ These apply to every row, whatever its source:
 - **Payee status.** A paused or closed payee, or one whose Stripe account cannot receive transfers, is not paid.
 - **Once only.** Each date of an order is recorded once, so a restart or a double tick of the scheduler can never pay twice. Each ledger row is paid once, with Stripe idempotency key `dsync-ledger-<id>`.
 
+## 11. Hourly pay
+
+MSync can pay people by the hour. You set a wage, you set up shifts, people clock in, a manager approves their time, and at the end of each pay period the approved hours become one payment per person. That payment goes through the same approvals, limits, hold, blocks and kill switch as everything else. The contract behind it is section 14 of `docs/CRA_PLATFORM.md`.
+
+Hourly pay uses four more scopes:
+
+| Scope | Lets a token |
+|---|---|
+| `time.clock` | clock in and leave early, for the token's own member only, and read that member's own time |
+| `time.read` | read everyone's time entries, shifts and timesheets |
+| `time.manage` | create and change shifts, adjust and void time entries |
+| `time.approve` | approve time entries |
+
+Wages use the payroll scopes: `payees.read` to read them, `payees.manage` to set them, `payorders.approve` to approve them.
+
+### Set a wage
+
+A wage is a rate in cents per hour, from a date. $25.00 an hour is `2500`.
+
+```
+POST /api/v1/payees/{id}/wage          payees.manage
+{"rate_cents_per_hour": 2500, "effective_from": "2026-12-01"}
+```
+
+- A new rate is a new row. The old ones are kept, so you can always see what someone was paid and when.
+- A rate pays nothing until it is approved, under the same rule as a pay order: the policy's `approvals_required` approvals from members at or above `min_approver_rank`. The person who set the rate can never approve it, and nobody can set or approve their own rate.
+
+```
+POST /api/v1/payees/{id}/wage/{wage_id}/approve      payorders.approve
+```
+
+- The rate in force on a day is the newest approved rate whose `effective_from` is on or before that day. A raise from the 15th pays the old rate up to the 14th and the new rate from the 15th, even inside one pay period.
+- Overtime is optional. `"overtime_after_minutes": 2400, "overtime_bps": 15000` pays minutes beyond 40 hours in a week (Monday to Sunday) at 1.5 times the rate. Leave both out for no overtime.
+- Read the history and the rate in force: `GET /api/v1/payees/{id}/wage` (`payees.read`).
+
+### Set up shifts
+
+A shift says when someone is expected to work. A manager creates it; nobody creates shifts for themselves.
+
+```
+POST /api/v1/time/shifts               time.manage
+{"payee_id": "<id>", "kind": "weekly", "weekday": "monday",
+ "start_time": "09:00", "end_time": "17:00", "time_zone": "America/Phoenix"}
+```
+
+- `kind` is `weekly` (every week on a weekday), `single` (one `date`), or `open` (see below).
+- Times are local wall-clock times in `time_zone`, an IANA name such as `America/New_York` or `Europe/Berlin`. Daylight saving is handled: a night shift on the night the clocks go back is paid nine real hours, and on the night they go forward seven.
+- An `end_time` at or before the `start_time` ends the next day, so `22:00` to `06:00` is a night shift.
+- `early_minutes` (default 15) is how early someone may clock in. By default they are paid from the shift start, not from the early clock-in. Set `"paid_from": "clock_in"` to pay early minutes too.
+- `valid_from` and `valid_until` limit a weekly shift to a date range.
+- An open-shift allowance lets someone clock in outside every shift: `{"payee_id": "<id>", "kind": "open", "length_minutes": 240, "time_zone": "UTC"}` gives a four hour entry from the clock-in, stopping early if a scheduled shift starts.
+- Change or end a shift with `PATCH /api/v1/time/shifts/{id}` (`"status": "ended"` ends it). Entries already clocked keep their own times.
+- List shifts: `GET /api/v1/time/shifts?payee=<id>` (`time.read`). MCP: `time_shifts_list`.
+
+### How clocking in works, and why there is no clock-out
+
+```
+POST /api/v1/time/clock-in             time.clock        body: {} or empty
+```
+
+- The person clocks in, and that is all they have to do. The entry starts at the clock-in time, rounded up to the whole minute and never before the shift start. It ends at the shift's end, which is known the moment they clock in.
+- There is no clock-out to forget. Forgotten clock-outs are the most common timesheet error; here the shift does the end.
+- Clocking in twice for the same shift returns the same entry. There is one entry per shift.
+- A clock-in outside every shift window is refused, unless the person has an open-shift allowance. A clock-in after the shift has ended is refused. A late clock-in is paid from the clock-in.
+- The token can only clock in its own member. The body cannot name anyone; a body with any field is refused.
+- On Discord `/clock-in`, on Slack `/msync-clock-in`. The reply is private. A chat clock-in is accepted only from a verified identity: a member listed in the CRA, or a chat account proven by signing in to MSync. A `link` that was only typed in is not enough, so nobody can clock in as someone else. `/shift` (`/msync-shift`) shows your current or next shift.
+- MCP: `time_clock_in`, which takes no arguments.
+
+### Leaving early
+
+```
+POST /api/v1/time/clock-out            time.clock
+```
+
+This is the exception, not the routine. It shortens the running entry to now, rounded down to the minute. It never makes an entry longer.
+
+### What a manager can change
+
+- **Adjust** an entry's start or end, with a reason: `POST /api/v1/time/entries/{id}/adjust` (`time.manage`), body `{"end_at": "2026-12-01T18:00:00Z", "reason": "stayed to close"}`. An adjusted entry that was approved needs approval again.
+- **Void** an entry, with a reason: `POST /api/v1/time/entries/{id}/void` (`time.manage`). A void entry pays nothing.
+- **Approve** a closed entry: `POST /api/v1/time/entries/{id}/approve` (`time.approve`). MCP: `time_entry_approve`.
+- The person an entry pays can never adjust, void or approve it.
+- Once an approved entry has been paid into a period's row, it cannot be adjusted or voided: that would take back money already owed. Reject the ledger row through the payout approvals instead, and settle it by hand.
+- Every change records who made it, when, the times before and after, and the reason, in the entry's history and in the audit log.
+
+### How hours become pay
+
+- An entry is `open` until its end time passes, then `closed`. A closed entry needs approval by someone with `time.approve` who is not the person it pays. If the payout policy sets `time_auto_approve = true`, closed entries count as approved without anyone approving them.
+- The pay period follows the payout policy's schedule: weekly, every two weeks or monthly. With a manual schedule it is the calendar month.
+- When a period ends, the scheduler adds up each person's approved minutes per day, splitting an entry at local midnight and at the period's edges, so a night shift is paid on the right days and in the right period. Each day is paid at the rate in force that day, with overtime if set. The total is rounded down to the cent once per period, and the fraction of a cent left over is reported.
+- That becomes one ledger row per person per period, source `timesheet`, written exactly once however many times the scheduler runs.
+- Time approved after the period's row was written goes into a correction row for that period. The first row never changes.
+- The row is then paid like any other: it needs a payout approval, and the hold, limits, blocks, eligibility and the kill switch all apply. Nothing about hourly pay moves money by itself.
+
+### What an employee sees
+
+- With a `time.clock` token they can read their own entries (`GET /api/v1/time/entries`), their own shifts (`GET /api/v1/time/shifts`) and their own timesheet (`GET /api/v1/time/timesheet`), and nobody else's.
+- The timesheet shows every entry in the period, the minutes per day (open, closed and approved), the rate in force, what the approved time comes to, and the rows already written to the ledger.
+- In chat, `/shift` shows their current or next shift and `/clock-in` answers with when they are paid from and to.
+- The payout statement for them (`GET /api/v1/payouts/statement`, `payouts.read`) lists the timesheet rows next to everything else they are paid.
+
 ## Reference
 
 ```
@@ -204,6 +308,12 @@ GET        /api/v1/payorders/{id}/preview?periods=3
 GET/POST   /api/v1/invoices               GET /api/v1/invoices/{id}
 POST       /api/v1/invoices/{id}/approve | reject | void
 GET        /api/v1/payouts/statement?payee=&from=&to=
+GET/POST   /api/v1/payees/{id}/wage       POST /api/v1/payees/{id}/wage/{wage_id}/approve
+POST       /api/v1/time/clock-in          POST /api/v1/time/clock-out
+GET        /api/v1/time/entries?payee=&from=&to=
+POST       /api/v1/time/entries/{id}/approve | adjust | void
+GET/POST   /api/v1/time/shifts            PATCH /api/v1/time/shifts/{id}
+GET        /api/v1/time/timesheet?payee=&period=
 ```
 
-MCP tools: `payees_list`, `payee_get`, `payorders_list`, `payorder_preview`, `payorder_create`, `payorder_approve`, `payorder_pause`, `invoices_list`, `invoice_submit`, `invoice_approve`, `payout_statement`. See `docs/MCP.md`.
+MCP tools: `payees_list`, `payee_get`, `payorders_list`, `payorder_preview`, `payorder_create`, `payorder_approve`, `payorder_pause`, `invoices_list`, `invoice_submit`, `invoice_approve`, `payout_statement`, and for hourly pay `time_clock_in`, `time_entries_list`, `time_shifts_list`, `time_timesheet_get`, `time_entry_approve`. See `docs/MCP.md`.

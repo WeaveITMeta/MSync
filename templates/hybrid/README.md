@@ -6,6 +6,16 @@ For a company or group that runs a public repository for outside contributors an
 
 `hybrid` mode shares the community and keeps the rest closed. Outside contributors earn merit only in public repositories; staff earn in both. Roster and leaderboard are members only. You can declare need-to-know compartments, and appointed positions from rank 50 up are two-person.
 
+## Where the `.msync/` files live
+
+**Where the `.msync/` files live.** There are two kinds of repository, and they are not the same thing.
+
+- **The hierarchy repository** holds `.msync/`. It is a small, private repository that the owner manages, usually with an assistant such as Claude. Only the few people allowed to change the hierarchy get write access, so every change arrives as a reviewed pull request. Ordinary members and outside contributors never need access to it.
+- **Work repositories** are where people write code. They are listed in `org.toml` under `[[foundry]]`. They can be public or private, on GitHub or GitLab, and they never contain `.msync/`. MSync only receives their events.
+- **Compensation is in neither.** Pay orders, hourly rates, shifts, timesheets and invoices live in MSync's own database, behind scoped tokens.
+
+Putting `.msync/` inside a shared work repository is allowed for a small open project, but it is not the recommended layout: everyone with write access to the code could then propose hierarchy changes, and the roster would be as visible as the code.
+
 ## What to fill in
 
 Open the five files in `.msync/` and replace every `REPLACE_ME_...` value. Each file has comments saying what the value does and what you must decide.

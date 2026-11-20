@@ -1,6 +1,6 @@
 # MSync on Discord
 
-MSync runs on Discord and on Slack with the same six commands. An organization can use Discord only, Slack only, or both at once. Neither platform is the source of truth: both show what the CRA (`.msync/` in your repository) says. This page sets up the Discord bot. `docs/SLACK.md` sets up the Slack app.
+MSync runs on Discord and on Slack with the same eight commands. An organization can use Discord only, Slack only, or both at once. Neither platform is the source of truth: both show what the CRA (`.msync/` in your repository) says. This page sets up the Discord bot. `docs/SLACK.md` sets up the Slack app.
 
 ## 1. Create the bot
 
@@ -30,6 +30,8 @@ Treat the token like a password. Do not commit it. Restart MSync after setting t
 | `/sync` | `/msync-sync` | Applies the job titles to Discord roles. Admins only. | Channel |
 | `/payouts` | `/msync-payouts` | Payouts waiting for approval. Admins only. Approval itself is in the admin API. | Only you |
 | `/payout-setup` | `/msync-payout-setup` | Your private Stripe link to receive payouts. Verified members only. | Only you |
+| `/clock-in` | `/msync-clock-in` | Clock in for your current shift; the shift sets the end. Verified members only. | Only you |
+| `/shift` | `/msync-shift` | Your current or next shift. Verified members only. | Only you |
 
 ### Linking rules
 

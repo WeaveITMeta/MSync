@@ -1,8 +1,16 @@
 # CRA configuration reference
 
-The Central Rank Authority (CRA) is a set of five TOML files in `.msync/` on the default branch of an organization's repository. It defines roles, job titles, ranks, permissions, members, merit rules and payout policy. A change to the hierarchy is a commit, reviewed like code. MSync (MeritSync) parses the files, validates them, shows the change plan, and decides whether the person who made the change was allowed to.
+The Central Rank Authority (CRA) is a set of five TOML files in `.msync/` on the default branch of the organization's hierarchy repository. It defines roles, job titles, ranks, permissions, members, merit rules and payout policy. A change to the hierarchy is a commit, reviewed like code. MSync (MeritSync) parses the files, validates them, shows the change plan, and decides whether the person who made the change was allowed to.
 
 This document is the reference for the file formats, every validation rule, and the change-authority rules. The build contract is `docs/CRA_PLATFORM.md` (sections 3 and 4). The code is `src/cra/`. Three complete examples live in `examples/cra/`.
+
+**Where the `.msync/` files live.** There are two kinds of repository, and they are not the same thing.
+
+- **The hierarchy repository** holds `.msync/`. It is a small, private repository that the owner manages, usually with an assistant such as Claude. Only the few people allowed to change the hierarchy get write access, so every change arrives as a reviewed pull request. Ordinary members and outside contributors never need access to it.
+- **Work repositories** are where people write code. They are listed in `org.toml` under `[[foundry]]`. They can be public or private, on GitHub or GitLab, and they never contain `.msync/`. MSync only receives their events.
+- **Compensation is in neither.** Pay orders, hourly rates, shifts, timesheets and invoices live in MSync's own database, behind scoped tokens.
+
+Putting `.msync/` inside a shared work repository is allowed for a small open project, but it is not the recommended layout: everyone with write access to the code could then propose hierarchy changes, and the roster would be as visible as the code.
 
 ## Contents
 
@@ -208,6 +216,7 @@ Validation rules:
 schema = 1
 enabled = true                 # false is the kill switch: nothing is prepared or paid
 currency = "usd"
+time_auto_approve = false      # optional: true counts closed time entries as approved (hourly pay)
 
 [schedule]
 cadence = "weekly"             # manual | weekly | biweekly | monthly
@@ -247,6 +256,7 @@ Validation rules:
 - `approval.min_approver_rank` and `eligibility.min_rank` are 0 to 1000.
 - Every role in `eligibility.roles` exists. When the policy sets `payouts.eligible = "positions_only"`, none of them may be a tier.
 - Each rate branch is declared once, is a `payout_branches` entry of some canonical repository, and has a finite `merit_multiplier` of at least 0.
+- `time_auto_approve` is optional and defaults to false. With true, a closed time entry counts as approved without a `time.approve` approval; the timesheet ledger row still needs its payout approvals (`docs/PAYROLL.md`, "Hourly pay").
 
 ## 7. Policy fields and mode defaults
 
@@ -397,6 +407,14 @@ Where the contract left a point open, the code chose the following.
 
 This section is the engine side: how MSync finds the CRA repository, loads it on a push, and what changes while a snapshot is active. The code is `src/cra/{source,loader,store,api}.rs`.
 
+**Where the `.msync/` files live.** There are two kinds of repository, and they are not the same thing.
+
+- **The hierarchy repository** holds `.msync/`. It is a small, private repository that the owner manages, usually with an assistant such as Claude. Only the few people allowed to change the hierarchy get write access, so every change arrives as a reviewed pull request. Ordinary members and outside contributors never need access to it.
+- **Work repositories** are where people write code. They are listed in `org.toml` under `[[foundry]]`. They can be public or private, on GitHub or GitLab, and they never contain `.msync/`. MSync only receives their events.
+- **Compensation is in neither.** Pay orders, hourly rates, shifts, timesheets and invoices live in MSync's own database, behind scoped tokens.
+
+Putting `.msync/` inside a shared work repository is allowed for a small open project, but it is not the recommended layout: everyone with write access to the code could then propose hierarchy changes, and the roster would be as visible as the code.
+
 ### 14.1 Environment
 
 | Variable | Meaning |
@@ -411,14 +429,40 @@ This section is the engine side: how MSync finds the CRA repository, loads it on
 
 If an active snapshot is stored but no longer reproduces its content hash, MSync refuses to start rather than fall back to another source of rank.
 
-### 14.2 The webhook
+### 14.2 How MSync connects to repositories
 
-The CRA uses the webhook endpoints that already exist. Add the push event on the CRA repository:
+MSync connects to each repository with a webhook: the repository sends events to MSync, signed with a shared secret. MSync reads files only from the hierarchy repository, with a read token. Work repositories need no token at all.
 
-- **GitHub**: repository Settings, Webhooks, Add webhook. Payload URL `https://<msync host>/github/webhook`, content type `application/json`, secret `GITHUB_WEBHOOK_SECRET`. Events: `Pushes` (also `Pull requests` and `Pull request reviews` if the same repository should earn merit).
-- **GitLab**: project Settings, Webhooks. URL `https://<msync host>/gitlab/webhook`, secret token `GITLAB_WEBHOOK_SECRET`. Trigger: `Push events`, with the CRA branch as the branch filter (also `Merge request events` if the project should earn merit).
+#### The hierarchy repository (the one with `.msync/`)
 
-A push to any other repository or branch, a tag push, and a branch deletion load nothing. The merit and payout behaviour of both endpoints is unchanged.
+1. Set `MSYNC_CRA_REPO` to `provider:host:path`, for example `github:github.com:your-org/hierarchy` or `gitlab:gitlab.com:your-group/hierarchy`. Set `MSYNC_CRA_BRANCH` if the branch is not `main`.
+2. Give MSync a read token:
+   - **GitHub**: `GITHUB_TOKEN`, a fine-grained personal access token for this one repository with **Contents: read** and **Pull requests: read** (GitHub adds **Metadata: read** itself). MSync reads the five files and the pull request, its merger and its reviews. A classic token needs the `repo` scope for a private repository.
+   - **GitLab**: `GITLAB_TOKEN`, a project or personal access token with the `read_api` scope. A public project can be read without one.
+3. Add the webhook:
+   - **GitHub**: repository Settings, Webhooks, Add webhook. Payload URL `https://<msync host>/github/webhook`. Content type `application/json`. Secret: the value of `GITHUB_WEBHOOK_SECRET`. Events: choose "Let me select individual events" and tick **Pushes** only.
+   - **GitLab**: project Settings, Webhooks. URL `https://<msync host>/gitlab/webhook`. Secret token: the value of `GITLAB_WEBHOOK_SECRET`. Trigger: **Push events**, with the hierarchy branch as the branch filter.
+4. Restart MSync, then push or merge the first `.msync/` files as an owner (14.5).
+
+#### Each work repository (where people write code)
+
+1. List it in `org.toml` under `[[foundry]]` (section 2), with `provider`, `host` (for a GitLab host other than gitlab.com), `repo`, `visibility` and `canonical`. A repository that is not listed earns nothing. With no CRA active, `MSYNC_FOUNDRY_REPOS` lists them instead; when it is unset, every GitHub repository earns and every GitLab project is refused.
+2. Add the webhook. No token is needed:
+   - **GitHub**: Payload URL `https://<msync host>/github/webhook`, content type `application/json`, secret `GITHUB_WEBHOOK_SECRET`. Events: **Pull requests** and **Pull request reviews**.
+   - **GitLab**: URL `https://<msync host>/gitlab/webhook`, secret token `GITLAB_WEBHOOK_SECRET`. Trigger: **Merge request events**.
+
+A push to any repository or branch other than the hierarchy branch, a tag push and a branch deletion load nothing. The merit and payout behaviour of both endpoints is unchanged.
+
+#### Limits today
+
+These come from the code as it is, not from a plan:
+
+- **One secret per provider.** Every GitHub repository is checked against the one `GITHUB_WEBHOOK_SECRET`, and every GitLab project against the one `GITLAB_WEBHOOK_SECRET`. There is no per-repository secret. Without `GITHUB_WEBHOOK_SECRET`, every GitHub webhook is refused.
+- **One token per provider, for the hierarchy repository only.** `GITHUB_TOKEN` and `GITLAB_TOKEN` are used only to read the hierarchy repository. MSync never reads a work repository.
+- **One hierarchy repository per MSync instance** (`MSYNC_CRA_REPO`).
+- **GitHub Enterprise is not supported.** The GitHub webhook reads every event as coming from `github.com`, so a GitHub Enterprise repository is never matched: it earns nothing, and its pushes never load a hierarchy. `MSYNC_CRA_GITHUB_API` only changes where files are read from.
+- **Self-managed GitLab works.** MSync takes the host from each event's project URL. List the host in `[[foundry]]`, and for the hierarchy repository use it in `MSYNC_CRA_REPO`; files are read from `https://<host>/api/v4` (or `MSYNC_CRA_GITLAB_API`).
+- **A GitHub App installation is not supported.** MSync has no App id, no installation token and no App webhook. Use repository webhooks and a personal access token.
 
 ### 14.3 What happens on a push
 
@@ -452,7 +496,7 @@ To fix a rejected change, push a new commit. A rejected commit keeps its verdict
 The first snapshot is accepted only when the actor is an owner from engine configuration in the provider form. A member id means nothing before a snapshot exists, and the new snapshot cannot vouch for itself.
 
 1. Put your GitHub or GitLab identity in `MSYNC_OWNER_MEMBER_IDS` (for example `github:Simbuilder`) and set `MSYNC_CRA_REPO`. Restart MSync.
-2. Add the webhook (14.2).
+2. Add the webhook on the hierarchy repository (14.2).
 3. As that owner, push the five files to the CRA branch, or merge a pull request that adds them. `GET /api/v1/cra/snapshots` should then show an `active` row with you as `actor`.
 
 If the files landed before the webhook existed, merge them through a pull request and call `POST /api/v1/cra/reload` as an owner, or push a new commit.

@@ -5,7 +5,7 @@ You are an AI assistant. A person gave you this repository so you can set MSync 
 ## What MSync is
 
 1. MSync is one Rust binary, `msync`: a management hierarchy, merit and payroll engine.
-2. The organization's own repository is the Central Rank Authority (CRA). The folder `.msync/` in that repository holds five TOML files: `org.toml`, `members.toml`, `roles.toml`, `merit.toml`, `payouts.toml`.
+2. The Central Rank Authority (CRA) is the folder `.msync/` in the organization's hierarchy repository: five TOML files, `org.toml`, `members.toml`, `roles.toml`, `merit.toml`, `payouts.toml`. See "Where the `.msync/` files live" below.
 3. Ranks, titles, who may approve what, merit points and payout rules come from those files. A change to them is a reviewed pull request.
 4. Discord and Slack are projections of the hierarchy (roles and user groups). Neither is the source of truth. Connect Discord, Slack or both; neither is allowed only in dev mode.
 5. The Foundry API is the integration layer over GitHub and GitLab (webhooks, repository reads).
@@ -24,7 +24,18 @@ Ask all of these before you edit any template file. Record the answers; do not g
 - Owners: who are the owners? Get each owner's login on GitHub or GitLab.
 - Payouts: are there any? If yes: amounts, currency, limits, schedule and who approves.
 - Chat platform: Discord, Slack, both, or none for now?
-- Repositories: which repositories count for merit, which is the CRA repository, which are mirrors or private?
+- Repositories: which repositories count for merit, which are mirrors or private?
+- Where `.msync/` lives: in a private hierarchy repository (the recommended default), or in `.msync/` inside a shared work repository. Explain the difference below to the human and let them choose; never choose for them.
+
+## Where the `.msync/` files live
+
+**Where the `.msync/` files live.** There are two kinds of repository, and they are not the same thing.
+
+- **The hierarchy repository** holds `.msync/`. It is a small, private repository that the owner manages, usually with an assistant such as Claude. Only the few people allowed to change the hierarchy get write access, so every change arrives as a reviewed pull request. Ordinary members and outside contributors never need access to it.
+- **Work repositories** are where people write code. They are listed in `org.toml` under `[[foundry]]`. They can be public or private, on GitHub or GitLab, and they never contain `.msync/`. MSync only receives their events.
+- **Compensation is in neither.** Pay orders, hourly rates, shifts, timesheets and invoices live in MSync's own database, behind scoped tokens.
+
+Putting `.msync/` inside a shared work repository is allowed for a small open project, but it is not the recommended layout: everyone with write access to the code could then propose hierarchy changes, and the roster would be as visible as the code.
 
 ## Setup sequence
 
@@ -151,7 +162,7 @@ Expected: JSON with `"status": "success"` and the hierarchy. A local CRA load ac
 
 ### Step 13: connect chat and repositories (only when the human asks)
 
-Read `docs/DISCORD.md` and/or `docs/SLACK.md`, and the webhook section of `docs/CRA_CONFIG.md`. Put every value in `.env` only. Then:
+Read `docs/DISCORD.md` and/or `docs/SLACK.md`, and section 14.2 of `docs/CRA_CONFIG.md`. How to connect each repository (webhook URL, events, secret, read token and its permissions, `MSYNC_CRA_REPO`, `[[foundry]]`) and today's limits: `docs/CRA_CONFIG.md` section 14.2. Put every value in `.env` only. Then:
 
 ```bash
 target/debug/msync doctor

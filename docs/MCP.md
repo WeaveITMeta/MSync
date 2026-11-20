@@ -122,6 +122,11 @@ Every successful result carries the same JSON twice: as `structuredContent` and 
 | `invoice_submit` | `invoices.submit` | Submit an invoice as the token's member |
 | `invoice_approve` | `invoices.approve` | Approve a submitted invoice as the token's member |
 | `payout_statement` | `payouts.read` | Everything paid or pending to one payee in a date range, by source |
+| `time_clock_in` | `time.clock` | Clock in the token's own member for their current shift; takes no arguments |
+| `time_entries_list` | `time.read` | Time entries, optionally for one payee and a date range, with state and minutes |
+| `time_shifts_list` | `time.read` | Shifts, optionally for one payee and by status |
+| `time_timesheet_get` | `time.read` | One payee's timesheet for a pay period: entries, minutes per day, rate and amount |
+| `time_entry_approve` | `time.approve` | Approve a closed time entry as the token's member; never your own |
 
 `standing_get` and `hierarchy_get` (contract section 7) are not offered yet. They depend on CRA loading.
 

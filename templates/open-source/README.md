@@ -6,6 +6,16 @@ For a project whose code is open source and where anyone may contribute: librari
 
 `open` mode makes everything public by default: the roster, the leaderboard and profiles. Outside contributors earn merit, and tiers up to rank 30 are earned from merit alone. Powers (inviting, granting, approving payouts) come only from positions that someone appointed, and positions at rank 60 and above need a second person to approve.
 
+## Where the `.msync/` files live
+
+**Where the `.msync/` files live.** There are two kinds of repository, and they are not the same thing.
+
+- **The hierarchy repository** holds `.msync/`. It is a small, private repository that the owner manages, usually with an assistant such as Claude. Only the few people allowed to change the hierarchy get write access, so every change arrives as a reviewed pull request. Ordinary members and outside contributors never need access to it.
+- **Work repositories** are where people write code. They are listed in `org.toml` under `[[foundry]]`. They can be public or private, on GitHub or GitLab, and they never contain `.msync/`. MSync only receives their events.
+- **Compensation is in neither.** Pay orders, hourly rates, shifts, timesheets and invoices live in MSync's own database, behind scoped tokens.
+
+Putting `.msync/` inside a shared work repository is allowed for a small open project, but it is not the recommended layout: everyone with write access to the code could then propose hierarchy changes, and the roster would be as visible as the code.
+
 ## What to fill in
 
 Open the five files in `.msync/` and replace every `REPLACE_ME_...` value. Each file has comments saying what the value does and what you must decide.

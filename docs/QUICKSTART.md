@@ -6,6 +6,16 @@ No database is needed at build time. A fresh clone builds with no `DATABASE_URL`
 
 Dev mode is for your own machine only. Never use it on a host anyone else can reach.
 
+## Where the `.msync/` files live
+
+**Where the `.msync/` files live.** There are two kinds of repository, and they are not the same thing.
+
+- **The hierarchy repository** holds `.msync/`. It is a small, private repository that the owner manages, usually with an assistant such as Claude. Only the few people allowed to change the hierarchy get write access, so every change arrives as a reviewed pull request. Ordinary members and outside contributors never need access to it.
+- **Work repositories** are where people write code. They are listed in `org.toml` under `[[foundry]]`. They can be public or private, on GitHub or GitLab, and they never contain `.msync/`. MSync only receives their events.
+- **Compensation is in neither.** Pay orders, hourly rates, shifts, timesheets and invoices live in MSync's own database, behind scoped tokens.
+
+Putting `.msync/` inside a shared work repository is allowed for a small open project, but it is not the recommended layout: everyone with write access to the code could then propose hierarchy changes, and the roster would be as visible as the code.
+
 ## 1. Clone
 
 ```bash
@@ -124,7 +134,7 @@ An old directory with no `.msync/` is a first snapshot.
 Dev mode is the opposite of a deployment. Change all of this:
 
 1. Unset `MSYNC_DEV_MODE` and `MSYNC_CRA_LOCAL_DIR`.
-2. Put the hierarchy in a repository. Set `MSYNC_CRA_REPO` (`provider:host:path`), `MSYNC_CRA_BRANCH`, and the read token (`GITHUB_TOKEN` for GitHub, `GITLAB_TOKEN` for GitLab). See `docs/CRA_CONFIG.md`.
+2. Put the hierarchy in its own private hierarchy repository (see "Where the `.msync/` files live" above). Set `MSYNC_CRA_REPO` (`provider:host:path`), `MSYNC_CRA_BRANCH`, and the read token (`GITHUB_TOKEN` for GitHub, `GITLAB_TOKEN` for GitLab). How to connect each repository (webhook URL, events, secret, read token and its permissions, `MSYNC_CRA_REPO`, `[[foundry]]`) and today's limits: `docs/CRA_CONFIG.md` section 14.2.
 3. Set owners in `MSYNC_OWNER_MEMBER_IDS` as `github:<login>` or `gitlab:<login>`. Only that form can bootstrap the first snapshot.
 4. Connect at least one chat platform: Discord (`DISCORD_TOKEN`, `DISCORD_APPLICATION_ID`; `docs/DISCORD.md`) or Slack (`MSYNC_SLACK_SIGNING_SECRET`; `docs/SLACK.md`). Outside dev mode the server refuses to start without one.
 5. Set webhook secrets: `GITHUB_WEBHOOK_SECRET` and `GITLAB_WEBHOOK_SECRET`. With no secret, every webhook for that host is refused.
