@@ -1,0 +1,11 @@
+{
+  "mcpServers": {
+    "msync": {
+      "type": "http",
+      "url": "http://localhost:8080/mcp",
+      "headers": {
+        "Authorization": "Bearer ${MSYNC_AGENT_TOKEN}"
+      }
+    }
+  }
+}

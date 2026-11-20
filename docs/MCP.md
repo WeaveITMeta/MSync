@@ -355,3 +355,33 @@ Until then, the mitigation is operational: always declare payee keys on tokens (
 2. Leave `MSYNC_MCP_ALLOW_EXECUTE` unset unless an agent is meant to execute payouts.
 3. Serve `/mcp` over HTTPS.
 4. Watch the server log for `mcp auth refused` and for `internal error` details.
+
+## 9. Connecting Claude
+
+The repository ships `mcp.example.json`, a Claude Code style `.mcp.json` for a local MSync.
+
+1. Copy it to `.mcp.json` in the project where you run Claude Code. Edit `url` if MSync is not at `http://localhost:8080/mcp`; use HTTPS for any host that is not your own machine.
+
+```bash
+cp mcp.example.json .mcp.json
+```
+
+2. Create a narrow token for the agent. Read and score scopes only; do not give it `payouts.execute` (and leave `MSYNC_MCP_ALLOW_EXECUTE` unset, section 5). Give it an expiry.
+
+```bash
+msync token create --label claude-agent --member <member-id> --scopes merit.read,merit.score --expires 2027-01-01T00:00:00Z
+```
+
+3. Export the token where Claude Code starts. The file holds only the placeholder `${MSYNC_AGENT_TOKEN}`; never write the token into `.mcp.json` or commit it.
+
+```bash
+export MSYNC_AGENT_TOKEN='<the token printed once by the command above>'
+```
+
+4. Check the connection with `tools/list`. It returns only the tools the token may use.
+
+```bash
+curl -s http://localhost:8080/mcp -H "Authorization: Bearer $MSYNC_AGENT_TOKEN" -H "Content-Type: application/json" -d '{"jsonrpc":"2.0","id":1,"method":"tools/list"}'
+```
+
+A 401 means the token is wrong, revoked or expired. A short tool list means the token's scopes are narrower than you expected. Then start Claude Code in that project; the `msync` server appears in `/mcp`.

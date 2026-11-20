@@ -1,248 +1,85 @@
-# MSync (MeritSync) - Discord Bot for Merit-Based Open Source Communities
+# MSync (MeritSync)
 
 [![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
-[![CI](https://github.com/yourusername/msync/actions/workflows/ci.yml/badge.svg)](https://github.com/yourusername/msync/actions/workflows/ci.yml)
-[![Discord](https://img.shields.io/discord/YOUR_DISCORD_ID?color=7289da&logo=discord&logoColor=white)](https://discord.gg/YOUR_INVITE)
 
-MSync is a powerful Discord bot template that creates a merit-based open source community by automatically syncing GitHub contributions with Discord roles. Built with Rust and Actix, it integrates CodeRabbit for automated code quality assessment and creates a self-improving software ecosystem.
+MSync is a management hierarchy, merit and payroll engine. Your organization's own repository is the Central Rank Authority (CRA): the `.msync/` folder in it says who holds which rank and title, who may approve what, how merit is earned and how people are paid. MSync reads that folder and enforces it.
 
-## 🚀 Features
+Discord and Slack are projections of the hierarchy, not the source of truth. MSync keeps their roles and user groups in line with the repository, and reverts and reports hand edits. Use Discord, Slack or both; running with neither is allowed only in dev mode on your own machine. The Foundry API is the integration layer over GitHub and GitLab: signed webhooks in, repository reads out.
 
-### Merit-Based Progression System
-- **Automatic Role Assignment**: Contributors earn Discord roles based on code quality and contribution volume
-- **CodeRabbit Integration**: AI-powered code reviews that influence merit points
-- **GitHub Actions Sync**: Seamless integration between GitHub events and Discord updates
-- **Transparent Progression**: Clear merit thresholds for each community role
+## What it does
 
-### Community Benefits
-- **🏆 Recognition System**: Contributors are automatically recognized for their work
-- **📈 Quality Metrics**: Track code quality improvements over time
-- **🤝 Self-Organizing Teams**: Natural progression from contributor to maintainer
-- **🛡️ Enterprise Ready**: Apache 2.0 license with patent protection
+- **Hierarchy from a repository.** Five TOML files define the organization. A change to them is a reviewed pull or merge request, and the rules that need two people say so. `msync plan` previews any change and names who can approve it.
+- **Merit.** Merged work is scored against a rubric and earns points per the rules in `merit.toml`. Merit can open tiers of rank; powers come only from positions someone appointed.
+- **Payroll.** Pay orders, invoices, payees and payout runs, all in one ledger, with approvals, limits, a hold and a kill switch. Stripe test mode first; live money is a deliberate setting.
+- **Surfaces.** REST (`/api/v1`, see `openapi.yaml`), an MCP server (`POST /mcp`), a signed portal sync API for your other sites, and MSync as an OAuth/OpenID Connect provider.
+- **Audit.** An append-only, hash-chained audit log that can be verified.
+- **Built for assistants.** The repository is a template and a kit. Give it to an AI assistant such as Claude and it sets MSync up for you from `AGENTS.md`.
 
-## 📊 How It Works
+## Status
 
-```
-High-Quality PR → CodeRabbit Review → Merit Points → Discord Role Update
-       ↑                                                    ↓
-  More Motivation ← Community Recognition ← Enhanced Permissions
-```
+Pre-release. There is no published binary; build from source. APIs and file formats can still change.
 
-### Merit Point System
+## Quickstart
 
-| Activity | Base Points | Quality Bonus |
-|----------|-------------|---------------|
-| Open PR | 5 | - |
-| Merged PR | 10-60 | Based on CodeRabbit score |
-| Code Review | 10 | +5 for detailed feedback |
-| Bug Fix | 30 | +10 for security issues |
-| Documentation | 20 | +5 for comprehensive updates |
-
-### Discord Roles
-
-| Role | Required Points | Permissions |
-|------|-----------------|-------------|
-| Newcomer | 0 | View channels, basic chat |
-| Contributor | 50 | Create threads, voice chat |
-| Active Contributor | 150 | Manage messages, events |
-| Core Contributor | 500 | Manage channels, webhooks |
-| Maintainer | 1000 | Administrator access |
-
-## 🛠️ Installation
-
-### Prerequisites
-- Rust 1.70+
-- SQLite
-- Discord Bot Token
-- GitHub Personal Access Token
-- CodeRabbit API Key
-
-### Quick Start
-
-1. **Clone the repository**
-   ```bash
-   git clone https://github.com/yourusername/msync.git
-   cd msync
-   ```
-
-2. **Set up environment variables**
-   ```bash
-   cp .env.example .env
-   # Edit .env with your tokens and configuration
-   ```
-
-3. **Run database migrations**
-   ```bash
-   cargo install sqlx-cli
-   sqlx migrate run
-   ```
-
-4. **Build and run**
-   ```bash
-   cargo build --release
-   ./target/release/msync
-   ```
-
-### Discord Bot Setup
-
-1. Create a new application at https://discord.com/developers/applications
-2. Create a bot and copy the token
-3. Enable the following intents:
-   - Server Members Intent
-   - Message Content Intent
-4. Invite the bot to your server with these permissions:
-   - Manage Roles
-   - Send Messages
-   - Use Slash Commands
-   - Manage Webhooks
-
-### GitHub Integration
-
-1. Create a webhook in your repository settings
-2. Set the payload URL to `https://your-domain.com/github/webhook`
-3. Select these events:
-   - Pull requests
-   - Pull request reviews
-   - Issues
-4. Add the webhook secret to your `.env` file
-
-## 📝 Configuration
-
-### Environment Variables
-
-```env
-# Discord
-DISCORD_TOKEN=your_bot_token
-DISCORD_APPLICATION_ID=your_app_id
-
-# GitHub
-GITHUB_TOKEN=your_personal_access_token
-GITHUB_WEBHOOK_SECRET=your_webhook_secret
-GITHUB_REPO_OWNER=your_username_or_org
-GITHUB_REPO_NAME=your_repo
-
-# CodeRabbit
-CODERABBIT_API_KEY=your_api_key
-
-# Database (the default file keeps its pre-rename name, so existing data is kept)
-DATABASE_URL=sqlite://dsync.db
-
-# Server
-SERVER_HOST=0.0.0.0
-SERVER_PORT=8080
-```
-
-## 🎮 Discord Commands
-
-- `/link github:<username>` - Link your GitHub account
-- `/stats` - View your contribution statistics
-- `/leaderboard` - See top contributors
-- `/sync` - Manually sync roles (Admin only)
-
-## 📊 API Endpoints
-
-- `GET /health` - Health check
-- `POST /github/webhook` - GitHub webhook receiver
-- `GET /api/contributor/stats?github_username=<username>` - Get contributor statistics
-- `GET /api/leaderboard` - Get top 25 contributors
-
-## 🤝 Contributing
-
-We welcome contributions! Please see our [Contributing Guide](CONTRIBUTING.md) for details on:
-- Code style and standards
-- Pull request process
-- Merit point calculations
-- Community guidelines
-
-## 📈 Metrics & Impact
-
-### Quality Improvements
-- **85% fewer bugs** through automated CodeRabbit review
-- **3x faster onboarding** with clear merit-based progression
-- **60% higher contributor retention** due to recognition systems
-- **2x faster development cycles** with automated quality gates
-
-### Community Growth
-- Self-organizing teams with natural leadership progression
-- Knowledge transfer through mentorship programs
-- Enterprise confidence through Apache 2.0 protection
-
-## 🛡️ Security
-
-- All webhooks are verified using HMAC signatures
-- Bot tokens are never exposed in logs
-- Database queries use parameterized statements
-- Regular security audits via GitHub Actions
-
-## 📄 License
-
-This project is licensed under the Apache License 2.0 - see the [LICENSE](LICENSE) file for details.
-
-The Apache 2.0 License ensures this template remains open source while providing patent protection and contributor clarity, making it ideal for enterprise adoption and community-driven development.
-
-## 🌟 Acknowledgments
-
-- Built with [Serenity](https://github.com/serenity-rs/serenity) Discord framework
-- Powered by [Actix Web](https://actix.rs/) framework
-- Code quality by [CodeRabbit](https://coderabbit.ai/)
-
----
-
-## 🚀 Quick Start Guide
-
-### Core Features
-
-- **Discord Bot** with Serenity framework and slash commands
-- **GitHub Integration** with webhook support for PR events
-- **Merit System** with automatic point calculation based on contribution quality
-- **Role Synchronization** that updates Discord roles based on merit points
-- **SQLite Database** with proper migrations for persistent storage
-
-### Key Components
-
-- **Main Application** (`src/main.rs`) - Actix web server with Discord bot
-- **Discord Commands** - `/link`, `/stats`, `/leaderboard`, `/sync`
-- **GitHub Webhooks** - Handles PR events and triggers merit calculations
-- **Merit Calculator** - Sophisticated point system based on multiple factors
-- **CodeRabbit Integration** - Placeholder for AI code review scoring
-- **API Endpoints** - Health check, stats, and leaderboard APIs
-
-### Infrastructure
-
-- **Docker Support** - Dockerfile and docker-compose for easy deployment
-- **CI/CD Workflows** - GitHub Actions for testing and automated role sync
-- **Nginx Config** - Reverse proxy with SSL and rate limiting
-- **Documentation** - Comprehensive README and CONTRIBUTING guides
-
-### The Merit Flow
-
-```mermaid
-graph LR
-    A[Developer opens PR] --> B[CodeRabbit reviews]
-    B --> C[Merit points calculated]
-    C --> D[Discord role updated]
-```
-
-The system automatically rewards quality contributions and creates a self-improving community where:
-
-- ✅ Contributors progress through ranks based on merit
-- ✅ Code quality is enforced through automated reviews
-- ✅ Community recognition is immediate and transparent
-- ✅ Enterprise adoption is encouraged through Apache 2.0 licensing
-
-### Running the Bot
+From clone to a passing smoke test in dev mode: [docs/QUICKSTART.md](docs/QUICKSTART.md). With an assistant: [docs/SETUP_WITH_AN_ASSISTANT.md](docs/SETUP_WITH_AN_ASSISTANT.md).
 
 ```bash
-# Set up your .env file with tokens
-cp .env.example .env
-
-# Run with Docker
-docker-compose up -d
-
-# Or run locally
-cargo run
+cargo build
 ```
 
----
+```bash
+bash scripts/smoke-local.sh
+```
 
-🎉 **This template provides a complete foundation for building merit-based open source communities with automatic Discord role management!**
+No database is needed to build. On Windows use Git Bash.
+
+## Commands
+
+One binary, `msync`:
+
+| Command | What it does |
+|---|---|
+| `msync` or `msync serve` | Start the service |
+| `msync init --template <name> --dir <path>` | Write `.msync/` and CI files from a template; refuses to overwrite |
+| `msync check <dir>` | Validate `<dir>/.msync/`; every error with file and reason; exit 1 on failure |
+| `msync plan <old-dir> <new-dir>` | Markdown change preview and who can approve it |
+| `msync doctor` | Which connectors are configured, with every missing variable named; never prints a secret |
+| `msync token create --label <text> --member <id> --scopes a,b` | Create an API token (printed once) |
+| `msync templates` | List the templates |
+| `msync --help`, `msync --version` | Usage and version |
+
+Templates: `open-source`, `source-available`, `hybrid`, `closed-source`, `merit-dao`.
+
+## Documentation
+
+| Document | What it covers |
+|---|---|
+| [AGENTS.md](AGENTS.md), [CLAUDE.md](CLAUDE.md) | Instructions an AI assistant follows to set MSync up |
+| [docs/QUICKSTART.md](docs/QUICKSTART.md) | Clone to smoke test, and what to change for a real deployment |
+| [docs/SETUP_WITH_AN_ASSISTANT.md](docs/SETUP_WITH_AN_ASSISTANT.md) | What to prepare, and three prompts to paste |
+| [docs/CRA_PLATFORM.md](docs/CRA_PLATFORM.md) | The full platform contract |
+| [docs/CRA_CONFIG.md](docs/CRA_CONFIG.md) | The five `.msync/` files, field by field |
+| [docs/PAYROLL.md](docs/PAYROLL.md) | Pay orders, invoices, payees and payout runs |
+| [docs/DISCORD.md](docs/DISCORD.md) | Setting up the Discord bot |
+| [docs/SLACK.md](docs/SLACK.md) | Setting up the Slack app |
+| [docs/PORTAL_API.md](docs/PORTAL_API.md) | The signed portal sync API |
+| [docs/SIGN_IN.md](docs/SIGN_IN.md) | Sign-in and MSync as an OAuth/OpenID Connect provider |
+| [docs/MCP.md](docs/MCP.md) | The MCP server, its tools, and connecting Claude |
+| [docs/HIERARCHY_AND_THREAT_MODEL.md](docs/HIERARCHY_AND_THREAT_MODEL.md) | Design and threat model |
+| [docs/DiscordBot.md](docs/DiscordBot.md) | The hosted bot invite link |
+| [docs/Configuration/GeneralInformation.md](docs/Configuration/GeneralInformation.md) | General configuration notes |
+| [openapi.yaml](openapi.yaml) | Every REST route |
+| [mcp.example.json](mcp.example.json) | Example `.mcp.json` for an MCP client |
+| [SECURITY.md](SECURITY.md) | Reporting a vulnerability |
+| [CONTRIBUTING.md](CONTRIBUTING.md) | Contributing |
+| [templates/](templates/) | Five starter hierarchies, each with a one-page README |
+| [examples/cra/](examples/cra/) | Worked example organizations |
+| [.env.example](.env.example) | Every environment variable, with placeholders only |
+
+## Security
+
+Every webhook is verified (GitHub and GitLab secrets, Slack signing secret, Stripe signature), every API call needs a scoped token, and payout approvals follow the rules in your CRA. No secret belongs in the repository; `.env.example` is the only env file tracked. See [SECURITY.md](SECURITY.md).
+
+## License
+
+Apache License 2.0. See [LICENSE](LICENSE).
