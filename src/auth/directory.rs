@@ -106,7 +106,7 @@ impl EnvDirectory {
             return true;
         }
         // A token bound to a provider-form owner id (`github:Simbuilder`) matches case-insensitively.
-        owner_foundry(member_id).map_or(false, |f| self.is_owner_foundry(f.provider, &f.login))
+        owner_foundry(member_id).is_some_and(|f| self.is_owner_foundry(f.provider, &f.login))
     }
 }
 
@@ -162,7 +162,7 @@ impl CraDirectory {
         let Some(m) = snap.member(member_id) else { return false };
         [(FoundryProvider::Github, &m.identities.github), (FoundryProvider::Gitlab, &m.identities.gitlab)]
             .iter()
-            .any(|(p, l)| l.as_deref().map_or(false, |l| self.env.is_owner_foundry(*p, l)))
+            .any(|(p, l)| l.as_deref().is_some_and(|l| self.env.is_owner_foundry(*p, l)))
     }
 }
 

@@ -39,7 +39,7 @@ impl SyncPlatform for SlackPlatform {
 
     /// A bot token, and a CRA with a `[slack]` section.
     fn configured(&self) -> bool {
-        self.api.configured() && self.cra.active().map_or(false, |a| a.snapshot.org.slack.is_some())
+        self.api.configured() && self.cra.active().is_some_and(|a| a.snapshot.org.slack.is_some())
     }
 
     async fn role_safety(&self, roles: &[String]) -> Result<BTreeMap<String, RoleSafety>, PlatformError> {

@@ -81,6 +81,7 @@ pub struct RunView {
 }
 
 /// Result of `create_run`: a plan only (dry run) or a persisted run.
+#[allow(clippy::large_enum_variant)]
 #[derive(Debug, Clone, Serialize)]
 #[serde(untagged)]
 pub enum CreateRunResult {

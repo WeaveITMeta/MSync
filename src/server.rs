@@ -17,7 +17,7 @@ use tracing::{error, info, warn};
 
 use crate::auth::{CraDirectory, Directory, EnvDirectory};
 use crate::config::Config;
-use crate::discord::{self, bot::DiscordBot};
+use crate::discord::bot::DiscordBot;
 use crate::mcp;
 use crate::merit::api as merit_api;
 use crate::merit::tracker::MeritTracker;
@@ -212,8 +212,7 @@ pub async fn serve() -> Result<()> {
 
                 let mut client = match Client::builder(&dc.token, intents)
                     .application_id(dc.application_id.into())
-                    .event_handler(bot)
-                    .framework(discord::framework::get_framework())
+                    .event_handler(bot)
                     .await
                 {
                     Ok(c) => c,

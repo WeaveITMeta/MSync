@@ -110,7 +110,7 @@ pub fn refresh_sig(cfg: &PaymentConfig, account_id: &str) -> Option<String> {
 }
 
 pub fn verify_refresh_sig(cfg: &PaymentConfig, account_id: &str, sig: &str) -> bool {
-    refresh_sig(cfg, account_id).map_or(false, |expected| token_matches(&expected, sig))
+    refresh_sig(cfg, account_id).is_some_and(|expected| token_matches(&expected, sig))
 }
 
 /// (github_username, payouts_enabled) for a Discord user, if linked.

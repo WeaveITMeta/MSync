@@ -2,7 +2,7 @@ use crate::models::{Contributor, MeritRole};
 use anyhow::Result;
 use sqlx::SqlitePool;
 use std::collections::HashMap;
-use tracing::{error, info};
+use tracing::info;
 use uuid::Uuid;
 
 pub struct MeritTracker {

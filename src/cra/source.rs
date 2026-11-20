@@ -348,7 +348,7 @@ impl CraSource for GitHubSource {
         let merged: Vec<&Value> = prs
             .iter()
             .filter(|p| {
-                p.get("merged_at").map_or(false, |m| !m.is_null())
+                p.get("merged_at").is_some_and(|m| !m.is_null())
                     && p.get("merge_commit_sha").and_then(Value::as_str).map(|s| s.eq_ignore_ascii_case(&sha)).unwrap_or(false)
             })
             .collect();

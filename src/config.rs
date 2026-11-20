@@ -193,7 +193,7 @@ pub fn local_cra_dir_from<F: Fn(&str) -> Option<String>>(get: F) -> Result<Optio
              nobody else can reach"
         );
     }
-    if env_var_with("MSYNC_CRA_REPO", &get).map_or(false, |v| !v.trim().is_empty()) {
+    if env_var_with("MSYNC_CRA_REPO", &get).is_some_and(|v| !v.trim().is_empty()) {
         anyhow::bail!("set MSYNC_CRA_REPO or MSYNC_CRA_LOCAL_DIR, not both");
     }
     let path = std::path::PathBuf::from(&dir);

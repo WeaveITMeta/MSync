@@ -160,7 +160,7 @@ pub struct Occurrence {
 }
 
 fn in_range(d: NaiveDate, from: Option<NaiveDate>, until: Option<NaiveDate>) -> bool {
-    from.map_or(true, |f| d >= f) && until.map_or(true, |u| d <= u)
+    from.is_none_or(|f| d >= f) && until.is_none_or(|u| d <= u)
 }
 
 fn bounds(tz: &Tz, date: NaiveDate, start: NaiveTime, end: NaiveTime) -> (DateTime<Utc>, DateTime<Utc>) {
@@ -235,7 +235,7 @@ pub fn current_or_next(specs: &[ShiftSpec], now: DateTime<Utc>) -> Option<Occurr
     for s in specs {
         for d in nearby_dates(&s.tz, now, 0, 14) {
             if let Some(o) = occurrence_on(s, d) {
-                if o.window_start > now && best.as_ref().map_or(true, |b| (o.start, &o.shift_id) < (b.start, &b.shift_id)) {
+                if o.window_start > now && best.as_ref().is_none_or(|b| (o.start, &o.shift_id) < (b.start, &b.shift_id)) {
                     best = Some(o);
                 }
             }
@@ -359,7 +359,7 @@ pub fn plan_clock_in(specs: &[ShiftSpec], now: DateTime<Utc>) -> Result<ClockInP
     for s in specs {
         for d in nearby_dates(&s.tz, now, 1, 0) {
             if let Some(o) = occurrence_on(s, d) {
-                if o.end <= now && ended.as_ref().map_or(true, |(_, e)| o.end > *e) && (now - o.end) < Duration::hours(24) {
+                if o.end <= now && ended.as_ref().is_none_or(|(_, e)| o.end > *e) && (now - o.end) < Duration::hours(24) {
                     ended = Some((o.shift_id.clone(), o.end));
                 }
             }
@@ -627,7 +627,7 @@ pub async fn list(
         payee_id.map(str::to_string)
     } else if super::timeclock::has(principal, scopes::TIME_CLOCK) {
         let own = super::timeclock::own_payee(pool, principal).await?;
-        if payee_id.map_or(false, |p| p != own.row.id) {
+        if payee_id.is_some_and(|p| p != own.row.id) {
             return Err(PayoutError::Forbidden("with time.clock only, you can read only your own shifts".into()));
         }
         Some(own.row.id)

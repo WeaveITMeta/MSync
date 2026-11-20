@@ -58,7 +58,7 @@ pub fn same_origin(req: &HttpRequest, public_url: &str) -> bool {
     req.headers()
         .get("Origin")
         .and_then(|h| h.to_str().ok())
-        .map_or(false, |o| !expected.is_empty() && o.trim().trim_end_matches('/').eq_ignore_ascii_case(&expected))
+        .is_some_and(|o| !expected.is_empty() && o.trim().trim_end_matches('/').eq_ignore_ascii_case(&expected))
 }
 
 pub fn cross_origin_refused() -> HttpResponse {

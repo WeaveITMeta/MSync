@@ -293,7 +293,7 @@ impl ProviderApi for HttpProviderApi {
                             .collect()
                     })
                     .unwrap_or_default();
-                verified.sort_by(|a, b| b.0.cmp(&a.0));
+                verified.sort_by_key(|a| std::cmp::Reverse(a.0));
                 let email = verified.into_iter().next().map(|(_, e)| e);
                 ProviderProfile {
                     provider: Provider::Github,
@@ -310,7 +310,7 @@ impl ProviderApi for HttpProviderApi {
                 let u = self.get(format!("{api}/user"), &token).await?;
                 let login = s(&u, "username").ok_or(ProviderError::Missing("username"))?;
                 // GitLab returns `confirmed_at` for the signed-in user; no confirmation, no trust.
-                let confirmed = u.get("confirmed_at").map_or(false, |c| !c.is_null());
+                let confirmed = u.get("confirmed_at").is_some_and(|c| !c.is_null());
                 let email = s(&u, "email");
                 ProviderProfile {
                     provider: Provider::Gitlab,

@@ -41,7 +41,7 @@ impl DiscordBot {
             return false;
         }
         let managed = h.runner().cra().active().and_then(|a| a.snapshot.org.discord.as_ref().map(|d| d.guild_id.clone()));
-        if managed.as_deref().map_or(true, |g| g == guild_id.get().to_string()) {
+        if managed.as_deref().is_none_or(|g| g == guild_id.get().to_string()) {
             h.trigger(t);
         }
         true
@@ -68,7 +68,7 @@ impl DiscordBot {
 
         if let Some(role) = qualified_role {
             // Get the guild member
-            if let Ok(mut member) = guild_id.member(&ctx.http, user_id).await {
+            if let Ok(member) = guild_id.member(&ctx.http, user_id).await {
                 // Remove all merit roles
                 for merit_role in &roles {
                     let role_id = RoleId::from(merit_role.discord_role_id as u64);
@@ -120,34 +120,31 @@ impl EventHandler for DiscordBot {
     }
 
     async fn interaction_create(&self, ctx: Context, interaction: Interaction) {
-        match interaction {
-            Interaction::Command(command) => {
-                let reply = match crate::discord::commands::command_for(&command) {
-                    Some((cmd, arg)) => {
-                        let actor = crate::discord::commands::actor_for(&command);
-                        let applier = crate::discord::commands::DiscordApplier {
-                            http: ctx.http.clone(),
-                            guild_id: command.guild_id,
-                            pool: self.db_pool.clone(),
-                            sync: self.sync.as_ref().map(|h| h.runner().clone()),
-                        };
-                        crate::chat::commands::run(&self.chat, &actor, cmd, &arg, &applier).await
-                    }
-                    None => crate::chat::ChatReply::private("Unknown command"),
-                };
-
-                if let Err(why) = command
-                    .create_response(&ctx.http, CreateInteractionResponse::Message(
-                        CreateInteractionResponseMessage::new()
-                            .content(reply.text)
-                            .ephemeral(reply.private)
-                    ))
-                    .await
-                {
-                    error!("Cannot respond to slash command: {}", why);
+        if let Interaction::Command(command) = interaction {
+            let reply = match crate::discord::commands::command_for(&command) {
+                Some((cmd, arg)) => {
+                    let actor = crate::discord::commands::actor_for(&command);
+                    let applier = crate::discord::commands::DiscordApplier {
+                        http: ctx.http.clone(),
+                        guild_id: command.guild_id,
+                        pool: self.db_pool.clone(),
+                        sync: self.sync.as_ref().map(|h| h.runner().clone()),
+                    };
+                    crate::chat::commands::run(&self.chat, &actor, cmd, &arg, &applier).await
                 }
+                None => crate::chat::ChatReply::private("Unknown command"),
+            };
+
+            if let Err(why) = command
+                .create_response(&ctx.http, CreateInteractionResponse::Message(
+                    CreateInteractionResponseMessage::new()
+                        .content(reply.text)
+                        .ephemeral(reply.private)
+                ))
+                .await
+            {
+                error!("Cannot respond to slash command: {}", why);
             }
-            _ => {}
         }
     }
 

@@ -57,7 +57,7 @@ pub struct Standing {
 /// A grant counts while `today <= expires`. A grant without `expires` does
 /// not expire.
 pub fn grant_is_active(g: &Grant, today: NaiveDate) -> bool {
-    g.expires.map_or(true, |e| today <= e)
+    g.expires.is_none_or(|e| today <= e)
 }
 
 /// Positions a member actively holds on `today`, highest rank first. Grants
@@ -80,7 +80,7 @@ pub fn tier_for(s: &Snapshot, vested_merit: u64) -> Option<&Role> {
         .roles
         .iter()
         .filter(|r| r.kind == RoleKind::Tier)
-        .filter(|r| r.min_merit.map_or(false, |m| vested_merit >= m))
+        .filter(|r| r.min_merit.is_some_and(|m| vested_merit >= m))
         .max_by(|a, b| a.rank.cmp(&b.rank).then(a.min_merit.cmp(&b.min_merit)))
 }
 

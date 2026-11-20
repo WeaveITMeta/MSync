@@ -465,6 +465,7 @@ pub async fn account(pool: &SqlitePool, id: &str) -> Result<Option<AccountRow>, 
 }
 
 pub async fn identities_of(pool: &SqlitePool, account_id: &str, current: Option<&str>) -> Result<Vec<IdentityView>, sqlx::Error> {
+    #[allow(clippy::type_complexity)]
     let rows: Vec<(String, String, Option<String>, Option<String>, Option<i64>, i64)> = sqlx::query_as(
         "SELECT id, provider, handle, email, verified_at, last_login_at FROM identities WHERE account_id = ? ORDER BY created_at, id",
     )
@@ -524,7 +525,7 @@ pub async fn member_for_account(pool: &SqlitePool, snap: &crate::cra::Snapshot, 
                 "gitlab" => m.identities.gitlab.as_deref(),
                 _ => None,
             };
-            if listed.map_or(false, |l| l.eq_ignore_ascii_case(login)) {
+            if listed.is_some_and(|l| l.eq_ignore_ascii_case(login)) {
                 code_host.insert(m.id.clone());
             }
         }

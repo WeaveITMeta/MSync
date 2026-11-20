@@ -396,7 +396,7 @@ fn members(v: &mut V) {
                 )),
                 _ => {}
             }
-            let live = m.status != MemberStatus::Removed && g.expires.map_or(true, |e| e >= v.today);
+            let live = m.status != MemberStatus::Removed && g.expires.is_none_or(|e| e >= v.today);
             if live {
                 *holders.entry(role.key.as_str()).or_default() += 1;
             }

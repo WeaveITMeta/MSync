@@ -325,7 +325,7 @@ pub fn redact_str(s: &str) -> String {
                     }
                 }
             }
-            if rest.get(..7).map_or(false, |p| p.eq_ignore_ascii_case("bearer ")) {
+            if rest.get(..7).is_some_and(|p| p.eq_ignore_ascii_case("bearer ")) {
                 let n = rest[7..].bytes().take_while(|c| !c.is_ascii_whitespace() && *c != b'"').count();
                 if n > 0 && !rest[7..].starts_with("[redacted]") {
                     out.push_str(&rest[..7]);

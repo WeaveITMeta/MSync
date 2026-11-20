@@ -267,7 +267,7 @@ pub fn configure(cfg: &mut web::ServiceConfig) {
         web::resource("/api/v1/payouts/policy")
             .guard(guard::Put())
             .guard(guard::fn_guard(|g| {
-                g.app_data::<web::Data<CraContext>>().map_or(false, |c| c.handle.active().is_some())
+                g.app_data::<web::Data<CraContext>>().is_some_and(|c| c.handle.active().is_some())
             }))
             .to(put_policy_refused),
     )

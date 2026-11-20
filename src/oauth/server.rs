@@ -137,6 +137,7 @@ struct Valid {
     challenge: String,
 }
 
+#[allow(clippy::large_enum_variant)]
 enum Checked {
     Ok(Valid),
     /// No redirect: unknown client or an unregistered redirect URI.
@@ -181,7 +182,7 @@ async fn check(ctx: &OAuthContext, p: &AuthorizeParams) -> Checked {
     if scopes.iter().any(|s| !SCOPES.contains(&s.as_str()) || !client.allowed_scopes.contains(s)) {
         return err("invalid_scope", "a requested scope is unknown or not allowed for this client");
     }
-    if p.nonce.as_deref().map_or(false, |n| n.len() > 512) || state.as_deref().map_or(false, |s| s.len() > 2048) {
+    if p.nonce.as_deref().is_some_and(|n| n.len() > 512) || state.as_deref().is_some_and(|s| s.len() > 2048) {
         return err("invalid_request", "nonce or state too long");
     }
     Checked::Ok(Valid { client, redirect_uri, scopes, state, nonce: p.nonce.clone(), challenge })
@@ -422,7 +423,7 @@ async fn client_auth(req: &HttpRequest, ctx: &OAuthContext, f: &TokenForm) -> Re
     let (id, secret) = match (basic, &f.client_id, &f.client_secret) {
         (Some(_), _, Some(_)) => return Err(terr("invalid_request", "use one client authentication method")),
         (Some((id, s)), form_id, None) => {
-            if form_id.as_deref().map_or(false, |f| f != id) {
+            if form_id.as_deref().is_some_and(|f| f != id) {
                 return Err(terr("invalid_client", "client mismatch"));
             }
             (id, Some(s))

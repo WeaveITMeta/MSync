@@ -40,7 +40,7 @@ impl DiscordSyncService {
 
             if let Some(role) = qualified_role {
                 // Get guild member
-                if let Ok(mut member) = guild_id.member(&self.discord_http, user_id).await {
+                if let Ok(member) = guild_id.member(&self.discord_http, user_id).await {
                     // Remove all merit roles first
                     for merit_role in &roles {
                         let role_id = RoleId::from(merit_role.discord_role_id as u64);

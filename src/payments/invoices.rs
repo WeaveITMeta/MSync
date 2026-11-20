@@ -183,6 +183,7 @@ async fn load_scoped(pool: &SqlitePool, principal: &Principal, id: &str) -> Resu
     Ok(row)
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn event(conn: &mut SqliteConnection, id: &str, action: &str, from: Option<&str>, to: &str, actor: &str, note: Option<&str>, now: &str) -> Result<(), sqlx::Error> {
     sqlx::query(
         "INSERT INTO invoice_events (invoice_id, action, from_status, to_status, actor, note, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)",

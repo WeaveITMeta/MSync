@@ -58,6 +58,7 @@ pub enum Command {
 
 /// Split `--flag value` / `--flag=value` options from positional arguments. Every flag
 /// must be in `known`; a flag given twice or with no value is an error.
+#[allow(clippy::type_complexity)]
 fn options(args: &[String], known: &[&str]) -> Result<(Vec<(String, String)>, Vec<String>), String> {
     let mut opts: Vec<(String, String)> = Vec::new();
     let mut pos = Vec::new();
@@ -473,7 +474,7 @@ pub fn doctor_report(vars: &[(String, String)]) -> (String, bool) {
     // Stripe safety.
     let key = get("STRIPE_SECRET_KEY").unwrap_or_default();
     let live_key = key.contains("_live_");
-    let allow_live = get("MSYNC_STRIPE_ALLOW_LIVE").map_or(false, |v| v.trim() == "true");
+    let allow_live = get("MSYNC_STRIPE_ALLOW_LIVE").is_some_and(|v| v.trim() == "true");
     if !key.is_empty() {
         let kind = if live_key { "a LIVE key" } else { "a test key" };
         let _ = writeln!(out, "[{}] Stripe key kind: {kind}{}", if live_key { "!!" } else { "ok" }, if live_key && !allow_live { "; refused until MSYNC_STRIPE_ALLOW_LIVE=true" } else { "" });
@@ -484,7 +485,7 @@ pub fn doctor_report(vars: &[(String, String)]) -> (String, bool) {
     }
 
     // MCP execution switch.
-    if get("MSYNC_MCP_ALLOW_EXECUTE").map_or(false, |v| v.trim() == "true") {
+    if get("MSYNC_MCP_ALLOW_EXECUTE").is_some_and(|v| v.trim() == "true") {
         let _ = writeln!(out, "[!!] MSYNC_MCP_ALLOW_EXECUTE=true: agents can execute payout runs over MCP");
     } else {
         let _ = writeln!(out, "[ok] MCP payout execution: off");

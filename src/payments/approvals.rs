@@ -349,7 +349,7 @@ pub fn evaluate(policy: &PayoutPolicy, facts: &RowFacts, now: DateTime<Utc>, usa
     }
 
     let el = &policy.eligibility;
-    if el.min_rank > 0 && facts.payee_rank.map_or(true, |r| r < el.min_rank) {
+    if el.min_rank > 0 && facts.payee_rank.is_none_or(|r| r < el.min_rank) {
         out.push(Blocker::Ineligible { reason: format!("payee rank below {}", el.min_rank) });
     }
     if !el.roles.is_empty() && !facts.payee_roles.iter().any(|r| el.roles.contains(r)) {

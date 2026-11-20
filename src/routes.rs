@@ -71,7 +71,7 @@ pub fn mark_started() {
 
 #[get("/health")]
 pub async fn health_check(req: HttpRequest) -> impl Responder {
-    let dev_mode = req.app_data::<web::Data<AppState>>().map_or(false, |s| s.config.dev_mode);
+    let dev_mode = req.app_data::<web::Data<AppState>>().is_some_and(|s| s.config.dev_mode);
     HttpResponse::Ok().json(HealthResponse {
         status: "healthy".to_string(),
         version: env!("CARGO_PKG_VERSION").to_string(),

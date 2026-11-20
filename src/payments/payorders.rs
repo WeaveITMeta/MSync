@@ -585,7 +585,7 @@ pub fn upcoming(s: &OrderSchedule, resume_from: Option<DateTime<Utc>>, recorded:
     while out.len() < count as usize && n <= MAX_OCCURRENCES {
         let Some(o) = occurrence(s, n) else { break };
         n += 1;
-        if recorded.contains(&o.period_key) || resume_from.map_or(false, |r| o.occurs_at < r) {
+        if recorded.contains(&o.period_key) || resume_from.is_some_and(|r| o.occurs_at < r) {
             continue;
         }
         out.push(o);
@@ -1260,7 +1260,7 @@ pub async fn xp_in_period(
     let mut out = Vec::new();
     for (key, (role, xp)) in per {
         let payee_id = keys.get(&key).cloned();
-        if !rule.payee_ids.is_empty() && !payee_id.as_ref().map_or(false, |p| rule.payee_ids.contains(p)) {
+        if !rule.payee_ids.is_empty() && !payee_id.as_ref().is_some_and(|p| rule.payee_ids.contains(p)) {
             continue;
         }
         if !rule.roles.is_empty() {
@@ -1430,6 +1430,7 @@ pub struct MaterializeReport {
     pub ended: Vec<String>,
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn record_occurrence(
     pool: &SqlitePool,
     row: &OrderRow,

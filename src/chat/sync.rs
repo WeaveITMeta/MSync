@@ -64,7 +64,7 @@ pub const DEFAULT_BACKOFF_SECS: u64 = 60;
 /// be shown to fail. Always false outside `cargo test`.
 #[inline]
 pub(crate) fn mutant(name: &str) -> bool {
-    cfg!(test) && std::env::var("MSYNC_SYNC_MUTANT").map_or(false, |v| v == name)
+    cfg!(test) && std::env::var("MSYNC_SYNC_MUTANT").is_ok_and(|v| v == name)
 }
 
 // ------------------------------------------------------------------ the trait
@@ -679,7 +679,7 @@ impl SyncRunner {
             let users: BTreeSet<&String> = want_set.iter().chain(has_set.iter()).chain(plan.users.iter()).collect();
             // Adds before removes, so a Slack user group is never emptied on the way.
             let mut users: Vec<&String> = users.into_iter().collect();
-            users.sort_by_key(|u| !(want_set.contains(*u) && !has_set.contains(*u)));
+            users.sort_by_key(|u| !want_set.contains(*u) || has_set.contains(*u));
             for user in users {
                 let pair = (role.clone(), user.clone());
                 let want = want_set.contains(user);

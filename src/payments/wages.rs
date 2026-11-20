@@ -125,7 +125,7 @@ impl NewWage {
             }
             _ => errs.push("overtime_after_minutes and overtime_bps are set together, or not at all".into()),
         }
-        if self.memo.as_deref().map_or(false, |m| m.chars().count() > 500) {
+        if self.memo.as_deref().is_some_and(|m| m.chars().count() > 500) {
             errs.push("memo must be at most 500 characters".into());
         }
         errs

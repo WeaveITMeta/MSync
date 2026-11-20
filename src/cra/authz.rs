@@ -289,7 +289,7 @@ fn target_is_owner(t: &MemberTarget, owners: &[String]) -> bool {
 /// Resolves an identity through the ACTIVE snapshot (`roster`).
 fn resolve(roster: &Snapshot, who: &FoundryIdentity, owners: &[String], today: NaiveDate) -> Option<Principal> {
     let member = roster.member_by_foundry(who);
-    let owner = is_owner_identity(who, owners) || member.map_or(false, |m| is_owner_member(&m.id, owners));
+    let owner = is_owner_identity(who, owners) || member.is_some_and(|m| is_owner_member(&m.id, owners));
     if owner {
         return Some(Principal {
             identity: who.clone(),

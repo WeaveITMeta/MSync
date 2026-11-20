@@ -129,7 +129,7 @@ pub fn is_deferred(cmd: ChatCommand) -> bool {
 
 impl SlackState {
     pub fn enabled(&self) -> bool {
-        self.signing_secret.as_deref().map_or(false, |s| !s.is_empty())
+        self.signing_secret.as_deref().is_some_and(|s| !s.is_empty())
     }
 
     /// Is `team` the configured team or the CRA-listed one?
@@ -137,7 +137,7 @@ impl SlackState {
         if team.is_empty() {
             return false;
         }
-        let configured = self.team_id.as_deref().map_or(false, |t| t == team);
+        let configured = self.team_id.as_deref() == Some(team);
         let cra = self
             .chat
             .cra

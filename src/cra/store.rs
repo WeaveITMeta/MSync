@@ -204,7 +204,7 @@ where
     .bind(i64::from(a.retryable && status == REJECTED))
     .bind(a.ctx.map(|c| c.actor.to_string()))
     .bind(a.ctx.and_then(|c| c.author.as_ref()).map(|x| x.to_string()))
-    .bind(i64::from(a.ctx.map_or(false, |c| c.via_pull_request)))
+    .bind(i64::from(a.ctx.is_some_and(|c| c.via_pull_request)))
     .bind(serde_json::to_string(&approvers).unwrap_or_else(|_| "[]".into()))
     .bind(serde_json::to_string(a.violations).unwrap_or_else(|_| "[]".into()))
     .bind(a.plan_markdown)

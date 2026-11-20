@@ -138,7 +138,7 @@ impl PortalContext {
     fn rate_ok(&self, consumer: &str, now: i64) -> bool {
         let Ok(mut m) = self.limiter.lock() else { return false };
         let q = m.entry(consumer.to_string()).or_default();
-        while q.front().map_or(false, |t| *t <= now - 60) {
+        while q.front().is_some_and(|t| *t <= now - 60) {
             q.pop_front();
         }
         let limit = if audit::mutant("portal_no_rate_limit") { usize::MAX } else { self.rate_per_minute };
@@ -219,7 +219,7 @@ fn scope_within(inner: &str, outer: &str) -> bool {
         return true;
     }
     match (inner.strip_suffix(".*"), outer.strip_suffix(".*")) {
-        (None, Some(surface)) => inner.split_once('.').map_or(false, |(s, _)| s == surface),
+        (None, Some(surface)) => inner.split_once('.').is_some_and(|(s, _)| s == surface),
         _ => false,
     }
 }
@@ -230,9 +230,7 @@ pub fn effective_scopes(requested: &[String], allowlist: &[String]) -> Vec<Strin
     let mut out = BTreeSet::new();
     for r in requested {
         for a in allowlist {
-            if audit::mutant("portal_scopes_unfiltered") {
-                out.insert(r.clone());
-            } else if scope_within(r, a) {
+            if audit::mutant("portal_scopes_unfiltered") || scope_within(r, a) {
                 out.insert(r.clone());
             } else if scope_within(a, r) {
                 out.insert(a.clone());
@@ -599,7 +597,7 @@ async fn check_alert(ctx: &PortalContext, consumer: &str, now: i64) {
     }
     let first = match ctx.alerted.lock() {
         Ok(mut m) => {
-            let due = m.get(consumer).map_or(true, |t| *t <= now - 3600);
+            let due = m.get(consumer).is_none_or(|t| *t <= now - 3600);
             if due {
                 m.insert(consumer.to_string(), now);
             }

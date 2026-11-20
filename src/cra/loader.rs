@@ -700,7 +700,7 @@ impl CraContext {
     pub fn is_cra_push(&self, ev: &FoundryEvent) -> bool {
         let Some(s) = &self.settings else { return false };
         ev.kind == FoundryEventKind::Push
-            && ev.repo.as_deref().map_or(false, |r| s.repo.matches(ev.provider, &ev.host, r))
+            && ev.repo.as_deref().is_some_and(|r| s.repo.matches(ev.provider, &ev.host, r))
             && ev.base_branch.as_deref() == Some(s.branch.as_str())
             && ev.merge_sha.is_some()
     }
@@ -780,6 +780,7 @@ pub fn source_from_config(cfg: &crate::config::Config) -> Option<Arc<dyn CraSour
 /// settings and a source. `Ok(None)` when no local directory is configured. Refused when
 /// dev mode is off (checked again here, not only in `Config`) or when no owner entry has
 /// the `provider:login` form the local load acts as.
+#[allow(clippy::type_complexity)]
 pub fn local_from_config(
     cfg: &crate::config::Config,
     owners: &[String],

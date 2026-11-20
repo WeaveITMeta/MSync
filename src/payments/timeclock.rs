@@ -694,7 +694,7 @@ pub async fn read_scope(pool: &SqlitePool, principal: &Principal, payee: Option<
     }
     if has(principal, scopes::TIME_CLOCK) {
         let own = own_payee(pool, principal).await?;
-        if payee.map_or(false, |p| p != own.row.id) && !super::mutant::on("clock_reads_others") {
+        if payee.is_some_and(|p| p != own.row.id) && !super::mutant::on("clock_reads_others") {
             return Err(PayoutError::Forbidden("with time.clock only, you can read only your own time".into()));
         }
         return Ok(Some(if super::mutant::on("clock_reads_others") { payee.map(str::to_string).unwrap_or(own.row.id) } else { own.row.id }));
