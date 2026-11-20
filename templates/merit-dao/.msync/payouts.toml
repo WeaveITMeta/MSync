@@ -1,0 +1,60 @@
+schema = 1
+
+# payouts.toml: when, how much and under what approval people are paid.
+# Merit collective: payouts are prepared for approval by the council. Amounts are examples; set your own.
+#
+# The human decides: whether payouts are on at all, the amounts, who approves,
+# and the rates. Money never moves without the approvals set here. A payee can
+# never approve their own payout.
+
+# false is the kill switch: nothing is prepared or paid.
+enabled = true
+# Three lowercase letters.
+currency = "usd"
+
+[schedule]
+# manual | weekly | biweekly | monthly
+cadence = "monthly"
+# A weekday name for weekly and biweekly, or 1 to 28 for monthly.
+day = 1
+hour_utc = 17
+# prepare: MSync drafts the payout and waits for approvals. auto: it proceeds
+# once approvals are in. Start with prepare.
+mode = "prepare"
+
+# Amounts are in cents. Order: min <= per payout <= per member per period, and
+# per payout <= per run.
+[limits]
+min_payout_cents = 500
+max_per_payout_cents = 25000
+max_per_member_per_period_cents = 100000
+max_per_run_cents = 1000000
+# Days a payout is held before release. The policy floor for open mode is 7.
+hold_days = 7
+
+[approval]
+# Minimum 1.
+approvals_required = 2
+# An approver needs at least this rank (and the payouts.approve permission).
+min_approver_rank = 60
+
+[eligibility]
+# Lowest rank that may be paid.
+min_rank = 0
+# Role keys allowed to be paid; empty means any role (subject to the mode).
+roles = []
+# Only people whose identity is proven can be paid.
+require_verified_identity = true
+
+# One rate per payout branch (it must be listed in a foundry's payout_branches).
+# Pay = base_cents + merit_multiplier * merit points earned in the period.
+[[rate]]
+branch = "main"
+base_cents = 500
+merit_multiplier = 0.02
+
+# POOLED PAYOUTS. The rate above pays per person from the merit they earned.
+# A pooled XP payout (a shared pool split by merit share) is NOT configured in
+# this file: it is set up as pay orders created through the MSync API. See
+# docs/PAYROLL.md for how a pay order is created, approved and released. The
+# limits and approval rules in this file still apply to every pay order.

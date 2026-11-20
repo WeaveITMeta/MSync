@@ -1,0 +1,59 @@
+schema = 1
+
+# org.toml: identity, mode, chat platforms and repositories.
+# Template: merit-driven collective (DAO style). Open code, open contribution; merit tiers carry most of the structure and a small appointed council holds the few powers.
+
+[org]
+# A short lowercase id (a-z, 0-9, hyphen). The human decides this; it should
+# not change later.
+slug = "REPLACE_ME_ORG_SLUG"
+# The display name shown in Discord, Slack and portals.
+name = "REPLACE_ME_ORG_NAME"
+# MODE: open. Public roster and leaderboard. Merit earns standing; a small council is appointed for the actions that need people.
+mode = "open"
+# Informational only; names the template this file started from.
+template = "merit-dao"
+
+[policy]
+# Optional overrides of the mode defaults, one key per line. The open default
+# holds payouts 7 days. Uncomment to hold longer (your decision).
+# "payouts.hold_days" = 10
+
+
+# Chat platforms. Discord and Slack are equals. Either block may be removed,
+# but AT LEAST ONE must stay. If you remove one, also delete the matching
+# discord_role or slack_usergroup lines in roles.toml and the matching
+# identity lines in members.toml.
+[discord]
+# Your Discord server (guild) id. In Discord, enable Developer Mode, then
+# right-click the server.
+guild_id = "REPLACE_ME_DISCORD_GUILD_ID"
+# Optional: the channel MSync posts alerts into.
+alert_channel_id = "REPLACE_ME_DISCORD_ALERT_CHANNEL"
+
+[slack]
+# Your Slack workspace (team) id; only this workspace may send commands.
+team_id = "REPLACE_ME_SLACK_TEAM_ID"
+# Optional: the channel MSync posts alerts into.
+alert_channel_id = "REPLACE_ME_SLACK_CHANNEL_ALERTS"
+
+# Repositories whose events count (the Foundry API: GitHub and GitLab).
+# repo is owner/name. canonical = true means this repository earns merit; a
+# mirror must set false and then cannot list payout_branches. payout_branches
+# are the branches whose merged work can be paid out (see payouts.toml). For
+# GitLab add provider = "gitlab" and, if self-hosted, a host line.
+[[foundry]]
+provider = "github"
+repo = "REPLACE_ME_PRIMARY_REPO"
+visibility = "public"
+canonical = true
+payout_branches = ["main"]
+
+
+# A portal (consumer) that may read standing. scopes and fields decide exactly
+# what data leaves MSync. Remove this block if you have no portal.
+[[consumer]]
+key = "community-site"
+label = "Community site"
+scopes = ["community.*", "profile.*"]
+fields = ["tier", "positions.title", "merit.vested", "permissions"]

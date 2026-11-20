@@ -1,0 +1,84 @@
+# MSync CRA check and plan preview (GitLab CI).
+#
+# Use: pull this file in from the project's own .gitlab-ci.yml with
+#
+#   include:
+#     - local: '.msync/gitlab-ci.yml'
+#
+# What this does: on merge request pipelines that change anything under
+# .msync/, it validates the five CRA files, computes a plan of exactly what
+# the change would alter, and posts that plan as a merge request note.
+#
+# WARNING: NO MSync RELEASE EXISTS YET. The CI/CD variable MSYNC_RELEASE_URL is
+# a placeholder. The owner sets it (Settings, CI/CD, Variables) to a direct
+# download URL of the msync binary for Linux x86_64 once a release exists.
+# Until then the job fails at the download step with a clear message. To build
+# from source in the meantime, see the commented cargo alternative in the
+# script below.
+#
+# SECRET HANDLING: posting a note needs a token. The owner creates a CI/CD
+# variable named MSYNC_MR_NOTE_TOKEN (Settings, CI/CD, Variables), masked,
+# with a project access token that has the api scope. NEVER commit a token to
+# this file or anywhere in the repository. If the variable is missing the job
+# still runs the check and prints the plan in the job log.
+
+msync-cra:
+  stage: test
+  image: debian:12-slim
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+      changes:
+        - .msync/**/*
+  variables:
+    GIT_DEPTH: "0"
+  before_script:
+    - apt-get update -qq && apt-get install -y -qq git curl jq tar ca-certificates
+  script:
+    - |
+      set -eu
+      if [ -z "${MSYNC_RELEASE_URL:-}" ]; then
+        echo "MSYNC_RELEASE_URL is not set. No MSync release exists yet; the owner sets this variable when one does."
+        exit 1
+      fi
+      curl -fsSL "$MSYNC_RELEASE_URL" -o /usr/local/bin/msync
+      chmod +x /usr/local/bin/msync
+      # Alternative until a release exists (build from source; slow):
+      #   cargo install --git <MSYNC_REPOSITORY_URL> --locked msync
+
+      # The target branch CRA goes into a separate directory. If the target
+      # branch has no .msync/ yet, the directory stays empty and msync plan
+      # treats the change as the first snapshot.
+      BASE_DIR="$(mktemp -d)"
+      git fetch --depth=1 origin "$CI_MERGE_REQUEST_TARGET_BRANCH_NAME"
+      if git cat-file -e "FETCH_HEAD:.msync" 2>/dev/null; then
+        git archive FETCH_HEAD .msync | tar -x -C "$BASE_DIR"
+      fi
+
+      CHECK_RC=0
+      PLAN_RC=0
+      msync check . 2>&1 | tee check.txt || CHECK_RC=$?
+      msync plan "$BASE_DIR" . > plan.md || PLAN_RC=$?
+      cat plan.md
+
+      if [ -n "${MSYNC_MR_NOTE_TOKEN:-}" ]; then
+        {
+          echo "## MSync CRA preview"
+          echo
+          if [ "$CHECK_RC" -eq 0 ]; then echo "Check: **OK**"; else echo "Check: **FAILED**"; echo '```'; head -c 6000 check.txt; echo '```'; fi
+          echo
+          head -c 55000 plan.md
+        } > note.md
+        jq -Rs '{body: .}' < note.md | curl -fsS -X POST \
+          -H "PRIVATE-TOKEN: $MSYNC_MR_NOTE_TOKEN" \
+          -H "Content-Type: application/json" \
+          --data @- \
+          "$CI_API_V4_URL/projects/$CI_PROJECT_ID/merge_requests/$CI_MERGE_REQUEST_IID/notes" \
+          > /dev/null || echo "Could not post the merge request note; the plan is in the job log above."
+      else
+        echo "MSYNC_MR_NOTE_TOKEN is not set; skipping the merge request note."
+      fi
+
+      if [ "$CHECK_RC" -ne 0 ] || [ "$PLAN_RC" -ne 0 ]; then
+        echo "msync check or msync plan failed."
+        exit 1
+      fi

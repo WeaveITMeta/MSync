@@ -20,8 +20,11 @@ RUN mkdir src && \
     rm -rf src
 
 # Copy source code
+COPY build.rs ./
 COPY src ./src
 COPY migrations ./migrations
+# msync init embeds the templates (include_str!), so they are needed at build time.
+COPY templates ./templates
 
 # Build application
 RUN cargo build --release

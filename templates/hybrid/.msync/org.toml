@@ -1,0 +1,75 @@
+schema = 1
+
+# org.toml: identity, mode, chat platforms and repositories.
+# Template: hybrid. A public repository where outsiders contribute, plus a private repository for staff.
+
+[org]
+# A short lowercase id (a-z, 0-9, hyphen). The human decides this; it should
+# not change later.
+slug = "REPLACE_ME_ORG_SLUG"
+# The display name shown in Discord, Slack and portals.
+name = "REPLACE_ME_ORG_NAME"
+# MODE: hybrid. Roster and leaderboard are members only. Outside contributors earn merit only in PUBLIC repositories; private work counts for members.
+mode = "hybrid"
+# Informational only; names the template this file started from.
+template = "hybrid"
+
+[policy]
+# Optional overrides of the mode defaults, one key per line.
+# "payouts.hold_days" = 10
+
+
+# Chat platforms. Discord and Slack are equals. Either block may be removed,
+# but AT LEAST ONE must stay. If you remove one, also delete the matching
+# discord_role or slack_usergroup lines in roles.toml and the matching
+# identity lines in members.toml.
+[discord]
+# Your Discord server (guild) id. In Discord, enable Developer Mode, then
+# right-click the server.
+guild_id = "REPLACE_ME_DISCORD_GUILD_ID"
+# Optional: the channel MSync posts alerts into.
+alert_channel_id = "REPLACE_ME_DISCORD_ALERT_CHANNEL"
+
+[slack]
+# Your Slack workspace (team) id; only this workspace may send commands.
+team_id = "REPLACE_ME_SLACK_TEAM_ID"
+# Optional: the channel MSync posts alerts into.
+alert_channel_id = "REPLACE_ME_SLACK_CHANNEL_ALERTS"
+
+# Repositories whose events count (the Foundry API: GitHub and GitLab).
+# repo is owner/name. canonical = true means this repository earns merit; a
+# mirror must set false and then cannot list payout_branches. payout_branches
+# are the branches whose merged work can be paid out (see payouts.toml). For
+# GitLab add provider = "gitlab" and, if self-hosted, a host line.
+# The public repository: outside contributors earn here.
+[[foundry]]
+provider = "github"
+repo = "REPLACE_ME_PUBLIC_REPO"
+visibility = "public"
+canonical = true
+payout_branches = ["main"]
+
+# The private repository: staff work. Outsiders do not earn here.
+[[foundry]]
+provider = "github"
+repo = "REPLACE_ME_PRIVATE_REPO"
+visibility = "private"
+canonical = true
+payout_branches = ["main"]
+
+
+# Need-to-know compartment. Compartments are on in hybrid mode. A role may name
+# it in roles.toml with compartments = ["core-team"]. Remove it, and the
+# compartments line in roles.toml, if you do not need one.
+[[compartment]]
+key = "core-team"
+label = "Core Team"
+classification = "internal"
+
+# A portal (consumer) that may read standing. scopes and fields decide exactly
+# what data leaves MSync. Remove this block if you have no portal.
+[[consumer]]
+key = "community-site"
+label = "Community site"
+scopes = ["community.*", "profile.*"]
+fields = ["tier", "positions.title", "merit.vested", "permissions"]

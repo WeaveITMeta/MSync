@@ -1,0 +1,83 @@
+schema = 1
+
+# roles.toml: the job titles and ranks of the organization.
+#
+# Two kinds of role. A TIER is earned: a member holds the highest tier whose
+# min_merit they have vested. A POSITION is appointed: it is granted to a
+# member in members.toml. Rank orders everything: a person can only change
+# things strictly BELOW their own rank. Rank 1000 is owners only and comes from
+# engine configuration, never from this file.
+#
+# The human decides: the titles, the ranks, which permissions each rank holds,
+# and the Discord role and Slack user group each title maps to. The
+# discord_role and slack_usergroup lines are optional; delete them for a
+# platform you do not use. Every id must be real and unique per role.
+# Merit-driven collective: tiers carry community powers (vote, events, moderation); only the small council holds authority permissions.
+
+# Everyone starts here.
+[[role]]
+key = "newcomer"
+title = "Newcomer"
+kind = "tier"
+rank = 0
+min_merit = 0
+permissions = ["profile.self", "community.read", "leaderboard.read"]
+
+# Earned at 50 vested merit: may post and vote.
+[[role]]
+key = "member"
+title = "Member"
+kind = "tier"
+rank = 10
+min_merit = 50
+permissions = ["profile.self", "community.read", "leaderboard.read", "community.post", "community.vote"]
+discord_role = "REPLACE_ME_DISCORD_ROLE_MEMBER"
+slack_usergroup = "REPLACE_ME_SLACK_USERGROUP_MEMBER"
+
+# Earned at 200 vested merit: may run events and moderate.
+[[role]]
+key = "steward"
+title = "Steward"
+kind = "tier"
+rank = 20
+min_merit = 200
+permissions = ["profile.self", "community.read", "leaderboard.read", "community.post", "community.vote", "community.events", "community.moderate"]
+discord_role = "REPLACE_ME_DISCORD_ROLE_STEWARD"
+slack_usergroup = "REPLACE_ME_SLACK_USERGROUP_STEWARD"
+
+# Earned at 600 vested merit; the open-mode ceiling for tiers.
+[[role]]
+key = "elder"
+title = "Elder"
+kind = "tier"
+rank = 30
+min_merit = 600
+permissions = ["profile.self", "community.read", "leaderboard.read", "community.post", "community.vote", "community.events", "roster.read_members", "community.moderate", "merit.read_all"]
+discord_role = "REPLACE_ME_DISCORD_ROLE_ELDER"
+slack_usergroup = "REPLACE_ME_SLACK_USERGROUP_ELDER"
+
+# Appointed by the council. Rank 60 is two-person; needs expires within 180 days.
+[[role]]
+key = "council-member"
+title = "Council Member"
+kind = "position"
+rank = 60
+permissions = ["members.invite", "members.grant", "members.approve_grant", "members.revoke", "members.suspend", "payouts.read_all", "payouts.approve", "roster.read_full", "merit.award_manual"]
+discord_role = "REPLACE_ME_DISCORD_ROLE_COUNCIL_MEMBER"
+slack_usergroup = "REPLACE_ME_SLACK_USERGROUP_COUNCIL_MEMBER"
+max_holders = 7
+term_days = 180
+merit_eligibility = 1500
+
+# Appointed. Chairs the council; org-level changes need a second approver.
+[[role]]
+key = "convener"
+title = "Convener"
+kind = "position"
+rank = 80
+permissions = ["members.invite", "members.grant", "members.approve_grant", "members.revoke", "members.suspend", "payouts.read_all", "payouts.approve", "roster.read_full", "merit.award_manual", "merit.clawback", "policy.propose_change", "policy.approve_change", "consumers.manage", "discord.reconcile", "audit.read_all"]
+discord_role = "REPLACE_ME_DISCORD_ROLE_CONVENER"
+slack_usergroup = "REPLACE_ME_SLACK_USERGROUP_CONVENER"
+max_holders = 1
+term_days = 180
+

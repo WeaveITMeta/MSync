@@ -21,6 +21,7 @@ pub mod api;
 pub mod authz;
 pub mod catalog;
 pub mod loader;
+pub mod local;
 pub mod model;
 pub mod plan;
 pub mod policy;

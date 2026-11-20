@@ -1,0 +1,63 @@
+schema = 1
+
+# members.toml: who is in the organization and which positions they hold.
+#
+# OWNERS (rank 1000) are engine configuration, never CRA content. They are set
+# by the engine variable MSYNC_OWNER_MEMBER_IDS, NOT in this file. The first
+# snapshot can only be loaded by an owner named in the github:<login> form, so
+# list the founder's GitHub login there as github:<login> (the same login you
+# put under the founder entry below).
+# The founder holds no grant here: owner power comes from the engine.
+#
+# Contributors who are not listed here still earn merit under their GitHub or
+# GitLab login and link Discord or Slack by OAuth proof; this file is only for
+# people the administration attests by hand.
+#
+# The human decides: every id, name and login below, who holds which position,
+# who granted it, and when each grant expires. Tiers are never granted; they
+# are computed from merit. A grant at or above the policy's two-person rank
+# must carry an expires date within the policy's maximum term. Each person's
+# identity values (GitHub login, Discord id, Slack id) must be unique. The
+# slack line is optional; remove it for people without Slack.
+
+[[member]]
+id = "REPLACE_ME_FOUNDER_MEMBER_ID"
+name = "REPLACE_ME_FOUNDER_NAME"
+status = "active"
+
+[member.identities]
+github = "REPLACE_ME_FOUNDER_GITHUB_LOGIN"
+discord = "REPLACE_ME_FOUNDER_DISCORD_USER"
+slack = "REPLACE_ME_FOUNDER_SLACK_USER"
+
+[[member]]
+id = "REPLACE_ME_SECOND_MEMBER_ID"
+name = "REPLACE_ME_SECOND_NAME"
+status = "active"
+
+[member.identities]
+github = "REPLACE_ME_SECOND_GITHUB_LOGIN"
+discord = "REPLACE_ME_SECOND_DISCORD_USER"
+slack = "REPLACE_ME_SECOND_SLACK_USER"
+
+[[member.grant]]
+role = "convener"
+granted_by = "REPLACE_ME_FOUNDER_MEMBER_ID"
+# Required for this role: a date no later than the policy allows.
+expires = "REPLACE_ME_A_EXPIRES_DATE"
+
+[[member]]
+id = "REPLACE_ME_THIRD_MEMBER_ID"
+name = "REPLACE_ME_THIRD_NAME"
+status = "active"
+
+[member.identities]
+github = "REPLACE_ME_THIRD_GITHUB_LOGIN"
+discord = "REPLACE_ME_THIRD_DISCORD_USER"
+
+[[member.grant]]
+role = "council-member"
+granted_by = "REPLACE_ME_SECOND_MEMBER_ID"
+# Required for this role: a date no later than the policy allows.
+expires = "REPLACE_ME_B_EXPIRES_DATE"
+

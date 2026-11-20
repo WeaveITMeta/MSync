@@ -765,7 +765,7 @@ pub fn source_from_config(cfg: &crate::config::Config) -> Option<Arc<dyn CraSour
         FoundryProvider::GitHub => Arc::new(super::source::GitHubSource::new(
             repo,
             cfg.cra.github_api_base.clone(),
-            Some(cfg.github.token.clone()),
+            Some(cfg.github.token.clone()).filter(|t| !t.trim().is_empty()),
         )) as Arc<dyn CraSource>,
         FoundryProvider::GitLab => Arc::new(super::source::GitLabSource::new(
             repo,
@@ -773,6 +773,28 @@ pub fn source_from_config(cfg: &crate::config::Config) -> Option<Arc<dyn CraSour
             cfg.cra.gitlab_token.clone(),
         )),
     })
+}
+
+/// The local CRA directory (`MSYNC_CRA_LOCAL_DIR`, dev mode only; contract 13.5) as CRA
+/// settings and a source. `Ok(None)` when no local directory is configured. Refused when
+/// dev mode is off (checked again here, not only in `Config`) or when no owner entry has
+/// the `provider:login` form the local load acts as.
+pub fn local_from_config(
+    cfg: &crate::config::Config,
+    owners: &[String],
+) -> Result<Option<(CraSettings, Arc<dyn CraSource>)>, String> {
+    let Some(dir) = cfg.cra.local_dir.clone() else { return Ok(None) };
+    if !cfg.dev_mode {
+        return Err("MSYNC_CRA_LOCAL_DIR is refused unless MSYNC_DEV_MODE=true".into());
+    }
+    let src = super::local::LocalDirSource::new(dir.clone(), owners).ok_or_else(|| {
+        format!(
+            "MSYNC_CRA_LOCAL_DIR={} needs an owner of the form github:<login> or gitlab:<login> in MSYNC_OWNER_MEMBER_IDS: the local load acts as that owner",
+            dir.display()
+        )
+    })?;
+    let settings = CraSettings { repo: src.repo().clone(), branch: super::local::LOCAL_BRANCH.to_string() };
+    Ok(Some((settings, Arc::new(src) as Arc<dyn CraSource>)))
 }
 
 /// Refresh the CRA merit cache every `every` (background task).

@@ -1,0 +1,123 @@
+# MSync CRA check and plan preview (GitHub Actions).
+#
+# What this does: when a pull request changes anything under .msync/, it
+# validates the five CRA files, computes a plan of exactly what the change
+# would alter (roles, members, grants, policy, merit, payouts), and posts that
+# plan as one pull request comment (updated on every push). It needs no
+# secrets: only the default GITHUB_TOKEN with the permissions below.
+#
+# WARNING: NO MSync RELEASE EXISTS YET. The repository variable
+# MSYNC_RELEASE_URL is a placeholder. The owner sets it (Settings, Secrets and
+# variables, Actions, Variables) to a direct download URL of the msync binary
+# for Linux x86_64 once a release exists. Until then this job fails at the
+# download step with a clear message. To build from source in the meantime,
+# use the commented cargo install alternative inside the "Get msync" step.
+#
+# The check and plan steps do not stop the job early, so the preview is still
+# posted when the check fails; the last step then fails the job.
+
+name: msync-cra
+
+on:
+  pull_request:
+    paths:
+      - '.msync/**'
+
+permissions:
+  contents: read
+  pull-requests: write
+
+concurrency:
+  group: msync-cra-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  cra:
+    runs-on: ubuntu-latest
+    env:
+      MSYNC_RELEASE_URL: ${{ vars.MSYNC_RELEASE_URL }}
+      BASE_REF: ${{ github.base_ref }}
+    steps:
+      - name: Check out the pull request
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Extract the base branch CRA into a separate directory
+        run: |
+          set -eu
+          mkdir -p ../base
+          # If the base branch has no .msync/ yet, ../base stays empty and
+          # msync plan treats the change as the first snapshot.
+          if git cat-file -e "origin/${BASE_REF}:.msync" 2>/dev/null; then
+            git archive "origin/${BASE_REF}" .msync | tar -x -C ../base
+          fi
+          ls -la ../base
+
+      - name: Get msync
+        run: |
+          set -eu
+          if [ -z "${MSYNC_RELEASE_URL:-}" ]; then
+            echo "::error::Repository variable MSYNC_RELEASE_URL is not set. No MSync release exists yet; the owner sets this variable when one does."
+            exit 1
+          fi
+          curl -fsSL "$MSYNC_RELEASE_URL" -o /tmp/msync
+          chmod +x /tmp/msync
+          /tmp/msync --version || true
+          # Alternative until a release exists (build from source; slow):
+          #   cargo install --git <MSYNC_REPOSITORY_URL> --locked msync
+          #   and use "$HOME/.cargo/bin/msync" instead of /tmp/msync below.
+
+      - name: msync check
+        id: check
+        continue-on-error: true
+        run: |
+          set -o pipefail
+          /tmp/msync check . 2>&1 | tee /tmp/check.txt
+
+      - name: msync plan
+        id: plan
+        continue-on-error: true
+        run: |
+          set -o pipefail
+          /tmp/msync plan ../base . > /tmp/plan.md
+
+      - name: Post or update the preview comment
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            const marker = '<!-- msync-cra-preview -->';
+            const read = (p) => (fs.existsSync(p) ? fs.readFileSync(p, 'utf8') : '');
+            const checkOk = '${{ steps.check.outcome }}' === 'success';
+            const planText = read('/tmp/plan.md') || '_No plan was produced._';
+            const checkText = read('/tmp/check.txt');
+            const body = [
+              marker,
+              '## MSync CRA preview',
+              '',
+              checkOk ? 'Check: **OK**' : 'Check: **FAILED**',
+              '',
+              checkOk ? '' : '```\n' + checkText.slice(0, 6000) + '\n```\n',
+              planText.slice(0, 55000),
+            ].join('\n');
+            const { owner, repo } = context.repo;
+            const issue_number = context.payload.pull_request.number;
+            try {
+              const comments = await github.paginate(github.rest.issues.listComments, { owner, repo, issue_number });
+              const mine = comments.find((c) => c.body && c.body.includes(marker));
+              if (mine) {
+                await github.rest.issues.updateComment({ owner, repo, comment_id: mine.id, body });
+              } else {
+                await github.rest.issues.createComment({ owner, repo, issue_number, body });
+              }
+            } catch (e) {
+              // Pull requests from forks get a read-only token; do not fail on that.
+              core.warning('Could not post the preview comment: ' + e.message);
+            }
+
+      - name: Fail the job if the check or the plan failed
+        if: steps.check.outcome != 'success' || steps.plan.outcome != 'success'
+        run: |
+          echo "::error::msync check or msync plan failed. See the preview comment and the step logs."
+          exit 1

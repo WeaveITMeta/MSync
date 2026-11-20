@@ -26,6 +26,38 @@ pub struct Config {
     pub cra: CraConfig,
     pub database_url: String,
     pub server: ServerConfig,
+    /// `MSYNC_DEV_MODE=true`: local development. Missing chat platforms are a warning, a
+    /// local CRA directory may stand in for the CRA repository, `/health` reports
+    /// `"dev_mode": true`, and a live Stripe configuration refuses to start. Never on a
+    /// reachable host.
+    #[serde(default)]
+    pub dev_mode: bool,
+}
+
+/// Is `MSYNC_DEV_MODE` set to `true` (or `1`)?
+pub fn dev_mode_from<F: Fn(&str) -> Option<String>>(get: F) -> bool {
+    env_var_with("MSYNC_DEV_MODE", &get)
+        .map(|v| matches!(v.trim().to_ascii_lowercase().as_str(), "true" | "1"))
+        .unwrap_or(false)
+}
+
+/// Refuse a dev-mode start with a live Stripe configuration: `MSYNC_STRIPE_ALLOW_LIVE=true`,
+/// or a `sk_live_` / `rk_live_` key in `STRIPE_SECRET_KEY`. Dev mode is unsafe on purpose, so
+/// it must never be able to move real money. Outside dev mode this check does nothing.
+pub fn check_dev_mode_stripe<F: Fn(&str) -> Option<String>>(get: F) -> Result<()> {
+    if !dev_mode_from(&get) {
+        return Ok(());
+    }
+    let allow_live = env_var_with("MSYNC_STRIPE_ALLOW_LIVE", &get).map(|v| v.trim() == "true").unwrap_or(false);
+    if allow_live {
+        anyhow::bail!("MSYNC_DEV_MODE=true refuses to start with MSYNC_STRIPE_ALLOW_LIVE=true; dev mode never moves real money");
+    }
+    let key = get("STRIPE_SECRET_KEY").unwrap_or_default();
+    let key = key.trim();
+    if key.contains("_live_") {
+        anyhow::bail!("MSYNC_DEV_MODE=true refuses to start with a live Stripe key in STRIPE_SECRET_KEY; use a test key (sk_test_) or none");
+    }
+    Ok(())
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -61,7 +93,8 @@ impl SlackConfig {
 ///
 /// Discord is configured when `DISCORD_TOKEN` is set and not empty; it then needs
 /// `DISCORD_APPLICATION_ID`. Slack is configured when `MSYNC_SLACK_SIGNING_SECRET` is set
-/// and not empty. Neither configured is an error: the service would have no chat platform.
+/// and not empty. Neither configured is an error (the service would have no chat platform),
+/// except in dev mode (`MSYNC_DEV_MODE=true`), where it is a warning.
 pub fn chat_platforms_from<F: Fn(&str) -> Option<String>>(get: F) -> Result<(Option<DiscordConfig>, SlackConfig)> {
     let non_empty = |k: &str| env_var_with(k, &get).map(|v| v.trim().to_string()).filter(|v| !v.is_empty());
     let discord = match non_empty("DISCORD_TOKEN") {
@@ -81,6 +114,10 @@ pub fn chat_platforms_from<F: Fn(&str) -> Option<String>>(get: F) -> Result<(Opt
         api_base: non_empty("MSYNC_SLACK_API_BASE"),
     };
     if discord.is_none() && !slack.enabled() {
+        if dev_mode_from(&get) {
+            tracing::warn!("no chat platform configured (dev mode): Discord and Slack are off; the REST API and MCP server still run");
+            return Ok((discord, slack));
+        }
         anyhow::bail!(
             "no chat platform configured: set DISCORD_TOKEN and DISCORD_APPLICATION_ID for Discord, \
              MSYNC_SLACK_SIGNING_SECRET for Slack, or both"
@@ -124,12 +161,46 @@ pub struct CraConfig {
     /// Enterprise or tests. Default: `https://api.github.com`, `https://<host>/api/v4`.
     pub github_api_base: Option<String>,
     pub gitlab_api_base: Option<String>,
+    /// `MSYNC_CRA_LOCAL_DIR`: a directory holding `.msync/` that stands in for the CRA
+    /// repository in development. Refused unless `MSYNC_DEV_MODE=true`.
+    #[serde(default)]
+    pub local_dir: Option<std::path::PathBuf>,
 }
 
 impl Default for CraConfig {
     fn default() -> Self {
-        CraConfig { repo: None, branch: "main".into(), gitlab_token: None, github_api_base: None, gitlab_api_base: None }
+        CraConfig {
+            repo: None,
+            branch: "main".into(),
+            gitlab_token: None,
+            github_api_base: None,
+            gitlab_api_base: None,
+            local_dir: None,
+        }
     }
+}
+
+/// `MSYNC_CRA_LOCAL_DIR`, checked: refused unless dev mode is on, refused together with
+/// `MSYNC_CRA_REPO`, and the directory must contain `.msync/`.
+pub fn local_cra_dir_from<F: Fn(&str) -> Option<String>>(get: F) -> Result<Option<std::path::PathBuf>> {
+    let Some(dir) = env_var_with("MSYNC_CRA_LOCAL_DIR", &get).map(|v| v.trim().to_string()).filter(|v| !v.is_empty()) else {
+        return Ok(None);
+    };
+    if !dev_mode_from(&get) {
+        anyhow::bail!(
+            "MSYNC_CRA_LOCAL_DIR is set but MSYNC_DEV_MODE is not true: a local directory may stand in for the CRA \
+             repository only in development. Unset MSYNC_CRA_LOCAL_DIR, or set MSYNC_DEV_MODE=true on a machine \
+             nobody else can reach"
+        );
+    }
+    if env_var_with("MSYNC_CRA_REPO", &get).map_or(false, |v| !v.trim().is_empty()) {
+        anyhow::bail!("set MSYNC_CRA_REPO or MSYNC_CRA_LOCAL_DIR, not both");
+    }
+    let path = std::path::PathBuf::from(&dir);
+    if !path.join(".msync").is_dir() {
+        anyhow::bail!("MSYNC_CRA_LOCAL_DIR={dir}: no .msync/ directory there");
+    }
+    Ok(Some(path))
 }
 
 impl CraConfig {
@@ -148,6 +219,7 @@ impl CraConfig {
             gitlab_token: non_empty_env("GITLAB_TOKEN"),
             github_api_base: non_empty_env("MSYNC_CRA_GITHUB_API"),
             gitlab_api_base: non_empty_env("MSYNC_CRA_GITLAB_API"),
+            local_dir: local_cra_dir_from(|k| env::var(k).ok())?,
         })
     }
 }
@@ -213,19 +285,20 @@ pub struct ServerConfig {
 
 impl Config {
     pub fn from_env() -> Result<Self> {
-        let (discord, slack) = chat_platforms_from(|k| env::var(k).ok())?;
+        let get = |k: &str| env::var(k).ok();
+        check_dev_mode_stripe(get)?;
+        let (discord, slack) = chat_platforms_from(get)?;
         Ok(Config {
             discord,
             slack,
+            // GitHub is optional: with no webhook secret every GitHub webhook is refused
+            // (`verify_github_signature` rejects an empty secret), and with no token the
+            // GitHub API is called unauthenticated.
             github: GitHubConfig {
-                token: env::var("GITHUB_TOKEN")
-                    .context("GITHUB_TOKEN not found in environment")?,
-                webhook_secret: env::var("GITHUB_WEBHOOK_SECRET")
-                    .context("GITHUB_WEBHOOK_SECRET not found in environment")?,
-                repo_owner: env::var("GITHUB_REPO_OWNER")
-                    .context("GITHUB_REPO_OWNER not found in environment")?,
-                repo_name: env::var("GITHUB_REPO_NAME")
-                    .context("GITHUB_REPO_NAME not found in environment")?,
+                token: env::var("GITHUB_TOKEN").unwrap_or_default(),
+                webhook_secret: env::var("GITHUB_WEBHOOK_SECRET").unwrap_or_default(),
+                repo_owner: env::var("GITHUB_REPO_OWNER").unwrap_or_default(),
+                repo_name: env::var("GITHUB_REPO_NAME").unwrap_or_default(),
             },
             coderabbit: CodeRabbitConfig {
                 api_key: non_empty_env("CODERABBIT_API_KEY"),
@@ -244,6 +317,7 @@ impl Config {
                     .parse()
                     .context("SERVER_PORT must be a valid port number")?,
             },
+            dev_mode: dev_mode_from(get),
         })
     }
 }
@@ -326,6 +400,60 @@ mod tests {
         assert!(chat_platforms_from(lookup(&[("MSYNC_SLACK_SIGNING_SECRET", " "), ("DISCORD_TOKEN", "")])).is_err());
         // A Discord token without its application id is an error, not "Discord off".
         assert!(chat_platforms_from(lookup(&[("DISCORD_TOKEN", "t"), ("MSYNC_SLACK_SIGNING_SECRET", "s")])).is_err());
+    }
+
+    #[test]
+    fn dev_mode_makes_missing_chat_platforms_a_warning() {
+        let (d, s) = chat_platforms_from(lookup(&[("MSYNC_DEV_MODE", "true")])).unwrap();
+        assert!(d.is_none() && !s.enabled());
+        // Anything but true/1 is not dev mode: the existing rule stands.
+        assert!(chat_platforms_from(lookup(&[("MSYNC_DEV_MODE", "yes")])).is_err());
+        assert!(chat_platforms_from(lookup(&[("MSYNC_DEV_MODE", "false")])).is_err());
+        assert!(dev_mode_from(lookup(&[("MSYNC_DEV_MODE", "1")])));
+        assert!(!dev_mode_from(lookup(&[])));
+    }
+
+    #[test]
+    fn local_cra_dir_is_refused_without_dev_mode() {
+        let dir = std::env::temp_dir().join(format!("msync-local-cra-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(dir.join(".msync")).unwrap();
+        let d = dir.to_string_lossy().to_string();
+        let err = local_cra_dir_from(lookup(&[("MSYNC_CRA_LOCAL_DIR", &d)])).unwrap_err().to_string();
+        assert!(err.contains("MSYNC_DEV_MODE"), "{err}");
+        let err = local_cra_dir_from(lookup(&[("MSYNC_CRA_LOCAL_DIR", &d), ("MSYNC_DEV_MODE", "false")])).unwrap_err();
+        assert!(err.to_string().contains("MSYNC_DEV_MODE"));
+        assert_eq!(
+            local_cra_dir_from(lookup(&[("MSYNC_CRA_LOCAL_DIR", &d), ("MSYNC_DEV_MODE", "true")])).unwrap(),
+            Some(std::path::PathBuf::from(&d))
+        );
+        // Not together with a real CRA repository, and the directory must hold .msync/.
+        assert!(local_cra_dir_from(lookup(&[
+            ("MSYNC_CRA_LOCAL_DIR", &d),
+            ("MSYNC_DEV_MODE", "true"),
+            ("MSYNC_CRA_REPO", "github:github.com:o/r"),
+        ]))
+        .is_err());
+        let empty = std::env::temp_dir().join(format!("msync-local-empty-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&empty).unwrap();
+        let e = empty.to_string_lossy().to_string();
+        assert!(local_cra_dir_from(lookup(&[("MSYNC_CRA_LOCAL_DIR", &e), ("MSYNC_DEV_MODE", "true")])).is_err());
+        assert_eq!(local_cra_dir_from(lookup(&[("MSYNC_DEV_MODE", "true")])).unwrap(), None);
+        let _ = std::fs::remove_dir_all(&dir);
+        let _ = std::fs::remove_dir_all(&empty);
+    }
+
+    #[test]
+    fn dev_mode_refuses_a_live_stripe_configuration() {
+        let dev = ("MSYNC_DEV_MODE", "true");
+        assert!(check_dev_mode_stripe(lookup(&[dev, ("MSYNC_STRIPE_ALLOW_LIVE", "true")])).is_err());
+        assert!(check_dev_mode_stripe(lookup(&[dev, ("STRIPE_SECRET_KEY", "sk_live_abc")])).is_err());
+        assert!(check_dev_mode_stripe(lookup(&[dev, ("STRIPE_SECRET_KEY", " rk_live_abc")])).is_err());
+        assert!(check_dev_mode_stripe(lookup(&[dev, ("DSYNC_STRIPE_ALLOW_LIVE", "true")])).is_err(), "the old name counts too");
+        // A test key, or no key, is fine in dev mode.
+        assert!(check_dev_mode_stripe(lookup(&[dev, ("STRIPE_SECRET_KEY", "sk_test_abc")])).is_ok());
+        assert!(check_dev_mode_stripe(lookup(&[dev])).is_ok());
+        // Outside dev mode this check does not apply (the live guard in StripeClient does).
+        assert!(check_dev_mode_stripe(lookup(&[("MSYNC_STRIPE_ALLOW_LIVE", "true"), ("STRIPE_SECRET_KEY", "sk_live_x")])).is_ok());
     }
 
     /// Pinned (contract 12.1): the default database keeps its pre-rename file name.

@@ -2,6 +2,7 @@ pub mod audit;
 pub mod accounts;
 pub mod auth;
 pub mod chat;
+pub mod cli;
 pub mod config;
 pub mod cra;
 pub mod discord;
@@ -14,8 +15,12 @@ pub mod oauth;
 pub mod payments;
 pub mod portal;
 pub mod routes;
+pub mod server;
 pub mod services;
 pub mod slack;
+
+#[cfg(test)]
+mod openapi_tests;
 
 use config::Config;
 use payments::{PaymentConfig, StripeApi};

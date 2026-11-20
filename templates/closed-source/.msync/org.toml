@@ -1,0 +1,60 @@
+schema = 1
+
+# org.toml: identity, mode, chat platforms and repositories.
+# Template: closed source. A private company or team; nothing is public and outsiders earn nothing.
+
+[org]
+# A short lowercase id (a-z, 0-9, hyphen). The human decides this; it should
+# not change later.
+slug = "REPLACE_ME_ORG_SLUG"
+# The display name shown in Discord, Slack and portals.
+name = "REPLACE_ME_ORG_NAME"
+# MODE: closed. Roster, leaderboard and profiles are need-to-know. Outside contributions earn nothing. Only staff positions are paid. Reads freeze if a read anomaly trips.
+mode = "closed"
+# Informational only; names the template this file started from.
+template = "closed-source"
+
+[policy]
+# Optional overrides of the mode defaults, one key per line. Closed mode
+# holds payouts 14 days by default; the file may only hold longer.
+# "payouts.hold_days" = 21
+
+
+# Chat platforms. Discord and Slack are equals. Either block may be removed,
+# but AT LEAST ONE must stay. If you remove one, also delete the matching
+# discord_role or slack_usergroup lines in roles.toml and the matching
+# identity lines in members.toml.
+[discord]
+# Your Discord server (guild) id. In Discord, enable Developer Mode, then
+# right-click the server.
+guild_id = "REPLACE_ME_DISCORD_GUILD_ID"
+# Optional: the channel MSync posts alerts into.
+alert_channel_id = "REPLACE_ME_DISCORD_ALERT_CHANNEL"
+
+[slack]
+# Your Slack workspace (team) id; only this workspace may send commands.
+team_id = "REPLACE_ME_SLACK_TEAM_ID"
+# Optional: the channel MSync posts alerts into.
+alert_channel_id = "REPLACE_ME_SLACK_CHANNEL_ALERTS"
+
+# Repositories whose events count (the Foundry API: GitHub and GitLab).
+# repo is owner/name. canonical = true means this repository earns merit; a
+# mirror must set false and then cannot list payout_branches. payout_branches
+# are the branches whose merged work can be paid out (see payouts.toml). For
+# GitLab add provider = "gitlab" and, if self-hosted, a host line.
+[[foundry]]
+provider = "github"
+repo = "REPLACE_ME_PRIVATE_REPO"
+visibility = "private"
+canonical = true
+payout_branches = ["main"]
+
+
+# Need-to-know compartment. Compartments are on in closed mode. A role may
+# name it in roles.toml. Remove it, and the compartments line in roles.toml,
+# if you do not need one.
+[[compartment]]
+key = "leadership"
+label = "Leadership"
+classification = "restricted"
+

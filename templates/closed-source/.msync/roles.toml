@@ -1,0 +1,71 @@
+schema = 1
+
+# roles.toml: the job titles and ranks of the organization.
+#
+# Two kinds of role. A TIER is earned: a member holds the highest tier whose
+# min_merit they have vested. A POSITION is appointed: it is granted to a
+# member in members.toml. Rank orders everything: a person can only change
+# things strictly BELOW their own rank. Rank 1000 is owners only and comes from
+# engine configuration, never from this file.
+#
+# The human decides: the titles, the ranks, which permissions each rank holds,
+# and the Discord role and Slack user group each title maps to. The
+# discord_role and slack_usergroup lines are optional; delete them for a
+# platform you do not use. Every id must be real and unique per role.
+# Mode closed: merit_rank_ceiling is 0, so every tier is rank 0. Authority comes only from appointed positions. Positions from rank 30 up are two-person and serve at most 90 days.
+
+# Everyone starts here. Tiers cannot rise above rank 0 in closed mode.
+[[role]]
+key = "newcomer"
+title = "Newcomer"
+kind = "tier"
+rank = 0
+min_merit = 0
+permissions = ["profile.self", "community.read", "merit.read_own"]
+
+# Earned at 200 vested merit. Still rank 0; it only shows standing.
+[[role]]
+key = "established"
+title = "Established"
+kind = "tier"
+rank = 0
+min_merit = 200
+permissions = ["profile.self", "community.read", "community.post", "merit.read_own"]
+discord_role = "REPLACE_ME_DISCORD_ROLE_ESTABLISHED"
+slack_usergroup = "REPLACE_ME_SLACK_USERGROUP_ESTABLISHED"
+
+# Appointed. Below the two-person line, so no expires date is required.
+[[role]]
+key = "staff"
+title = "Staff"
+kind = "position"
+rank = 20
+permissions = ["community.post", "community.vote", "roster.read_members", "merit.read_own", "payouts.read_own"]
+discord_role = "REPLACE_ME_DISCORD_ROLE_STAFF"
+slack_usergroup = "REPLACE_ME_SLACK_USERGROUP_STAFF"
+
+# Appointed. Rank 40 is two-person; needs expires within 90 days.
+[[role]]
+key = "team-lead"
+title = "Team Lead"
+kind = "position"
+rank = 40
+permissions = ["community.moderate", "roster.read_full", "merit.read_all", "members.invite", "payouts.read_all"]
+discord_role = "REPLACE_ME_DISCORD_ROLE_TEAM_LEAD"
+slack_usergroup = "REPLACE_ME_SLACK_USERGROUP_TEAM_LEAD"
+max_holders = 4
+term_days = 90
+
+# Appointed. Can change policy; needs a second approver.
+[[role]]
+key = "director"
+title = "Director"
+kind = "position"
+rank = 60
+permissions = ["members.invite", "members.grant", "members.approve_grant", "members.revoke", "members.suspend", "payouts.read_all", "payouts.approve", "roster.read_full", "merit.award_manual", "merit.clawback", "policy.propose_change", "policy.approve_change", "consumers.manage", "discord.reconcile", "audit.read_all"]
+discord_role = "REPLACE_ME_DISCORD_ROLE_DIRECTOR"
+slack_usergroup = "REPLACE_ME_SLACK_USERGROUP_DIRECTOR"
+max_holders = 2
+term_days = 90
+compartments = ["leadership"]
+

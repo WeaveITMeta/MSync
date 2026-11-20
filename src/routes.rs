@@ -52,6 +52,8 @@ pub struct HealthResponse {
     pub status: String,
     pub version: String,
     pub uptime_seconds: u64,
+    /// `true` when `MSYNC_DEV_MODE=true`: this instance is not safe on a reachable host.
+    pub dev_mode: bool,
 }
 
 #[derive(Debug, Deserialize)]
@@ -59,12 +61,22 @@ pub struct StatsQuery {
     pub github_username: String,
 }
 
+/// Process start, for `uptime_seconds`.
+static STARTED: std::sync::OnceLock<std::time::Instant> = std::sync::OnceLock::new();
+
+/// Record the process start (called once at startup; later calls do nothing).
+pub fn mark_started() {
+    let _ = STARTED.set(std::time::Instant::now());
+}
+
 #[get("/health")]
-pub async fn health_check() -> impl Responder {
+pub async fn health_check(req: HttpRequest) -> impl Responder {
+    let dev_mode = req.app_data::<web::Data<AppState>>().map_or(false, |s| s.config.dev_mode);
     HttpResponse::Ok().json(HealthResponse {
         status: "healthy".to_string(),
         version: env!("CARGO_PKG_VERSION").to_string(),
-        uptime_seconds: 0, // Could implement actual uptime tracking
+        uptime_seconds: STARTED.get().map_or(0, |t| t.elapsed().as_secs()),
+        dev_mode,
     })
 }
 
@@ -237,45 +249,51 @@ pub async fn get_contributor_stats(
     query: web::Query<StatsQuery>,
     state: web::Data<AppState>,
 ) -> impl Responder {
-    let contributor = sqlx::query!(
-        "SELECT * FROM contributors WHERE github_username = ?",
-        query.github_username
+    // Runtime queries (no compile-time database): a fresh clone builds with no DATABASE_URL.
+    #[derive(sqlx::FromRow)]
+    struct ContributorRow {
+        id: String,
+        github_username: String,
+        total_merit_points: i64,
+        current_role: String,
+        contributions_count: i64,
+        created_at: String,
+    }
+    let contributor = sqlx::query_as::<_, ContributorRow>(
+        "SELECT id, github_username, total_merit_points, current_role, contributions_count, created_at          FROM contributors WHERE github_username = ?",
     )
+    .bind(&query.github_username)
     .fetch_optional(&state.db_pool)
     .await;
 
     match contributor {
         Ok(Some(contrib)) => {
-            // Get recent activities
-            let activities = sqlx::query!(
-                "SELECT * FROM merit_activities WHERE contributor_id = ? 
-                 ORDER BY created_at DESC LIMIT 10",
-                contrib.id
+            // Recent activities
+            let activities: i64 = sqlx::query_scalar(
+                "SELECT COUNT(*) FROM (SELECT 1 FROM merit_activities WHERE contributor_id = ?                  ORDER BY created_at DESC LIMIT 10)",
             )
-            .fetch_all(&state.db_pool)
-            .await
-            .unwrap_or_default();
-
-            // Calculate statistics
-            let merged_count = sqlx::query!(
-                "SELECT COUNT(*) as count FROM contributions 
-                 WHERE contributor_id = ? AND status = 'Merged'",
-                contrib.id
-            )
+            .bind(&contrib.id)
             .fetch_one(&state.db_pool)
             .await
-            .map(|r| r.count)
             .unwrap_or(0);
 
-            let avg_score = sqlx::query!(
-                "SELECT AVG(coderabbit_score) as avg_score FROM contributions 
-                 WHERE contributor_id = ? AND coderabbit_score IS NOT NULL",
-                contrib.id
+            // Calculate statistics
+            let merged_count: i64 = sqlx::query_scalar(
+                "SELECT COUNT(*) FROM contributions WHERE contributor_id = ? AND status = 'Merged'",
             )
+            .bind(&contrib.id)
+            .fetch_one(&state.db_pool)
+            .await
+            .unwrap_or(0);
+
+            let avg_score: f64 = sqlx::query_scalar::<_, Option<f64>>(
+                "SELECT AVG(coderabbit_score) FROM contributions WHERE contributor_id = ? AND coderabbit_score IS NOT NULL",
+            )
+            .bind(&contrib.id)
             .fetch_one(&state.db_pool)
             .await
             .ok()
-            .and_then(|r| r.avg_score)
+            .flatten()
             .unwrap_or(0.0);
 
             HttpResponse::Ok().json(serde_json::json!({
@@ -289,7 +307,7 @@ pub async fn get_contributor_stats(
                 "stats": {
                     "merged_contributions": merged_count,
                     "average_coderabbit_score": avg_score,
-                    "recent_activities": activities.len(),
+                    "recent_activities": activities,
                 }
             }))
         }
