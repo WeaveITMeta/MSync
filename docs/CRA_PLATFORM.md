@@ -441,3 +441,27 @@ So that a platform such as Eustress Engine can sign people in with MSync and hos
 - Groups: a group is a CRA role, or a named set of roles. A platform reads membership from the `groups` claim at sign-in, from `GET /oauth/userinfo`, and, to stay current between sign-ins, from a SCIM 2.0 feed or a signed webhook when a snapshot changes.
 - Sign-in itself is the root account with linked identities (GitHub, GitLab, Discord, Slack, Google, email link). This depends on root accounts and sessions, which are not built.
 - A suspended member gets no token, and existing tokens are revoked when a snapshot removes them.
+
+## 13. The 90% line (owner direction, 2026-11-20)
+
+The goal is a system the owner can run and try end to end. `docs/HIERARCHY_AND_THREAT_MODEL.md` is now in this branch; it was written before the CRA and the rename, so where it says DSync read MSync, and where it conflicts with this contract, this contract wins.
+
+### 13.1 Audit log
+
+Hierarchy doc 7.2. An append-only, hash-chained table: sequence, time, actor, action, target, a JSON detail, the previous entry's hash and this entry's hash (SHA-256 over the canonical fields and the previous hash). Database triggers refuse UPDATE and DELETE. A verify function walks the chain and names the first broken entry. Written for: CRA snapshot activated or rejected, token created or revoked, payout policy changed, payee created or changed (always when the Stripe account changes), pay order created, edited, approved, paused, cancelled, invoice transitions, ledger approvals, every transfer attempt and its outcome, chat link attempts that were refused, role sync changes and drift. `GET /api/v1/audit` (`audit.read`) and `GET /api/v1/audit/verify`. MCP: `audit_list`, `audit_verify`.
+
+### 13.2 Portal sync API
+
+Hierarchy doc section 8, with consumers taken from the CRA `[[consumer]]` list. `GET /api/v1/members/by-discord/{id}`, `by-slack/{team}/{id}` and `/api/v1/members/{subject}`, each with `?scopes=`. HMAC with timestamp and nonce exactly as specified there, headers named `X-MSync-*`. Secrets from `MSYNC_CONSUMER_SECRET_<KEY>_<KEYID>`. Scope and field allowlists per consumer, pairwise subject ids, one answer for every kind of "not found", suspended members return an empty permission list, per-consumer rate limit, every lookup audited.
+
+### 13.3 Role sync and drift
+
+Hierarchy doc 7.3, for both chat platforms. On snapshot activation, on member join, and on a timer, compute the projection and apply the difference. A managed role or user group changed by hand is drift: revert it, record it, alert the platform's alert channel, and stop reverting the same pair after three reverts in an hour (alert instead). Only managed roles and groups are touched. A role mapped to an administrator-class Discord permission is refused. Slack replies that may exceed three seconds answer at once and finish through `response_url`.
+
+### 13.4 Accounts, sign-in and the OAuth provider
+
+Hierarchy doc section 6 and contract 12.3. Root accounts with identities (`github`, `gitlab`, `discord`, `slack`, `google`, `email`), sessions, the linking rules ported from the reference (`decide`, `can_unlink`), OAuth sign-in with GitHub, GitLab, Discord and Slack (each enabled only when its client id and secret are set), and one-time email links behind a mail-sender trait. A completed OAuth sign-in marks that chat or code-host identity verified, which is what `payout-setup` and payout eligibility accept besides a CRA listing. Then MSync as an authorization server: registered clients, authorization code with PKCE, OpenID Connect discovery, JWKS, ID tokens, userinfo with a `groups` claim, pairwise subject ids, refresh and revocation.
+
+### 13.5 Running it
+
+One command starts the service with only a database: no Discord, no Slack and no Stripe configured is a valid local mode. A local directory can stand in for the CRA repository in development (`MSYNC_CRA_LOCAL_DIR`, refused unless `MSYNC_DEV_MODE=true`, loaded as the configured owner). A quickstart, and a smoke test that drives a real running binary through signed webhooks, a score, a payout dry run, a pay order, an invoice, a Slack command and an MCP call.
