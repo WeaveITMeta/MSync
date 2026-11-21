@@ -1,5 +1,7 @@
 # Build stage
-FROM rust:1.75-slim as builder
+# sqlx 0.9 needs Rust 1.94 or newer. This matches the toolchain CI runs; raise both together.
+# bookworm here so the binary links the same glibc and OpenSSL the runtime stage ships.
+FROM rust:1.100-slim-bookworm AS builder
 
 # Install build dependencies
 RUN apt-get update && apt-get install -y \
@@ -16,7 +18,7 @@ COPY Cargo.toml Cargo.lock ./
 # Build dependencies (this is cached as long as Cargo.toml doesn't change)
 RUN mkdir src && \
     echo "fn main() {}" > src/main.rs && \
-    cargo build --release && \
+    cargo build --release --locked && \
     rm -rf src
 
 # Copy source code
@@ -25,16 +27,20 @@ COPY src ./src
 COPY migrations ./migrations
 # msync init embeds the templates (include_str!), so they are needed at build time.
 COPY templates ./templates
+# Example CRAs and one doc are embedded the same way.
+COPY examples ./examples
+COPY docs ./docs
 
-# Build application
-RUN cargo build --release
+# Build application. The touch makes cargo see the real sources as newer than the stub above.
+RUN touch src/main.rs src/lib.rs && cargo build --release --locked
 
 # Runtime stage
 FROM debian:bookworm-slim
 
-# Install runtime dependencies
+# Install runtime dependencies. curl is what the HEALTHCHECK below runs.
 RUN apt-get update && apt-get install -y \
     ca-certificates \
+    curl \
     libssl3 \
     && rm -rf /var/lib/apt/lists/*
 

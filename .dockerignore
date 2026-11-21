@@ -1,0 +1,13 @@
+target/
+.git/
+.github/
+.claude/
+.env
+.env.*
+!.env.example
+*.db
+*.db-shm
+*.db-wal
+data/
+logs/
+ssl/
