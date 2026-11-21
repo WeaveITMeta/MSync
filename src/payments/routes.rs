@@ -10,7 +10,6 @@ use serde_json::json;
 use tracing::{error, info, warn};
 
 /// Require `Authorization: Bearer <MSYNC_ADMIN_TOKEN>`. Disabled (503) if the token is unset.
-#[allow(clippy::result_large_err)] // HttpResponse is 128 bytes in actix-web 4.20; one per request.
 fn require_admin(req: &HttpRequest, state: &AppState) -> Result<(), HttpResponse> {
     let Some(expected) = state.payments.admin_token.as_deref() else {
         return Err(HttpResponse::ServiceUnavailable().json(

@@ -30,7 +30,6 @@ fn bad_request(msg: String) -> HttpResponse {
 }
 
 /// Parse a JSON body; unknown fields and malformed JSON are a 400 with serde's message.
-#[allow(clippy::result_large_err)] // HttpResponse is 128 bytes in actix-web 4.20; one per request.
 fn body<T: DeserializeOwned>(bytes: &[u8]) -> Result<T, HttpResponse> {
     serde_json::from_slice(bytes).map_err(|e| bad_request(format!("invalid body: {e}")))
 }
@@ -41,7 +40,6 @@ fn body<T: DeserializeOwned>(bytes: &[u8]) -> Result<T, HttpResponse> {
 #[serde(deny_unknown_fields)]
 struct NoBody {}
 
-#[allow(clippy::result_large_err)] // HttpResponse is 128 bytes in actix-web 4.20; one per request.
 fn no_body(bytes: &[u8]) -> Result<(), HttpResponse> {
     if bytes.iter().all(|b| b.is_ascii_whitespace()) {
         return Ok(());
@@ -49,7 +47,6 @@ fn no_body(bytes: &[u8]) -> Result<(), HttpResponse> {
     body::<NoBody>(bytes).map(|_| ())
 }
 
-#[allow(clippy::result_large_err)] // HttpResponse is 128 bytes in actix-web 4.20; one per request.
 fn reason_body(bytes: &[u8]) -> Result<ReasonBody, HttpResponse> {
     if bytes.iter().all(|b| b.is_ascii_whitespace()) {
         return Ok(ReasonBody::default());

@@ -83,3 +83,9 @@ chrono = "0.4"
 
 [dev-dependencies]
 mockito = "1.2"
+
+[lints.clippy]
+# Request helpers return `Result<_, HttpResponse>` so a refusal is the response itself.
+# actix-web 4.20 made HttpResponse 128 bytes; one is built per refused request, so boxing
+# it buys nothing.
+result_large_err = "allow"
